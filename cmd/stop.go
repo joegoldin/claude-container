@@ -3,6 +3,9 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/joegoldin/claude-container/internal/config"
+	"github.com/joegoldin/claude-container/internal/docker"
+	"github.com/joegoldin/claude-container/internal/tmux"
 	"github.com/spf13/cobra"
 )
 
@@ -11,8 +14,29 @@ var stopCmd = &cobra.Command{
 	Short:             "Stop a session (keep worktree)",
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeSessionNames,
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("stop %s: not yet implemented\n", args[0])
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+
+		store := config.NewStore(config.DefaultDir())
+		if _, err := store.Get(name); err != nil {
+			return fmt.Errorf("session %q not found", name)
+		}
+
+		if docker.IsRunning(name) {
+			if err := docker.Stop(name); err != nil {
+				return fmt.Errorf("stop container: %w", err)
+			}
+		}
+
+		if tmux.Exists(name) {
+			if err := tmux.Kill(name); err != nil {
+				return fmt.Errorf("kill tmux session: %w", err)
+			}
+		}
+
+		fmt.Println("Session stopped. Worktree preserved.")
+		fmt.Printf("  Resume: claude-container attach %s\n", name)
+		return nil
 	},
 }
 

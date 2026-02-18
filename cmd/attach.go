@@ -1,9 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
 
 	"github.com/joegoldin/claude-container/internal/config"
+	"github.com/joegoldin/claude-container/internal/docker"
+	"github.com/joegoldin/claude-container/internal/tmux"
 	"github.com/spf13/cobra"
 )
 
@@ -12,8 +17,49 @@ var attachCmd = &cobra.Command{
 	Short:             "Attach to a running session",
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeSessionNames,
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("attach %s: not yet implemented\n", args[0])
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+
+		store := config.NewStore(config.DefaultDir())
+		sess, err := store.Get(name)
+		if err != nil {
+			return fmt.Errorf("session %q not found", name)
+		}
+
+		// If tmux session doesn't exist (stopped state), restart it.
+		if !tmux.Exists(name) {
+			// Remove old docker container if it exists.
+			if docker.Exists(name) {
+				if err := docker.Remove(name); err != nil {
+					return fmt.Errorf("remove old container: %w", err)
+				}
+			}
+
+			// Rebuild docker run command using stored session metadata.
+			// Always use --continue for resume.
+			configDir := config.DefaultDir()
+			dockerArgs := docker.RunArgs(docker.RunOpts{
+				Name:      name,
+				Workspace: sess.WorktreePath,
+				ConfigDir: configDir,
+				UID:       os.Getuid(),
+				GID:       os.Getgid(),
+				Yolo:      sess.Yolo,
+				Continue:  true,
+			})
+			fullCmd := append([]string{"docker"}, dockerArgs...)
+
+			if err := tmux.Create(name, sess.WorktreePath, fullCmd); err != nil {
+				return fmt.Errorf("restart tmux session: %w", err)
+			}
+			fmt.Println("Restarted session with --continue")
+		}
+
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+
+		fmt.Println("Attaching (Ctrl+Q to detach)...")
+		return tmux.Attach(ctx, name)
 	},
 }
 
