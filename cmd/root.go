@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joegoldin/claude-container/internal/config"
+	gitpkg "github.com/joegoldin/claude-container/internal/git"
 	"github.com/joegoldin/claude-container/internal/tmux"
 	"github.com/joegoldin/claude-container/internal/tui"
 	"github.com/spf13/cobra"
@@ -42,8 +43,36 @@ var rootCmd = &cobra.Command{
 			}
 
 			if dm.Creating() {
-				fmt.Println("Use 'claude-container new' to create a session (wizard coming soon).")
-				return nil
+				cwd, err := os.Getwd()
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "error:", err)
+					continue
+				}
+				repoPath, _ := gitpkg.RepoRoot(cwd)
+
+				wiz := tui.NewWizard(repoPath)
+				wp := tea.NewProgram(wiz, tea.WithAltScreen())
+				wResult, err := wp.Run()
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "wizard error:", err)
+					continue
+				}
+				res := wResult.(tui.WizardModel).Result()
+				if res.Cancelled {
+					continue
+				}
+				if err := createSession(createOpts{
+					name:       res.Name,
+					worktree:   res.Worktree,
+					from:       res.From,
+					noWorktree: res.NoWorktree,
+					yolo:       res.Yolo,
+					prompt:     res.Prompt,
+				}); err != nil {
+					fmt.Fprintln(os.Stderr, "error:", err)
+					continue
+				}
+				continue
 			}
 
 			// User quit.

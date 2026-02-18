@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
 	"github.com/joegoldin/claude-container/internal/tmux"
+	"github.com/joegoldin/claude-container/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -39,6 +41,34 @@ var newCmd = &cobra.Command{
 	Short: "Create a new Claude Code session",
 	Long:  `Create a new session with an interactive wizard, or use flags to skip the wizard.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// If no identifying flags were provided, launch the interactive wizard.
+		if newName == "" && newWorktree == "" && !newNoWorktree {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("getwd: %w", err)
+			}
+			repoPath, _ := gitpkg.RepoRoot(cwd)
+
+			wiz := tui.NewWizard(repoPath)
+			wp := tea.NewProgram(wiz, tea.WithAltScreen())
+			wResult, err := wp.Run()
+			if err != nil {
+				return fmt.Errorf("wizard error: %w", err)
+			}
+			res := wResult.(tui.WizardModel).Result()
+			if res.Cancelled {
+				return nil
+			}
+			return createSession(createOpts{
+				name:       res.Name,
+				worktree:   res.Worktree,
+				from:       res.From,
+				noWorktree: res.NoWorktree,
+				yolo:       res.Yolo,
+				prompt:     res.Prompt,
+			})
+		}
+
 		return createSession(createOpts{
 			name:       newName,
 			worktree:   newWorktree,
