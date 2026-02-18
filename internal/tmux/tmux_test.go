@@ -102,6 +102,79 @@ func TestCapturePaneArgs(t *testing.T) {
 	}
 }
 
+func TestNewSessionArgsWorkDir(t *testing.T) {
+	args := NewSessionArgs("test", "/home/user/myproject", []string{"echo", "hello"})
+
+	// Verify -c flag is present with the correct working directory.
+	foundC := false
+	for i, arg := range args {
+		if arg == "-c" && i+1 < len(args) {
+			foundC = true
+			if args[i+1] != "/home/user/myproject" {
+				t.Errorf("working directory after -c = %q, want %q", args[i+1], "/home/user/myproject")
+			}
+			break
+		}
+	}
+	if !foundC {
+		t.Errorf("NewSessionArgs missing -c flag for working directory in %v", args)
+	}
+}
+
+func TestNewSessionArgsCommand(t *testing.T) {
+	command := []string{"docker", "run", "-it", "claude-code"}
+	args := NewSessionArgs("cmd-test", "/tmp", command)
+
+	joined := strings.Join(args, " ")
+
+	// The command should appear somewhere in the args (it gets shell-joined and wrapped).
+	for _, part := range command {
+		if !strings.Contains(joined, part) {
+			t.Errorf("NewSessionArgs missing command part %q in %v", part, args)
+		}
+	}
+}
+
+func TestCapturePaneArgsFlags(t *testing.T) {
+	args := CapturePaneArgs("flag-test")
+
+	// Verify -p (print to stdout) and -e (escape sequences) are present.
+	if !slices.Contains(args, "-p") {
+		t.Errorf("CapturePaneArgs missing -p flag in %v", args)
+	}
+	if !slices.Contains(args, "-e") {
+		t.Errorf("CapturePaneArgs missing -e flag in %v", args)
+	}
+
+	// Verify -t (target) is present.
+	if !slices.Contains(args, "-t") {
+		t.Errorf("CapturePaneArgs missing -t flag in %v", args)
+	}
+
+	// Verify the first arg is "capture-pane".
+	if args[0] != "capture-pane" {
+		t.Errorf("args[0] = %q, want %q", args[0], "capture-pane")
+	}
+}
+
+func TestSessionNameConsistency(t *testing.T) {
+	// SessionName should use the same prefix pattern as config.Prefix.
+	// config.Prefix is "claude-container_"
+	expectedPrefix := "claude-container_"
+
+	sessions := []string{"alpha", "beta", "my-session", "test123"}
+	for _, s := range sessions {
+		got := SessionName(s)
+		if !strings.HasPrefix(got, expectedPrefix) {
+			t.Errorf("SessionName(%q) = %q, should start with %q", s, got, expectedPrefix)
+		}
+		suffix := strings.TrimPrefix(got, expectedPrefix)
+		if suffix != s {
+			t.Errorf("SessionName(%q) suffix = %q, want %q", s, suffix, s)
+		}
+	}
+}
+
 func TestShellJoin(t *testing.T) {
 	tests := []struct {
 		name string

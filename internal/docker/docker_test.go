@@ -153,6 +153,135 @@ func TestRunArgsContinue(t *testing.T) {
 	}
 }
 
+func TestRunArgsVolumeMounts(t *testing.T) {
+	opts := RunOpts{
+		Name:      "vol-test",
+		Workspace: "/projects/myapp",
+		ConfigDir: "/home/user/.claude-config",
+		UID:       1000,
+		GID:       1000,
+	}
+	args := RunArgs(opts)
+
+	// Count the number of -v flags.
+	volumeCount := 0
+	for i, arg := range args {
+		if arg == "-v" && i+1 < len(args) {
+			volumeCount++
+		}
+	}
+	if volumeCount != 2 {
+		t.Errorf("RunArgs has %d volume mounts, want 2", volumeCount)
+	}
+
+	// Verify both specific mounts are present.
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "/projects/myapp:/workspace") {
+		t.Errorf("RunArgs missing workspace volume mount in %v", args)
+	}
+	if !strings.Contains(joined, "/home/user/.claude-config:/claude") {
+		t.Errorf("RunArgs missing config volume mount in %v", args)
+	}
+}
+
+func TestRunArgsEnvVars(t *testing.T) {
+	opts := RunOpts{
+		Name:      "env-test",
+		Workspace: "/tmp/project",
+		ConfigDir: "/tmp/config",
+		UID:       5000,
+		GID:       5001,
+	}
+	args := RunArgs(opts)
+
+	joined := strings.Join(args, " ")
+
+	// Verify all three -e environment variables.
+	envVars := []string{
+		"CLAUDE_CONFIG_DIR=/claude",
+		"USER_UID=5000",
+		"USER_GID=5001",
+	}
+	for _, env := range envVars {
+		if !strings.Contains(joined, env) {
+			t.Errorf("RunArgs missing env var %q in %v", env, args)
+		}
+	}
+
+	// Count the number of -e flags.
+	envCount := 0
+	for _, arg := range args {
+		if arg == "-e" {
+			envCount++
+		}
+	}
+	if envCount != 3 {
+		t.Errorf("RunArgs has %d -e flags, want 3", envCount)
+	}
+}
+
+func TestShellArgsHasRm(t *testing.T) {
+	args := ShellArgs("/tmp/ws", "/tmp/cfg", 1000, 1000)
+
+	if !slices.Contains(args, "--rm") {
+		t.Errorf("ShellArgs missing --rm flag in %v", args)
+	}
+
+	// RunArgs should NOT have --rm, so verify the distinction.
+	runArgs := RunArgs(RunOpts{
+		Name:      "no-rm",
+		Workspace: "/tmp/ws",
+		ConfigDir: "/tmp/cfg",
+		UID:       1000,
+		GID:       1000,
+	})
+	if slices.Contains(runArgs, "--rm") {
+		t.Errorf("RunArgs should not have --rm but ShellArgs should")
+	}
+}
+
+func TestShellArgsBash(t *testing.T) {
+	args := ShellArgs("/tmp/ws", "/tmp/cfg", 1000, 1000)
+
+	if len(args) == 0 {
+		t.Fatal("ShellArgs returned empty slice")
+	}
+
+	last := args[len(args)-1]
+	if last != "/bin/bash" {
+		t.Errorf("ShellArgs last arg = %q, want %q", last, "/bin/bash")
+	}
+
+	// Verify that RunArgs ends with "claude" (not /bin/bash).
+	runArgs := RunArgs(RunOpts{
+		Name:      "bash-test",
+		Workspace: "/tmp/ws",
+		ConfigDir: "/tmp/cfg",
+		UID:       1000,
+		GID:       1000,
+	})
+	runLast := runArgs[len(runArgs)-1]
+	if runLast != "claude" {
+		t.Errorf("RunArgs last arg = %q, want %q", runLast, "claude")
+	}
+}
+
+func TestContainerNamePrefix(t *testing.T) {
+	// Verify ContainerName uses the same prefix as config.Prefix.
+	got := ContainerName("test-session")
+	wantPrefix := "claude-container_"
+
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Errorf("ContainerName(%q) = %q, should have prefix %q", "test-session", got, wantPrefix)
+	}
+
+	// Verify the suffix is the session name.
+	suffix := strings.TrimPrefix(got, wantPrefix)
+	if suffix != "test-session" {
+		t.Errorf("ContainerName suffix = %q, want %q", suffix, "test-session")
+	}
+}
+
 func TestShellArgs(t *testing.T) {
 	args := ShellArgs("/home/user/project", "/home/user/.config/claude", 1000, 1000)
 
