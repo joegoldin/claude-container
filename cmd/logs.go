@@ -1,8 +1,11 @@
 package cmd
 
 import (
-	"fmt"
+	"context"
+	"os"
+	"os/signal"
 
+	"github.com/joegoldin/claude-container/internal/docker"
 	"github.com/spf13/cobra"
 )
 
@@ -13,8 +16,14 @@ var logsCmd = &cobra.Command{
 	Short:             "Stream logs from a session",
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeSessionNames,
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("logs %s: not yet implemented\n", args[0])
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+
+		c := docker.Logs(ctx, args[0], logsFollow)
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+		return c.Run()
 	},
 }
 

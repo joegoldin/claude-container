@@ -1,8 +1,11 @@
 package cmd
 
 import (
-	"fmt"
+	"os"
+	"os/exec"
 
+	"github.com/joegoldin/claude-container/internal/config"
+	"github.com/joegoldin/claude-container/internal/docker"
 	"github.com/spf13/cobra"
 )
 
@@ -10,8 +13,26 @@ var shellCmd = &cobra.Command{
 	Use:   "shell [workspace]",
 	Short: "Drop into a bash shell in a container",
 	Args:  cobra.MaximumNArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("shell: not yet implemented")
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ws, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		if len(args) > 0 {
+			ws = args[0]
+		}
+
+		configDir := config.DefaultDir()
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			return err
+		}
+
+		shellArgs := docker.ShellArgs(ws, configDir, os.Getuid(), os.Getgid())
+		c := exec.Command("docker", shellArgs...)
+		c.Stdin = os.Stdin
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+		return c.Run()
 	},
 }
 
