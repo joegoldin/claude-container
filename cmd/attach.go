@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +23,6 @@ func init() {
 
 // completeSessionNames provides tab completion for session names.
 func completeSessionNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	// TODO: load sessions from config and return names
-	return nil, cobra.ShellCompDirectiveNoFileComp
+	store := config.NewStore(config.DefaultDir())
+	return store.Names(), cobra.ShellCompDirectiveNoFileComp
 }
