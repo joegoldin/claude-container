@@ -16,6 +16,7 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        vendorHash = "sha256-9BRW6b6WsJuHWzWc/xp3AguaWTnLOTc7zUYvECGLuS4=";
       in
       {
         packages.default = self.packages.${system}.claude-container;
@@ -24,7 +25,8 @@
           pname = "claude-container";
           version = "0.1.0";
           src = ./.;
-          vendorHash = null; # update after first `go mod vendor`
+          inherit vendorHash;
+          doCheck = false; # tests run via checks.default with proper env
 
           nativeBuildInputs = with pkgs; [
             installShellFiles
@@ -63,6 +65,25 @@
             license = licenses.mit;
             mainProgram = "claude-container";
           };
+        };
+
+        checks.default = pkgs.buildGoModule {
+          pname = "claude-container-tests";
+          version = "0.1.0";
+          src = ./.;
+          inherit vendorHash;
+          nativeBuildInputs = [ pkgs.git ];
+          doCheck = true;
+          preCheck = ''
+            export HOME=/tmp/claude-container-test-home
+            mkdir -p $HOME
+            git config --global user.email "test@test.com"
+            git config --global user.name "Test"
+            git config --global init.defaultBranch main
+          '';
+          installPhase = ''
+            touch $out
+          '';
         };
 
         devShells.default = pkgs.mkShell {
