@@ -24,6 +24,9 @@ claude-container rm <session>             # remove session
 claude-container logs [-f] <session>      # stream logs
 claude-container build                    # build docker image
 claude-container shell [workspace]        # debug shell
+claude-container auth                     # authenticate Claude Code
+claude-container doctor                   # check system health
+claude-container gc [--all] [--auth]      # garbage collect
 ```
 
 ## DESCRIPTION
@@ -31,11 +34,22 @@ claude-container shell [workspace]        # debug shell
 A CLI tool for running multiple Claude Code instances in isolated, sandboxed
 Docker containers with git worktree separation and a TUI dashboard.
 
-Three isolation layers prevent agents from interfering with each other:
+Two isolation layers prevent agents from interfering with each other:
 
 - **Git worktrees** -- each session gets its own branch and working directory
 - **Docker containers** -- sandboxed execution with controlled permissions
-- **Tmux sessions** -- persistent terminal sessions with attach/detach
+
+All sessions share a single Claude config directory for authentication. Run
+`claude-container auth` once and all sessions use those credentials.
+
+## GETTING STARTED
+
+```sh
+claude-container build         # build the docker image (once)
+claude-container auth          # authenticate Claude Code (once)
+claude-container doctor        # verify everything is set up
+claude-container run --yolo    # quick-start a session
+```
 
 ## COMMANDS
 
@@ -44,8 +58,11 @@ Three isolation layers prevent agents from interfering with each other:
 ```
 Available Commands:
   attach      Attach to a running session
+  auth        Authenticate Claude Code inside a container
   build       Build the Claude Code container image
   completion  Generate the autocompletion script for the specified shell
+  doctor      Check system health and configuration
+  gc          Clean up stopped containers and stale sessions
   logs        Stream logs from a session
   new         Create a new Claude Code session
   ps          List all sessions
@@ -68,8 +85,10 @@ Usage:
   claude-container run [flags]
 
 Flags:
+  -b, --background      Don't attach after creation
       --name string     Session name (auto-generated if omitted)
   -p, --prompt string   Initial prompt to send to Claude
+      --rm              Auto-remove session when it exits
       --yolo            Skip permission prompts
 ```
 
@@ -85,9 +104,11 @@ Usage:
   claude-container work [flags]
 
 Flags:
+  -b, --background      Don't attach after creation
       --from string     Base branch for worktree (default: current HEAD)
       --name string     Session name (auto-generated if omitted)
   -p, --prompt string   Initial prompt to send to Claude
+      --rm              Auto-remove session when it exits
       --yolo            Skip permission prompts
 ```
 
@@ -103,11 +124,13 @@ Usage:
   claude-container new [flags]
 
 Flags:
+  -b, --background        Don't attach after creation
   -c, --continue          Resume previous conversation
       --from string       Base branch for worktree (default: current HEAD)
       --name string       Session name
       --no-worktree       Use current directory directly
   -p, --prompt string     Initial prompt to send to Claude
+      --rm                Auto-remove session when it exits
       --worktree string   Create worktree on new branch
       --yolo              Skip permission prompts
 ```
@@ -135,12 +158,6 @@ Flags:
 
 Output columns: NAME, BRANCH, STATUS, UPTIME, REPO.
 
-Status is determined by checking tmux and docker state:
-
-    running    tmux alive + container running
-    exited     tmux alive, container stopped
-    stopped    neither alive
-
 ### attach
 
 Attach to a running session. If the session is stopped, restarts it with
@@ -153,8 +170,7 @@ Usage:
   claude-container attach <session> [flags]
 ```
 
-Press **Ctrl+Q** to detach back to the terminal or TUI dashboard.
-Tmux mouse mode is enabled for scrollback and text selection.
+See **KEY BINDINGS** below for detach/quit controls.
 
 ### stop
 
@@ -170,8 +186,8 @@ Usage:
 
 ### rm
 
-Remove a session completely: stops container, kills tmux, removes worktree,
-deletes branch, removes session record.
+Remove a session completely: stops container, removes worktree, deletes
+branch, removes session record.
 
 <!-- Generated from: claude-container rm --help -->
 
@@ -216,6 +232,74 @@ Usage:
   claude-container shell [workspace] [flags]
 ```
 
+### auth
+
+Authenticate Claude Code inside a container. Runs an interactive session
+where you complete the Claude Code login flow. Credentials are stored in the
+shared config directory and used by all sessions.
+
+Auto-exits once authentication succeeds.
+
+<!-- Generated from: claude-container auth --help -->
+
+```
+Usage:
+  claude-container auth [flags]
+  claude-container auth [command]
+
+Available Commands:
+  status      Check authentication status
+```
+
+Check auth state: `claude-container auth status`
+
+Remove credentials: `claude-container gc --auth`
+
+### doctor
+
+Check system health and configuration. Verifies Docker is available and
+running, the container image is built, the config directory exists, and
+authentication is set up.
+
+<!-- Generated from: claude-container doctor --help -->
+
+```
+Usage:
+  claude-container doctor [flags]
+```
+
+### gc
+
+Clean up stopped containers and stale sessions.
+
+<!-- Generated from: claude-container gc --help -->
+
+```
+Usage:
+  claude-container gc [flags]
+
+Flags:
+      --all    Also remove worktrees, branches, and session records
+      --auth   Remove shared Claude config directory (logs you out)
+```
+
+## KEY BINDINGS
+
+When attached to a session, a status bar is displayed on the last terminal
+row showing the session name, branch, mode, and available key bindings.
+
+All commands use a **Ctrl+B** prefix (tmux-style):
+
+    Ctrl+B d       Detach from session (session keeps running)
+    Ctrl+B q       Quit session (stop container; remove if --rm)
+    Ctrl+B Ctrl+B  Send literal Ctrl+B to the container
+
+The prefix key has a 200ms timeout. If no command key is pressed within
+that window, the prefix is cancelled.
+
+Ctrl+C is forwarded directly to the container (used by Claude Code to
+cancel operations).
+
 ## TUI DASHBOARD
 
 Run `claude-container` with no arguments to launch the dashboard.
@@ -242,12 +326,9 @@ Key bindings:
     tab            toggle live preview / git diff view
     q              quit dashboard (sessions keep running)
 
-The preview pane polls tmux every 500ms. Press Tab to toggle between live
-output and git diff of changes.
-
 ## CONFIGURATION
 
-Session state is stored at `$XDG_CONFIG_HOME/claude-container/`
+Session state and authentication are stored at `$XDG_CONFIG_HOME/claude-container/`
 (default `~/.config/claude-container/`).
 
 ## ENVIRONMENT
@@ -284,9 +365,9 @@ nix develop --command go build -o claude-container .
 
 ## DEPENDENCIES
 
-Runtime: `tmux`, `git`, `docker`.
+Runtime: `git`, `docker`.
 
-The nix package wraps the binary with all three on PATH and sets
+The nix package wraps the binary with both on PATH and sets
 `CLAUDE_CONTAINER_DOCKER_CONTEXT` to the bundled Dockerfile.
 
 Run `claude-container build` once to create the docker image before
@@ -294,18 +375,31 @@ creating sessions.
 
 ## FILES
 
-    ~/.config/claude-container/sessions.json       session metadata
-    ~/.config/claude-container/worktrees/           git worktrees
-    ~/.config/claude-container/containers/<name>/   per-session Claude Code config
+    ~/.config/claude-container/sessions.json        session metadata
+    ~/.config/claude-container/worktrees/            git worktrees
+    ~/.config/claude-container/claude-config/        shared Claude Code config
+    ~/.config/claude-container/claude-config/.credentials.json   auth credentials
 
 ## EXAMPLES
 
 ```sh
+# First-time setup
+claude-container build
+claude-container auth
+claude-container doctor
+
 # Quick-start in current directory (auto-generated name)
 claude-container run
 
 # Quick-start in yolo mode with a prompt
 claude-container run --yolo -p "fix the login bug"
+
+# Ephemeral session (auto-removed when Claude exits)
+claude-container run --rm --yolo -p "explain this codebase"
+
+# Start in background, attach later
+claude-container run -b --name my-task -p "refactor auth module"
+claude-container attach my-task
 
 # Start an isolated worktree session
 claude-container work
@@ -326,7 +420,7 @@ claude-container new --name auth --worktree feature-auth
 claude-container ps
 claude-container ps --json
 
-# Attach (Ctrl+Q to detach)
+# Attach (Ctrl+B d to detach, Ctrl+B q to quit)
 claude-container attach auth
 
 # Stream logs
@@ -340,4 +434,13 @@ claude-container attach auth
 
 # Remove completely
 claude-container rm auth
+
+# Clean up stopped containers
+claude-container gc
+
+# Clean up everything (containers + worktrees + session records)
+claude-container gc --all
+
+# Log out (remove credentials)
+claude-container gc --auth
 ```

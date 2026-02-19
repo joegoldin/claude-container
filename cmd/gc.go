@@ -9,7 +9,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var gcAll bool
+var (
+	gcAll  bool
+	gcAuth bool
+)
 
 var gcCmd = &cobra.Command{
 	Use:   "gc",
@@ -17,9 +20,22 @@ var gcCmd = &cobra.Command{
 	Long: `Remove stopped Docker containers for tracked sessions.
 
 By default, only stopped containers are removed. Use --all to also
-remove worktrees, branches, and session records for stopped sessions.`,
+remove worktrees, branches, and session records for stopped sessions.
+Use --auth to remove the shared Claude config directory (logs you out).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store := config.NewStore(config.DefaultDir())
+
+		if gcAuth {
+			dir := store.ClaudeConfigDir()
+			if err := os.RemoveAll(dir); err != nil {
+				return fmt.Errorf("remove claude config dir: %w", err)
+			}
+			fmt.Printf("Removed claude config: %s\n", dir)
+			if !gcAll {
+				return nil
+			}
+		}
+
 		sessions := store.List()
 
 		if len(sessions) == 0 {
@@ -57,5 +73,6 @@ remove worktrees, branches, and session records for stopped sessions.`,
 
 func init() {
 	gcCmd.Flags().BoolVar(&gcAll, "all", false, "Also remove worktrees, branches, and session records")
+	gcCmd.Flags().BoolVar(&gcAuth, "auth", false, "Remove shared Claude config directory (logs you out)")
 	rootCmd.AddCommand(gcCmd)
 }

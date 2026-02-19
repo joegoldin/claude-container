@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"time"
 
 	"github.com/joegoldin/claude-container/internal/config"
@@ -15,7 +14,9 @@ import (
 var authCmd = &cobra.Command{
 	Use:   "auth",
 	Short: "Authenticate Claude Code inside a container",
-	Long:  `Log in to Claude Code by running an interactive authentication session inside a container. Subcommands allow checking status or logging out.`,
+	Long: `Log in to Claude Code by running an interactive authentication session inside a container.
+Use 'claude-container auth status' to check authentication state.
+Use 'claude-container gc --auth' to remove stored credentials.`,
 	RunE:  authLoginRun,
 }
 
@@ -29,26 +30,6 @@ var authStatusCmd = &cobra.Command{
 		} else {
 			fmt.Println("Not authenticated. Run 'claude-container auth' to log in.")
 		}
-		return nil
-	},
-}
-
-var authLogoutCmd = &cobra.Command{
-	Use:   "logout",
-	Short: "Remove stored credentials",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		store := config.NewStore(config.DefaultDir())
-		credsPath := filepath.Join(store.ClaudeConfigDir(), ".credentials.json")
-
-		if err := os.Remove(credsPath); err != nil {
-			if os.IsNotExist(err) {
-				fmt.Println("No credentials found; already logged out.")
-				return nil
-			}
-			return fmt.Errorf("remove credentials: %w", err)
-		}
-
-		fmt.Println("Logged out successfully.")
 		return nil
 	},
 }
@@ -118,6 +99,5 @@ func authLoginRun(cmd *cobra.Command, args []string) error {
 
 func init() {
 	authCmd.AddCommand(authStatusCmd)
-	authCmd.AddCommand(authLogoutCmd)
 	rootCmd.AddCommand(authCmd)
 }

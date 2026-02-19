@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/joegoldin/claude-container/internal/config"
@@ -42,17 +43,25 @@ var doctorCmd = &cobra.Command{
 			ok = false
 		}
 
-		// 4. Authenticated?
+		// 4. Claude config dir exists?
 		store := config.NewStore(config.DefaultDir())
+		claudeDir := store.ClaudeConfigDir()
+		if fi, err := os.Stat(claudeDir); err == nil && fi.IsDir() {
+			fmt.Println("  [ OK ] Claude config dir exists")
+		} else {
+			fmt.Println("  [WARN] Claude config dir not found (created on first 'claude-container auth')")
+		}
+
+		// 5. Authenticated?
 		if store.IsAuthenticated() {
 			fmt.Println("  [ OK ] Authenticated")
 		} else {
 			fmt.Println("  [WARN] Not authenticated (run 'claude-container auth')")
 		}
 
-		// 5. Info.
+		// 6. Info.
 		fmt.Println("  [INFO] Config dir: " + config.DefaultDir())
-		fmt.Println("  [INFO] Claude config: " + store.ClaudeConfigDir())
+		fmt.Println("  [INFO] Claude config: " + claudeDir)
 
 		if !ok {
 			return fmt.Errorf("doctor found issues")
