@@ -29,6 +29,7 @@ type WizardResult struct {
 	Yolo       bool
 	Prompt     string
 	Cancelled  bool
+	Background bool // create in background without attaching
 }
 
 // WizardModel is the Bubble Tea model for the interactive new-session wizard.
@@ -251,8 +252,14 @@ func (m WizardModel) updateMode(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m WizardModel) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "enter" {
+	switch msg.String() {
+	case "enter":
 		m.result.Prompt = strings.TrimSpace(m.textInput.Value())
+		m.step = stepDone
+		return m, tea.Quit
+	case "ctrl+b":
+		m.result.Prompt = strings.TrimSpace(m.textInput.Value())
+		m.result.Background = true
 		m.step = stepDone
 		return m, tea.Quit
 	}
@@ -311,7 +318,7 @@ func (m WizardModel) View() string {
 		b.WriteString("Prompt to send to Claude:\n")
 		b.WriteString(m.textInput.View())
 		b.WriteString("\n\n")
-		b.WriteString(dimStyle.Render("enter confirm (empty = none)  esc cancel"))
+		b.WriteString(dimStyle.Render("enter confirm  ctrl+b background  esc cancel"))
 	}
 
 	return b.String()

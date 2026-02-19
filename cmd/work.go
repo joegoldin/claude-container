@@ -9,10 +9,11 @@ import (
 )
 
 var (
-	workYolo   bool
-	workPrompt string
-	workName   string
-	workFrom   string
+	workYolo       bool
+	workPrompt     string
+	workName       string
+	workFrom       string
+	workBackground bool
 )
 
 var workCmd = &cobra.Command{
@@ -30,11 +31,12 @@ var workCmd = &cobra.Command{
 		}
 
 		return createSession(createOpts{
-			name:     name,
-			worktree: name,
-			from:     workFrom,
-			yolo:     workYolo,
-			prompt:   workPrompt,
+			name:       name,
+			worktree:   name,
+			from:       workFrom,
+			yolo:       workYolo,
+			prompt:     workPrompt,
+			background: workBackground,
 		})
 	},
 }
@@ -44,5 +46,6 @@ func init() {
 	workCmd.Flags().StringVarP(&workPrompt, "prompt", "p", "", "Initial prompt to send to Claude")
 	workCmd.Flags().StringVar(&workName, "name", "", "Session name (auto-generated if omitted)")
 	workCmd.Flags().StringVar(&workFrom, "from", "", "Base branch for worktree (default: current HEAD)")
+	workCmd.Flags().BoolVarP(&workBackground, "background", "b", false, "Don't attach after creation")
 	rootCmd.AddCommand(workCmd)
 }

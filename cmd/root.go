@@ -61,16 +61,25 @@ var rootCmd = &cobra.Command{
 				if res.Cancelled {
 					continue
 				}
-				if err := createSession(createOpts{
+				// From dashboard, always create in background mode so we
+			// return to the dashboard loop. Then auto-attach unless
+			// the user pressed ctrl+b in the wizard.
+			if err := createSession(createOpts{
 					name:       res.Name,
 					worktree:   res.Worktree,
 					from:       res.From,
 					noWorktree: res.NoWorktree,
 					yolo:       res.Yolo,
 					prompt:     res.Prompt,
+					background: true, // dashboard manages attach
 				}); err != nil {
 					fmt.Fprintln(os.Stderr, "error:", err)
 					continue
+				}
+				if !res.Background {
+					ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+					_ = tmux.Attach(ctx, tmux.SessionName(res.Name))
+					stop()
 				}
 				continue
 			}

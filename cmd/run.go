@@ -9,9 +9,10 @@ import (
 )
 
 var (
-	runYolo   bool
-	runPrompt string
-	runName   string
+	runYolo       bool
+	runPrompt     string
+	runName       string
+	runBackground bool
 )
 
 var runCmd = &cobra.Command{
@@ -33,6 +34,7 @@ var runCmd = &cobra.Command{
 			noWorktree: true,
 			yolo:       runYolo,
 			prompt:     runPrompt,
+			background: runBackground,
 		})
 	},
 }
@@ -41,5 +43,6 @@ func init() {
 	runCmd.Flags().BoolVar(&runYolo, "yolo", false, "Skip permission prompts")
 	runCmd.Flags().StringVarP(&runPrompt, "prompt", "p", "", "Initial prompt to send to Claude")
 	runCmd.Flags().StringVar(&runName, "name", "", "Session name (auto-generated if omitted)")
+	runCmd.Flags().BoolVarP(&runBackground, "background", "b", false, "Don't attach after creation")
 	rootCmd.AddCommand(runCmd)
 }
