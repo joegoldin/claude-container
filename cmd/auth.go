@@ -1,0 +1,104 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+
+	"github.com/joegoldin/claude-container/internal/config"
+	"github.com/joegoldin/claude-container/internal/docker"
+	"github.com/spf13/cobra"
+)
+
+var authCmd = &cobra.Command{
+	Use:   "auth",
+	Short: "Authenticate Claude Code inside a container",
+	Long:  `Log in to Claude Code by running an interactive authentication session inside a container. Subcommands allow checking status or logging out.`,
+	RunE:  authLoginRun,
+}
+
+var authStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Check authentication status",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		store := config.NewStore(config.DefaultDir())
+		if store.IsAuthenticated() {
+			fmt.Println("Authenticated")
+		} else {
+			fmt.Println("Not authenticated. Run 'claude-container auth' to log in.")
+		}
+		return nil
+	},
+}
+
+var authLogoutCmd = &cobra.Command{
+	Use:   "logout",
+	Short: "Remove stored credentials",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		store := config.NewStore(config.DefaultDir())
+		credsPath := filepath.Join(store.ClaudeConfigDir(), ".credentials.json")
+
+		if err := os.Remove(credsPath); err != nil {
+			if os.IsNotExist(err) {
+				fmt.Println("No credentials found; already logged out.")
+				return nil
+			}
+			return fmt.Errorf("remove credentials: %w", err)
+		}
+
+		fmt.Println("Logged out successfully.")
+		return nil
+	},
+}
+
+func authLoginRun(cmd *cobra.Command, args []string) error {
+	store := config.NewStore(config.DefaultDir())
+
+	// Ensure the shared config directory exists.
+	if err := os.MkdirAll(store.ClaudeConfigDir(), 0o755); err != nil {
+		return fmt.Errorf("create claude config dir: %w", err)
+	}
+
+	// Check that the docker image has been built.
+	if !docker.ImageExists() {
+		return fmt.Errorf("docker image %q not found; run 'claude-container build' first", docker.ImageName)
+	}
+
+	// Run an interactive container so the user can authenticate.
+	dockerArgs := []string{
+		"run",
+		"--rm",
+		"-it",
+		"-v", store.ClaudeConfigDir() + ":/claude",
+		"-e", "CLAUDE_CONFIG_DIR=/claude",
+		"-e", fmt.Sprintf("USER_UID=%d", os.Getuid()),
+		"-e", fmt.Sprintf("USER_GID=%d", os.Getgid()),
+		docker.ImageName,
+		"claude",
+	}
+
+	c := exec.Command("docker", dockerArgs...)
+	c.Stdin = os.Stdin
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("docker run: %w", err)
+	}
+
+	// Report auth status after the container exits.
+	if store.IsAuthenticated() {
+		fmt.Println("Authentication successful.")
+	} else {
+		fmt.Println("Authentication was not completed. Run 'claude-container auth' to try again.")
+	}
+
+	return nil
+}
+
+func init() {
+	authCmd.AddCommand(authStatusCmd)
+	authCmd.AddCommand(authLogoutCmd)
+	rootCmd.AddCommand(authCmd)
+}

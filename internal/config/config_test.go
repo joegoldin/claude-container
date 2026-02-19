@@ -284,6 +284,44 @@ func TestContainerConfigDir(t *testing.T) {
 	}
 }
 
+func TestClaudeConfigDir(t *testing.T) {
+	store := NewStore("/tmp/test-config")
+	got := store.ClaudeConfigDir()
+	want := filepath.Join("/tmp/test-config", "claude-config")
+	if got != want {
+		t.Errorf("ClaudeConfigDir() = %q, want %q", got, want)
+	}
+
+	// Consistent across calls.
+	if got2 := store.ClaudeConfigDir(); got2 != got {
+		t.Errorf("ClaudeConfigDir() returned %q then %q, want consistent", got, got2)
+	}
+}
+
+func TestIsAuthenticated(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	// Not authenticated by default.
+	if store.IsAuthenticated() {
+		t.Error("IsAuthenticated() = true on fresh store, want false")
+	}
+
+	// Create the credentials file.
+	configDir := store.ClaudeConfigDir()
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, ".credentials.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// Now should be authenticated.
+	if !store.IsAuthenticated() {
+		t.Error("IsAuthenticated() = false after creating credentials, want true")
+	}
+}
+
 func TestGenerateName(t *testing.T) {
 	tests := []struct {
 		dir  string

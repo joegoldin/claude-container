@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -60,89 +59,20 @@ func (s *Store) WorktreeDir() string {
 	return filepath.Join(s.dir, "worktrees")
 }
 
-// CredentialsFile returns the path to the Claude Code credentials file
-// on the host, or "" if not found. It checks CLAUDE_CONFIG_DIR, then
-// ~/.claude/.credentials.json.
-func CredentialsFile() string {
-	// Check CLAUDE_CONFIG_DIR first.
-	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-		p := filepath.Join(dir, ".credentials.json")
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	// Default location.
-	home, _ := os.UserHomeDir()
-	p := filepath.Join(home, ".claude", ".credentials.json")
-	if _, err := os.Stat(p); err == nil {
-		return p
-	}
-	return ""
+// ClaudeConfigDir returns the path to the shared Claude Code config
+// directory that gets mounted as CLAUDE_CONFIG_DIR inside containers.
+// Claude Code manages its own auth and settings in this directory.
+func (s *Store) ClaudeConfigDir() string {
+	return filepath.Join(s.dir, "claude-config")
 }
 
-// ClaudeSettingsFile returns the path to the Claude Code settings file
-// (.claude.json) on the host, or "" if not found. This file contains
-// account info and feature flags needed to skip first-run onboarding.
-func ClaudeSettingsFile() string {
-	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-		p := filepath.Join(dir, ".claude.json")
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			return p
-		}
-	}
-	home, _ := os.UserHomeDir()
-	p := filepath.Join(home, ".claude", ".claude.json")
-	if info, err := os.Stat(p); err == nil && !info.IsDir() {
-		return p
-	}
-	return ""
-}
-
-// SeedClaudeJSON copies .claude.json from an existing container config
-// dir into the target dir. This reuses account info from a previous
-// session so new containers skip first-run onboarding.
-//
-// Because container-created files may be owned by Docker's remapped UID,
-// the copy is performed via a short-lived Docker container that runs as
-// root and can read any file.
-func (s *Store) SeedClaudeJSON(name string) {
-	dst := s.ContainerConfigDir(name)
-
-	// Already has one — nothing to do.
-	if info, err := os.Stat(filepath.Join(dst, ".claude.json")); err == nil && !info.IsDir() {
-		return
-	}
-
-	containersDir := filepath.Join(s.dir, "containers")
-	entries, err := os.ReadDir(containersDir)
-	if err != nil {
-		return
-	}
-
-	for _, entry := range entries {
-		if entry.Name() == name || !entry.IsDir() {
-			continue
-		}
-		src := filepath.Join(containersDir, entry.Name())
-		candidate := filepath.Join(src, ".claude.json")
-		info, err := os.Stat(candidate)
-		if err != nil || info.IsDir() || info.Size() == 0 {
-			continue
-		}
-
-		// Use docker to copy since the file may be owned by a
-		// remapped UID that the host user cannot read.
-		cmd := exec.Command("docker", "run", "--rm",
-			"--entrypoint", "sh",
-			"-v", src+":/src:ro",
-			"-v", dst+":/dst",
-			"claude-code",
-			"-c", "cp /src/.claude.json /dst/.claude.json",
-		)
-		if cmd.Run() == nil {
-			return
-		}
-	}
+// IsAuthenticated reports whether Claude Code credentials exist in the
+// shared config directory. It checks for the presence of
+// .credentials.json inside ClaudeConfigDir().
+func (s *Store) IsAuthenticated() bool {
+	p := filepath.Join(s.ClaudeConfigDir(), ".credentials.json")
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // ContainerConfigDir returns the per-session directory that gets mounted

@@ -166,26 +166,26 @@ func createSession(opts createOpts) error {
 		}
 	}
 
-	// f. Build docker run args and create container (detached).
-	containerConfigDir := store.ContainerConfigDir(name)
-	if err := os.MkdirAll(containerConfigDir, 0o755); err != nil {
-		return fmt.Errorf("create container config dir: %w", err)
+	// f. Ensure shared Claude config dir exists.
+	claudeConfigDir := store.ClaudeConfigDir()
+	if err := os.MkdirAll(claudeConfigDir, 0o755); err != nil {
+		return fmt.Errorf("create claude config dir: %w", err)
 	}
 
-	// Seed .claude.json from a previous session to skip onboarding.
-	store.SeedClaudeJSON(name)
+	// Hint if not yet authenticated (don't block — user might auth inside).
+	if !store.IsAuthenticated() {
+		fmt.Println("Note: not authenticated. Run 'claude-container auth' to log in.")
+	}
 
 	runOpts := docker.RunOpts{
-		Name:            name,
-		Workspace:       workspace,
-		ConfigDir:       containerConfigDir,
-		CredentialsFile: config.CredentialsFile(),
-		SettingsFile:    config.ClaudeSettingsFile(),
-		UID:             os.Getuid(),
-		GID:             os.Getgid(),
-		Yolo:            opts.yolo,
-		Prompt:          opts.prompt,
-		Continue:        opts.cont,
+		Name:      name,
+		Workspace: workspace,
+		ConfigDir: claudeConfigDir,
+		UID:       os.Getuid(),
+		GID:       os.Getgid(),
+		Yolo:      opts.yolo,
+		Prompt:    opts.prompt,
+		Continue:  opts.cont,
 	}
 
 	// g. Save session to store before running so it's tracked even if

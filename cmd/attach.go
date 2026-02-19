@@ -36,17 +36,14 @@ var attachCmd = &cobra.Command{
 
 		default:
 			// Container doesn't exist — recreate with --continue.
-			containerConfigDir := store.ContainerConfigDir(name)
 			dockerArgs := docker.RunArgs(docker.RunOpts{
-				Name:            name,
-				Workspace:       sess.WorktreePath,
-				ConfigDir:       containerConfigDir,
-				CredentialsFile: config.CredentialsFile(),
-				SettingsFile:    config.ClaudeSettingsFile(),
-				UID:             os.Getuid(),
-				GID:             os.Getgid(),
-				Yolo:            sess.Yolo,
-				Continue:        true,
+				Name:      name,
+				Workspace: sess.WorktreePath,
+				ConfigDir: store.ClaudeConfigDir(),
+				UID:       os.Getuid(),
+				GID:       os.Getgid(),
+				Yolo:      sess.Yolo,
+				Continue:  true,
 			}, false)
 
 			fmt.Println("Recreating container with --continue...")

@@ -23,12 +23,12 @@ var shellCmd = &cobra.Command{
 		}
 
 		store := config.NewStore(config.DefaultDir())
-		shellConfigDir := store.ContainerConfigDir("_shell")
-		if err := os.MkdirAll(shellConfigDir, 0o755); err != nil {
+		claudeConfigDir := store.ClaudeConfigDir()
+		if err := os.MkdirAll(claudeConfigDir, 0o755); err != nil {
 			return err
 		}
 
-		shellArgs := docker.ShellArgs(ws, shellConfigDir, os.Getuid(), os.Getgid())
+		shellArgs := docker.ShellArgs(ws, claudeConfigDir, os.Getuid(), os.Getgid())
 		c := exec.Command("docker", shellArgs...)
 		c.Stdin = os.Stdin
 		c.Stdout = os.Stdout
