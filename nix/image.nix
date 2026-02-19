@@ -12,7 +12,7 @@ let
   su-exec = pkgs.su-exec;
 
   # Full Nix store paths for entrypoint commands
-  getent = "${pkgs.glibc.bin}/bin/getent";
+  getent = "${pkgs.glibc.getent}/bin/getent";
   groupadd = "${shadow}/bin/groupadd";
   useradd = "${shadow}/bin/useradd";
   chown = "${coreutils}/bin/chown";

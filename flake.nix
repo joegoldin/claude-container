@@ -70,7 +70,7 @@
           inherit system;
           overlays = [ llm-agents.overlays.default ];
         };
-        vendorHash = "sha256-t6Hbr5aArRL70MotJuhZZL0JEmXZztTbevzMayHDXcs=";
+        vendorHash = "sha256-usdgGSIdHT9L0ZwWVxN3Og3e14kTRskJTNGRQdMmwNY=";
 
         defaultContainer = self.lib.mkClaudeContainer {
           inherit pkgs;
