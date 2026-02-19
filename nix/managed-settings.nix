@@ -1,5 +1,16 @@
 # nix/managed-settings.nix
 {
+  env = {
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+    DISABLE_AUTOUPDATER = "1";
+  };
+
+  cleanupPeriodDays = 14;
+
+  alwaysThinkingEnabled = true;
+  showTurnDuration = true;
+  spinnerTipsEnabled = false;
+
   sandbox = {
     enabled = true;
     autoAllowBashIfSandboxed = true;
