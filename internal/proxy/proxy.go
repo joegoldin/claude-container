@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,6 +20,14 @@ import (
 	"github.com/creack/pty"
 	"golang.org/x/term"
 )
+
+// ansiRe matches ANSI escape sequences (CSI, OSC, and simple escapes).
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[^[\]]`)
+
+// stripANSI removes ANSI escape sequences from b.
+func stripANSI(b []byte) []byte {
+	return ansiRe.ReplaceAll(b, nil)
+}
 
 // StatusBarInfo holds the data rendered in the status bar.
 type StatusBarInfo struct {
@@ -108,10 +117,22 @@ func Run(opts Opts) error {
 	var quit bool
 
 	// stdout proxy: docker pty -> host stdout.
+	// Also watches for Claude Code's workspace trust prompt and auto-accepts it.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		buf := make([]byte, 4096)
+
+		// Rolling buffer to detect the workspace trust prompt across
+		// read boundaries. We only need enough to match the needle.
+		// Only active during the first 5 seconds of the session to
+		// avoid accidental triggers during normal operation.
+		const needle = "Yes, I trust this folder"
+		var ring [256]byte
+		var ringLen int
+		scanning := true
+		scanDeadline := time.After(5 * time.Second)
+
 		for {
 			select {
 			case <-done:
@@ -121,6 +142,33 @@ func Run(opts Opts) error {
 			n, err := ptmx.Read(buf)
 			if n > 0 {
 				os.Stdout.Write(buf[:n])
+
+				// Check for workspace trust prompt during startup window.
+				if scanning {
+					select {
+					case <-scanDeadline:
+						scanning = false
+					default:
+					}
+				}
+				if scanning {
+					// Append new data to ring buffer.
+					for i := 0; i < n; i++ {
+						if ringLen < len(ring) {
+							ring[ringLen] = buf[i]
+							ringLen++
+						} else {
+							copy(ring[:], ring[1:])
+							ring[len(ring)-1] = buf[i]
+						}
+					}
+					// Strip ANSI escape sequences for matching.
+					clean := stripANSI(ring[:ringLen])
+					if strings.Contains(string(clean), needle) {
+						scanning = false
+						ptmx.Write([]byte("\r"))
+					}
+				}
 			}
 			if err != nil {
 				return
