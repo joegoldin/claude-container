@@ -88,6 +88,13 @@ func Run(opts Opts) error {
 	}
 	defer ptmx.Close()
 
+	// Put the PTY into raw mode to disable echo and line processing.
+	// Without this, input written to the master gets echoed back and
+	// mixes with the container's actual output.
+	if _, err := term.MakeRaw(int(ptmx.Fd())); err != nil {
+		return fmt.Errorf("proxy: failed to set pty raw mode: %w", err)
+	}
+
 	// Set up scroll region and initial status bar.
 	setScrollRegion(height)
 	renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
