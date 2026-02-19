@@ -18,10 +18,11 @@ var (
 var gcCmd = &cobra.Command{
 	Use:   "gc",
 	Short: "Clean up stopped containers and stale sessions",
-	Long: `Remove stopped Docker containers for tracked sessions.
+	Long: `Remove stopped containers, orphaned session records, and optionally worktrees.
 
-By default, only stopped containers are removed. Use --all to also
-remove worktrees, branches, and session records for stopped sessions.
+By default, removes stopped containers and cleans up session records
+whose containers no longer exist. Use --all to also remove worktrees
+and branches for non-running sessions.
 Use --auth to remove the shared Claude config directory (logs you out).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store := config.NewStore(config.DefaultDir())
@@ -59,13 +60,16 @@ Use --auth to remove the shared Claude config directory (logs you out).`,
 				cleaned++
 			}
 
-			if gcAll {
+			// Always remove orphaned session records (container gone).
+			// With --all, also remove worktrees/branches via removeSession.
+			if gcAll || !docker.Exists(sess.Name) {
 				removeSession(store, sess.Name)
 				fmt.Printf("Removed session: %s\n", sess.Name)
+				cleaned++
 			}
 		}
 
-		if cleaned == 0 && !gcAll {
+		if cleaned == 0 {
 			fmt.Println("Nothing to clean up.")
 		}
 		return nil
@@ -97,7 +101,7 @@ func removeClaudeConfig(dir string) error {
 }
 
 func init() {
-	gcCmd.Flags().BoolVar(&gcAll, "all", false, "Also remove worktrees, branches, and session records")
+	gcCmd.Flags().BoolVar(&gcAll, "all", false, "Also remove worktrees and branches for stopped sessions")
 	gcCmd.Flags().BoolVar(&gcAuth, "auth", false, "Remove shared Claude config directory (logs you out)")
 	rootCmd.AddCommand(gcCmd)
 }

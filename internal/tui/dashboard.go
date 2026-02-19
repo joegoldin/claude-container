@@ -7,9 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
@@ -23,19 +21,17 @@ type sessionInfo struct {
 
 // DashboardModel is the Bubble Tea model for the TUI dashboard.
 type DashboardModel struct {
-	store      *config.Store
-	sessions   []sessionInfo
-	cursor     int
-	width      int
-	height     int
-	preview    viewport.Model
-	showDiff   bool
-	quitting   bool
-	attached   string
-	creating   bool
+	store       *config.Store
+	sessions    []sessionInfo
+	cursor      int
+	width       int
+	height      int
+	quitting    bool
+	attached    string
+	creating    bool
 	creatingDir string // directory chosen for new session
-	dirInput   textinput.Model
-	pickingDir bool // true when directory input is active
+	dirInput    textinput.Model
+	pickingDir  bool // true when directory input is active
 }
 
 // Internal message types.
@@ -43,18 +39,12 @@ type refreshMsg struct {
 	sessions []sessionInfo
 }
 
-type previewMsg struct {
-	content string
-}
-
 type tickMsg time.Time
 
 // NewDashboard creates a new DashboardModel backed by the given store.
 func NewDashboard(store *config.Store) DashboardModel {
-	vp := viewport.New(0, 0)
 	return DashboardModel{
-		store:   store,
-		preview: vp,
+		store: store,
 	}
 }
 
@@ -78,9 +68,9 @@ func (m DashboardModel) CreatingDir() string {
 	return m.creatingDir
 }
 
-// tick returns a command that sends a tickMsg after 500ms.
+// tick returns a command that sends a tickMsg after 2s.
 func (m DashboardModel) tick() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
@@ -103,56 +93,6 @@ func (m DashboardModel) refreshSessions() tea.Cmd {
 			infos = append(infos, sessionInfo{session: sess, status: status})
 		}
 		return refreshMsg{sessions: infos}
-	}
-}
-
-// fetchPreview returns a command that fetches preview content for the
-// currently selected session.
-func (m DashboardModel) fetchPreview() tea.Cmd {
-	if len(m.sessions) == 0 {
-		return nil
-	}
-	idx := m.cursor
-	if idx >= len(m.sessions) {
-		idx = len(m.sessions) - 1
-	}
-	si := m.sessions[idx]
-
-	return func() tea.Msg {
-		if si.status != "running" {
-			return previewMsg{content: fmt.Sprintf("(session %s)", si.status)}
-		}
-
-		if m.showDiff {
-			// Show git diff + status for the worktree.
-			var sb strings.Builder
-			st, err := gitpkg.Status(si.session.WorktreePath)
-			if err == nil && st != "" {
-				sb.WriteString("git status --short:\n")
-				sb.WriteString(st)
-				sb.WriteString("\n\n")
-			}
-			diff, err := gitpkg.Diff(si.session.WorktreePath)
-			if err == nil && diff != "" {
-				sb.WriteString("git diff HEAD:\n")
-				sb.WriteString(diff)
-			}
-			content := sb.String()
-			if content == "" {
-				content = "(no changes)"
-			}
-			return previewMsg{content: content}
-		}
-
-		// Show recent container logs.
-		output, err := docker.LogsTail(si.session.Name, 20)
-		if err != nil {
-			return previewMsg{content: fmt.Sprintf("(logs error: %v)", err)}
-		}
-		if strings.TrimSpace(output) == "" {
-			return previewMsg{content: "(no output yet)"}
-		}
-		return previewMsg{content: output}
 	}
 }
 
@@ -194,13 +134,13 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.sessions)-1 {
 				m.cursor++
 			}
-			return m, m.fetchPreview()
+			return m, nil
 
 		case "k", "up":
 			if m.cursor > 0 {
 				m.cursor--
 			}
-			return m, m.fetchPreview()
+			return m, nil
 
 		case "enter":
 			if len(m.sessions) > 0 {
@@ -215,7 +155,7 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "n":
 			if m.pickingDir {
-				break // already picking, let text input handle it
+				break
 			}
 			cwd, _ := os.Getwd()
 			ti := textinput.New()
@@ -223,7 +163,6 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ti.SetValue(cwd)
 			ti.Focus()
 			ti.CharLimit = 256
-			// Place cursor at end of value.
 			ti.CursorEnd()
 			m.dirInput = ti
 			m.pickingDir = true
@@ -252,60 +191,36 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					_ = gitpkg.RemoveWorktree(si.session.RepoPath, si.session.WorktreePath, si.session.Branch)
 				}
 				_ = m.store.Delete(si.session.Name)
-				// Adjust cursor if it would go out of bounds.
 				if m.cursor > 0 && m.cursor >= len(m.sessions)-1 {
 					m.cursor--
 				}
 			}
 			return m, m.refreshSessions()
-
-		case "tab":
-			m.showDiff = !m.showDiff
-			return m, m.fetchPreview()
 		}
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Right panel gets 2/3 of width minus border overhead.
-		previewW := m.width*2/3 - 4
-		if previewW < 10 {
-			previewW = 10
-		}
-		previewH := m.height - 6 // leave room for title, help bar, borders
-		if previewH < 3 {
-			previewH = 3
-		}
-		m.preview.Width = previewW
-		m.preview.Height = previewH
-		return m, m.fetchPreview()
+		return m, nil
 
 	case refreshMsg:
 		m.sessions = msg.sessions
 		if m.cursor >= len(m.sessions) && len(m.sessions) > 0 {
 			m.cursor = len(m.sessions) - 1
 		}
-		return m, m.fetchPreview()
-
-	case previewMsg:
-		m.preview.SetContent(msg.content)
-		m.preview.GotoTop()
 		return m, nil
 
 	case tickMsg:
 		return m, tea.Batch(m.refreshSessions(), m.tick())
 	}
 
-	// Pass unhandled messages to the dir input or viewport.
 	if m.pickingDir {
 		var cmd tea.Cmd
 		m.dirInput, cmd = m.dirInput.Update(msg)
 		return m, cmd
 	}
 
-	var cmd tea.Cmd
-	m.preview, cmd = m.preview.Update(msg)
-	return m, cmd
+	return m, nil
 }
 
 // View renders the dashboard.
@@ -314,112 +229,77 @@ func (m DashboardModel) View() string {
 		return ""
 	}
 
-	// Calculate panel widths.
-	leftW := m.width / 3
-	if leftW < 20 {
-		leftW = 20
+	contentW := m.width - 4 // border padding
+	if contentW < 20 {
+		contentW = 20
 	}
-	rightW := m.width - leftW
-	if rightW < 20 {
-		rightW = 20
-	}
-
-	// Available height for content (subtract title line + help bar + borders).
 	contentH := m.height - 4
 	if contentH < 3 {
 		contentH = 3
 	}
 
-	// -- Left panel: session list --
-	var leftLines []string
-	leftLines = append(leftLines, titleStyle.Render("Sessions"))
-	leftLines = append(leftLines, "")
+	var lines []string
+	lines = append(lines, titleStyle.Render("Sessions"))
+	lines = append(lines, "")
 
 	if len(m.sessions) == 0 {
-		leftLines = append(leftLines, dimStyle.Render("  No sessions yet."))
-		leftLines = append(leftLines, dimStyle.Render("  Press n to create one."))
+		lines = append(lines, dimStyle.Render("  No sessions yet."))
+		lines = append(lines, dimStyle.Render("  Press n to create one."))
 	} else {
-		// Compute row width for full-width highlight.
-		rowW := leftW - 4 // subtract border + padding
+		rowW := contentW - 2
 		if rowW < 10 {
 			rowW = 10
 		}
 
 		for i, si := range m.sessions {
-			// Status indicator character (uncolored for selected row).
-			var dot string
-			switch si.status {
-			case "running":
-				dot = "●"
-			case "stopped":
-				dot = "●"
-			case "removed":
-				dot = "●"
-			default:
-				dot = "●"
-			}
+			// Status indicator.
+			dot := "●"
 
 			name := si.session.Name
+			status := si.status
 			branch := si.session.Branch
-			branchStr := ""
+			repo := shortenHome(si.session.RepoPath)
+
+			// Build detail line: status, branch, repo.
+			var details []string
+			details = append(details, status)
 			if branch != "" {
-				branchStr = fmt.Sprintf(" (%s)", branch)
+				details = append(details, branch)
 			}
+			if repo != "" {
+				details = append(details, repo)
+			}
+			detailStr := strings.Join(details, " │ ")
 
 			if i == m.cursor {
-				// Full-width highlighted row.
-				row := fmt.Sprintf(" %s %s%s", dot, name, branchStr)
-				// Pad to fill the row width.
+				row := fmt.Sprintf(" %s %s", dot, name)
 				if len(row) < rowW {
 					row += strings.Repeat(" ", rowW-len(row))
 				}
-				leftLines = append(leftLines, selectedStyle.Render(row))
+				lines = append(lines, selectedStyle.Render(row))
+				lines = append(lines, "   "+dimStyle.Render(detailStr))
 			} else {
-				// Normal row with colored status dot.
 				var indicator string
 				switch si.status {
 				case "running":
 					indicator = statusRunning.Render(dot)
 				case "stopped":
 					indicator = statusStopped.Render(dot)
-				case "removed":
-					indicator = dimStyle.Render(dot)
 				default:
 					indicator = dimStyle.Render(dot)
 				}
-				line := fmt.Sprintf(" %s %s", indicator, name)
-				if branchStr != "" {
-					line += dimStyle.Render(branchStr)
-				}
-				leftLines = append(leftLines, line)
+				lines = append(lines, fmt.Sprintf(" %s %s", indicator, name))
+				lines = append(lines, "   "+dimStyle.Render(detailStr))
 			}
 		}
 	}
 
-	leftContent := strings.Join(leftLines, "\n")
-	leftPanel := borderStyle.
-		Width(leftW - 2). // subtract border width
+	content := strings.Join(lines, "\n")
+	panel := borderStyle.
+		Width(contentW).
 		Height(contentH).
-		Render(leftContent)
+		Render(content)
 
-	// -- Right panel: preview or diff --
-	var previewTitle string
-	if m.showDiff {
-		previewTitle = previewTitleStyle.Render("Git Diff")
-	} else {
-		previewTitle = previewTitleStyle.Render("Container Logs")
-	}
-
-	rightContent := previewTitle + "\n" + m.preview.View()
-	rightPanel := borderStyle.
-		Width(rightW - 2).
-		Height(contentH).
-		Render(rightContent)
-
-	// Join panels horizontally.
-	panels := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
-
-	// Help bar or directory input.
 	var bottom string
 	if m.pickingDir {
 		bottom = fmt.Sprintf("  %s %s\n  %s",
@@ -429,9 +309,22 @@ func (m DashboardModel) View() string {
 		)
 	} else {
 		bottom = helpStyle.Render(
-			"  ↑/↓ navigate  enter attach  n new  d stop  x remove  tab diff/logs  q quit",
+			"  ↑/↓ navigate  enter attach  n new  d stop  x remove  q quit",
 		)
 	}
 
-	return panels + "\n" + bottom
+	return panel + "\n" + bottom
 }
+
+// shortenHome replaces the user's home directory prefix with ~.
+func shortenHome(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if len(path) >= len(home) && path[:len(home)] == home {
+		return "~" + path[len(home):]
+	}
+	return path
+}
+

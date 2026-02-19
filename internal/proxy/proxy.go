@@ -96,9 +96,8 @@ func Run(opts Opts) error {
 		return fmt.Errorf("proxy: failed to set pty raw mode: %w", err)
 	}
 
-	// Clear screen, set up scroll region, and render initial status bar.
+	// Clear screen and render initial status bar (which also sets scroll region).
 	fmt.Fprint(os.Stdout, "\033[2J\033[H") // clear screen + cursor home
-	setScrollRegion(height)
 	renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
 
 	// done channel signals goroutines to exit.
@@ -125,6 +124,32 @@ func Run(opts Opts) error {
 			}
 			if err != nil {
 				return
+			}
+		}
+	}()
+
+	// Periodic status bar refresh: Claude Code's TUI (bubbletea) switches
+	// to the alternate screen buffer on startup, which resets the scroll
+	// region and overwrites the status bar. A ticker re-renders it so the
+	// bar stays visible regardless of what the inner program does.
+	// Wait briefly before starting to avoid fighting with the container's
+	// initial screen setup.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		select {
+		case <-done:
+			return
+		case <-time.After(2 * time.Second):
+		}
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
 			}
 		}
 	}()
@@ -226,7 +251,6 @@ func Run(opts Opts) error {
 				if err == nil {
 					width = w
 					height = h
-					setScrollRegion(height)
 					renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
 					// Resize the PTY so the container sees the new dimensions.
 					pty.Setsize(ptmx, &pty.Winsize{
@@ -373,8 +397,11 @@ func renderStatusBar(w io.Writer, width, height int, info StatusBarInfo, prefixA
 		bar = string(barRunes[:width])
 	}
 
-	// Save cursor, move to status row, clear line, draw bar in inverse video, restore cursor.
-	fmt.Fprintf(w, "\033[s\033[%d;1H\033[2K\033[7m%s\033[0m\033[u", height, bar)
+	// Save cursor, set scroll region (rows 1..height-1), move to status row,
+	// clear line, draw bar in inverse video, restore cursor. Setting the scroll
+	// region here (inside save/restore) avoids the cursor-to-origin side effect
+	// that causes flashing during resize.
+	fmt.Fprintf(w, "\033[s\033[1;%dr\033[%d;1H\033[2K\033[7m%s\033[0m\033[u", height-1, height, bar)
 }
 
 // renderOverlay clears the scroll region and shows a centered message,

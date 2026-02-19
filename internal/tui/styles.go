@@ -21,17 +21,10 @@ var (
 	statusStopped = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("196"))
 
-	statusExited = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214"))
-
 	borderStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("238"))
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241"))
-
-	previewTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("75"))
 )

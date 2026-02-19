@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
@@ -200,7 +201,17 @@ func Build(contextDir string) *exec.Cmd {
 	return cmd
 }
 
-// LogsTail returns the last n lines of container logs.
+// ansiRe matches ANSI escape sequences (CSI, OSC, and single-character escapes).
+var ansiRe = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07]*\x07|\([A-Z])`)
+
+// StripANSI removes ANSI escape sequences from s.
+func StripANSI(s string) string {
+	return ansiRe.ReplaceAllString(s, "")
+}
+
+// LogsTail returns the last n lines of container logs with ANSI escape
+// sequences stripped (container TUI output contains cursor/color codes
+// that corrupt display in the dashboard).
 func LogsTail(session string, n int) (string, error) {
 	name := ContainerName(session)
 	cmd := exec.Command("docker", "logs", "--tail", fmt.Sprintf("%d", n), name)
@@ -210,5 +221,5 @@ func LogsTail(session string, n int) (string, error) {
 	if err := cmd.Run(); err != nil {
 		return "", err
 	}
-	return buf.String(), nil
+	return StripANSI(buf.String()), nil
 }
