@@ -24,6 +24,7 @@ type RunOpts struct {
 	Workspace       string
 	ConfigDir       string
 	CredentialsFile string // host path to .credentials.json (mounted read-only)
+	SettingsFile    string // host path to .claude.json (mounted read-only)
 	UID             int
 	GID             int
 	Yolo            bool
@@ -68,6 +69,9 @@ func RunArgs(opts RunOpts, detached bool) []string {
 	// which handles Docker user namespace remapping.
 	if opts.CredentialsFile != "" {
 		args = append(args, "-v", opts.CredentialsFile+":/tmp/host-credentials.json:ro")
+	}
+	if opts.SettingsFile != "" {
+		args = append(args, "-v", opts.SettingsFile+":/tmp/host-claude-settings.json:ro")
 	}
 
 	args = append(args, ImageName, "claude")

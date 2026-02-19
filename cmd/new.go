@@ -177,6 +177,7 @@ func createSession(opts createOpts) error {
 		Workspace:       workspace,
 		ConfigDir:       containerConfigDir,
 		CredentialsFile: config.CredentialsFile(),
+		SettingsFile:    config.ClaudeSettingsFile(),
 		UID:             os.Getuid(),
 		GID:             os.Getgid(),
 		Yolo:            opts.yolo,

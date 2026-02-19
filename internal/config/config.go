@@ -79,6 +79,24 @@ func CredentialsFile() string {
 	return ""
 }
 
+// ClaudeSettingsFile returns the path to the Claude Code settings file
+// (.claude.json) on the host, or "" if not found. This file contains
+// account info and feature flags needed to skip first-run onboarding.
+func ClaudeSettingsFile() string {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		p := filepath.Join(dir, ".claude.json")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	home, _ := os.UserHomeDir()
+	p := filepath.Join(home, ".claude", ".claude.json")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return ""
+}
+
 // ContainerConfigDir returns the per-session directory that gets mounted
 // into the Docker container for Claude Code's own config files. Each
 // session gets an isolated config so the host sessions.json isn't

@@ -42,6 +42,7 @@ var attachCmd = &cobra.Command{
 				Workspace:       sess.WorktreePath,
 				ConfigDir:       containerConfigDir,
 				CredentialsFile: config.CredentialsFile(),
+				SettingsFile:    config.ClaudeSettingsFile(),
 				UID:             os.Getuid(),
 				GID:             os.Getgid(),
 				Yolo:            sess.Yolo,

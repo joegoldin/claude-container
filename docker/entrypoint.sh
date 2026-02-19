@@ -66,5 +66,20 @@ if [ -f /tmp/host-credentials.json ]; then
     fi
 fi
 
+# Copy host Claude settings (.claude.json) to skip first-run onboarding.
+if [ -f /tmp/host-claude-settings.json ]; then
+    USER_HOME=$(getent passwd "$USER_UID" | cut -d: -f6)
+    USER_HOME=${USER_HOME:-/home/claude}
+    mkdir -p "$USER_HOME/.claude"
+    cp /tmp/host-claude-settings.json "$USER_HOME/.claude/.claude.json"
+    chown "$USER_UID:$USER_GID" "$USER_HOME/.claude/.claude.json"
+    chmod 600 "$USER_HOME/.claude/.claude.json"
+    if [ -n "$CLAUDE_CONFIG_DIR" ] && [ -d "$CLAUDE_CONFIG_DIR" ]; then
+        cp /tmp/host-claude-settings.json "$CLAUDE_CONFIG_DIR/.claude.json"
+        chown "$USER_UID:$USER_GID" "$CLAUDE_CONFIG_DIR/.claude.json"
+        chmod 600 "$CLAUDE_CONFIG_DIR/.claude.json"
+    fi
+fi
+
 export SHELL=/bin/bash
 exec su-exec "${USER_NAME}" "$@"
