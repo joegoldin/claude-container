@@ -10,6 +10,7 @@ import (
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
+	"github.com/joegoldin/claude-container/internal/proxy"
 	"github.com/joegoldin/claude-container/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -215,10 +216,13 @@ func createSession(opts createOpts) error {
 		return nil
 	}
 
-	// i. Foreground mode: exec into docker for full terminal control.
-	// This replaces the current process — no Go code runs after this.
-	// Ctrl+P,Ctrl+Q detaches and leaves the container running.
+	// i. Foreground mode: attach via proxy with status bar and keybindings.
 	dockerArgs := docker.RunArgs(runOpts, false)
-	fmt.Printf("Session %q created. Attaching (Ctrl+P,Ctrl+Q to detach)...\n", name)
-	return docker.ExecForeground(dockerArgs)
+	fmt.Printf("Session %q created.\n", name)
+	return proxy.Run(proxy.Opts{
+		DockerArgs: dockerArgs,
+		StatusBar:  proxy.StatusBarInfo{Name: name, Branch: branch, Yolo: opts.yolo},
+		AutoRemove: opts.autoRemove,
+		Cleanup:    func(_ string) { removeSession(store, name) },
+	})
 }

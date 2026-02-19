@@ -2,10 +2,10 @@ package cmd
 
 import (
 	"os"
-	"os/exec"
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
+	"github.com/joegoldin/claude-container/internal/proxy"
 	"github.com/spf13/cobra"
 )
 
@@ -29,11 +29,10 @@ var shellCmd = &cobra.Command{
 		}
 
 		shellArgs := docker.ShellArgs(ws, claudeConfigDir, os.Getuid(), os.Getgid())
-		c := exec.Command("docker", shellArgs...)
-		c.Stdin = os.Stdin
-		c.Stdout = os.Stdout
-		c.Stderr = os.Stderr
-		return c.Run()
+		return proxy.Run(proxy.Opts{
+			DockerArgs: shellArgs,
+			StatusBar:  proxy.StatusBarInfo{Name: "_shell"},
+		})
 	},
 }
 

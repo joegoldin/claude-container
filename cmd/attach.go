@@ -6,6 +6,7 @@ import (
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
+	"github.com/joegoldin/claude-container/internal/proxy"
 	"github.com/spf13/cobra"
 )
 
@@ -23,20 +24,17 @@ var attachCmd = &cobra.Command{
 			return fmt.Errorf("session %q not found", name)
 		}
 
+		var dockerArgs []string
 		switch {
 		case docker.IsRunning(name):
-			// Container is running — exec into docker attach.
-			fmt.Println("Attaching (Ctrl+P,Ctrl+Q to detach)...")
-			return docker.ExecAttach(name)
-
+			fmt.Println("Attaching...")
+			dockerArgs = []string{"attach", docker.ContainerName(name)}
 		case docker.Exists(name):
-			// Container exists but stopped — exec into docker start -ai.
 			fmt.Println("Restarting stopped container...")
-			return docker.ExecStartAttach(name)
-
+			dockerArgs = []string{"start", "-ai", docker.ContainerName(name)}
 		default:
-			// Container doesn't exist — recreate with --continue.
-			dockerArgs := docker.RunArgs(docker.RunOpts{
+			fmt.Println("Recreating container with --continue...")
+			dockerArgs = docker.RunArgs(docker.RunOpts{
 				Name:      name,
 				Workspace: sess.WorktreePath,
 				ConfigDir: store.ClaudeConfigDir(),
@@ -45,10 +43,14 @@ var attachCmd = &cobra.Command{
 				Yolo:      sess.Yolo,
 				Continue:  true,
 			}, false)
-
-			fmt.Println("Recreating container with --continue...")
-			return docker.ExecForeground(dockerArgs)
 		}
+
+		return proxy.Run(proxy.Opts{
+			DockerArgs: dockerArgs,
+			StatusBar:  proxy.StatusBarInfo{Name: name, Branch: sess.Branch, Yolo: sess.Yolo},
+			AutoRemove: sess.AutoRemove,
+			Cleanup:    func(_ string) { removeSession(store, name) },
+		})
 	},
 }
 

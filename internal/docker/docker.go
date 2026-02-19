@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 )
 
 // ImageName is the Docker image tag used for Claude Code containers.
@@ -95,22 +94,6 @@ func ShellArgs(workspace, configDir string, uid, gid int) []string {
 	}
 }
 
-// ExecForeground replaces the current process with docker run, giving
-// docker full terminal control. This is necessary because interactive
-// TTY apps (like Claude Code) need direct terminal access that
-// subprocess-based execution cannot provide.
-//
-// NOTE: This function does not return on success — the current process
-// is replaced. Any post-run cleanup must happen before calling this.
-func ExecForeground(args []string) error {
-	dockerPath, err := exec.LookPath("docker")
-	if err != nil {
-		return fmt.Errorf("docker not found in PATH: %w", err)
-	}
-	argv := append([]string{"docker"}, args...)
-	return syscall.Exec(dockerPath, argv, os.Environ())
-}
-
 // RunDetached executes docker run in detached mode. Stdout/stderr are
 // connected so the user sees the container ID output.
 func RunDetached(args []string) error {
@@ -177,18 +160,6 @@ func Start(session string) error {
 	return cmd.Run()
 }
 
-// ExecStartAttach replaces the current process with docker start -ai,
-// restarting a stopped container with full interactive terminal access.
-func ExecStartAttach(session string) error {
-	name := ContainerName(session)
-	dockerPath, err := exec.LookPath("docker")
-	if err != nil {
-		return fmt.Errorf("docker not found in PATH: %w", err)
-	}
-	argv := []string{"docker", "start", "-ai", name}
-	return syscall.Exec(dockerPath, argv, os.Environ())
-}
-
 // Logs returns a prepared *exec.Cmd that streams container logs. If
 // follow is true the --follow flag is included. The caller is
 // responsible for connecting IO and running the command.
@@ -211,29 +182,6 @@ func Build(contextDir string) *exec.Cmd {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd
-}
-
-// ExecAttach replaces the current process with docker attach, giving
-// full interactive terminal access to a running container.
-func ExecAttach(session string) error {
-	name := ContainerName(session)
-	dockerPath, err := exec.LookPath("docker")
-	if err != nil {
-		return fmt.Errorf("docker not found in PATH: %w", err)
-	}
-	argv := []string{"docker", "attach", name}
-	return syscall.Exec(dockerPath, argv, os.Environ())
-}
-
-// Attach attaches to a running container as a subprocess. Use this when
-// the caller needs to continue after detach (e.g., the dashboard).
-func Attach(ctx context.Context, session string) error {
-	name := ContainerName(session)
-	cmd := exec.CommandContext(ctx, "docker", "attach", name)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 // LogsTail returns the last n lines of container logs.

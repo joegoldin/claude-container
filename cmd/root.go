@@ -1,15 +1,14 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/signal"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
+	"github.com/joegoldin/claude-container/internal/proxy"
 	"github.com/joegoldin/claude-container/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -37,14 +36,30 @@ var rootCmd = &cobra.Command{
 
 			if dm.Attached() != "" {
 				attachName := dm.Attached()
-				ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-				_ = docker.Attach(ctx, attachName)
-				stop()
-				// Auto-remove if session was created with --rm and has exited.
-				if sess, err := store.Get(attachName); err == nil && sess.AutoRemove && !docker.IsRunning(attachName) {
-					removeSession(store, attachName)
+				sess, _ := store.Get(attachName)
+				var dockerArgs []string
+				if docker.IsRunning(attachName) {
+					dockerArgs = []string{"attach", docker.ContainerName(attachName)}
+				} else if docker.Exists(attachName) {
+					dockerArgs = []string{"start", "-ai", docker.ContainerName(attachName)}
+				} else {
+					continue
 				}
-				continue // return to dashboard after detach
+				branch := ""
+				yolo := false
+				autoRemove := false
+				if sess != nil {
+					branch = sess.Branch
+					yolo = sess.Yolo
+					autoRemove = sess.AutoRemove
+				}
+				_ = proxy.Run(proxy.Opts{
+					DockerArgs: dockerArgs,
+					StatusBar:  proxy.StatusBarInfo{Name: attachName, Branch: branch, Yolo: yolo},
+					AutoRemove: autoRemove,
+					Cleanup:    func(_ string) { removeSession(store, attachName) },
+				})
+				continue
 			}
 
 			if dm.Creating() {
@@ -81,9 +96,16 @@ var rootCmd = &cobra.Command{
 					continue
 				}
 				if !res.Background {
-					ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-					_ = docker.Attach(ctx, res.Name)
-					stop()
+					var dockerArgs []string
+					if docker.IsRunning(res.Name) {
+						dockerArgs = []string{"attach", docker.ContainerName(res.Name)}
+					} else {
+						dockerArgs = []string{"start", "-ai", docker.ContainerName(res.Name)}
+					}
+					_ = proxy.Run(proxy.Opts{
+						DockerArgs: dockerArgs,
+						StatusBar:  proxy.StatusBarInfo{Name: res.Name, Yolo: res.Yolo},
+					})
 				}
 				continue
 			}
