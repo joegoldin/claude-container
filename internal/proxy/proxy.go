@@ -291,9 +291,10 @@ func Run(opts Opts) error {
 			cmdErr = <-cmdDone
 
 			if quit {
-				// Stop the container gracefully.
+				// Stop the container gracefully, then remove it.
 				stopCmd := exec.Command("docker", "stop", "-t", "5", opts.ContainerName)
 				stopCmd.Run()
+				exec.Command("docker", "rm", opts.ContainerName).Run()
 			}
 		} else {
 			// Direct docker run mode (e.g. shell). The docker process
