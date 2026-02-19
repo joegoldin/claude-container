@@ -38,14 +38,15 @@ var attachCmd = &cobra.Command{
 		default:
 			fmt.Println("Recreating container with --continue...")
 			dockerArgs = docker.RunArgs(docker.RunOpts{
-				Name:          name,
-				Workspace:     sess.WorktreePath,
-				ConfigDir:     store.ClaudeConfigDir(),
-				HostClaudeDir: config.HostClaudeDir(),
-				UID:           os.Getuid(),
-				GID:           os.Getgid(),
-				Yolo:          sess.Yolo,
-				Continue:      true,
+				Name:           name,
+				Workspace:      sess.WorktreePath,
+				ConfigDir:      store.ClaudeConfigDir(),
+				HostClaudeDir:  config.HostClaudeDir(),
+				HostClaudeJSON: config.HostClaudeJSON(),
+				UID:            os.Getuid(),
+				GID:            os.Getgid(),
+				Yolo:           sess.Yolo,
+				Continue:       true,
 			}, false)
 		}
 

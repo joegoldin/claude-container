@@ -23,6 +23,7 @@ type RunOpts struct {
 	Workspace      string
 	ConfigDir      string
 	HostClaudeDir  string // host ~/.claude/ dir, mounted read-only for credential copying
+	HostClaudeJSON string // host ~/.claude.json file, mounted read-only for onboarding/auth state
 	UID            int
 	GID            int
 	Yolo           bool
@@ -66,6 +67,9 @@ func RunArgs(opts RunOpts, detached bool) []string {
 	if opts.HostClaudeDir != "" {
 		args = append(args, "-v", opts.HostClaudeDir+":/mnt/claude-host:ro")
 	}
+	if opts.HostClaudeJSON != "" {
+		args = append(args, "-v", opts.HostClaudeJSON+":/mnt/claude-host-json:ro")
+	}
 
 	args = append(args, ImageName, "claude")
 
@@ -85,7 +89,7 @@ func RunArgs(opts RunOpts, detached bool) []string {
 
 // ShellArgs returns the docker run command arguments for an ephemeral
 // debug shell. Unlike RunArgs the container IS created with --rm.
-func ShellArgs(workspace, configDir, hostClaudeDir string, uid, gid int) []string {
+func ShellArgs(workspace, configDir, hostClaudeDir, hostClaudeJSON string, uid, gid int) []string {
 	args := []string{
 		"run",
 		"--rm",
@@ -98,6 +102,9 @@ func ShellArgs(workspace, configDir, hostClaudeDir string, uid, gid int) []strin
 	}
 	if hostClaudeDir != "" {
 		args = append(args, "-v", hostClaudeDir+":/mnt/claude-host:ro")
+	}
+	if hostClaudeJSON != "" {
+		args = append(args, "-v", hostClaudeJSON+":/mnt/claude-host-json:ro")
 	}
 	args = append(args, ImageName, "/bin/bash")
 	return args

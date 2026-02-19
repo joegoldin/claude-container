@@ -81,6 +81,22 @@ func HostClaudeDir() string {
 	return ""
 }
 
+// HostClaudeJSON returns the path to the host's ~/.claude.json file,
+// or empty string if it doesn't exist. Claude Code stores onboarding
+// state, OAuth account info, and project settings in this file at the
+// home directory root (separate from ~/.claude/).
+func HostClaudeJSON() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	p := filepath.Join(home, ".claude.json")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return ""
+}
+
 // IsAuthenticated reports whether Claude Code credentials exist either
 // in the shared config directory or in the host's ~/.claude/ directory.
 func (s *Store) IsAuthenticated() bool {

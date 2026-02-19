@@ -47,23 +47,31 @@ fi
 
 # Copy host Claude credentials if mounted (read-only at /mnt/claude-host).
 # This allows using the host's existing authentication without re-login.
+# Use cp -L to dereference symlinks (e.g. nix store symlinked settings.json).
 if [ -d /mnt/claude-host ]; then
     if [ -f /mnt/claude-host/.credentials.json ]; then
-        cp /mnt/claude-host/.credentials.json /claude/.credentials.json
+        cp -L /mnt/claude-host/.credentials.json /claude/.credentials.json
         chown "$USER_UID:$USER_GID" /claude/.credentials.json
         chmod 600 /claude/.credentials.json
     fi
-    # Copy settings (.claude.json or settings.json).
     if [ -f /mnt/claude-host/settings.json ]; then
-        cp /mnt/claude-host/settings.json /claude/settings.json
+        cp -L /mnt/claude-host/settings.json /claude/settings.json
         chown "$USER_UID:$USER_GID" /claude/settings.json
         chmod 600 /claude/settings.json
     fi
     if [ -f /mnt/claude-host/.claude.json ]; then
-        cp /mnt/claude-host/.claude.json /claude/.claude.json
+        cp -L /mnt/claude-host/.claude.json /claude/.claude.json
         chown "$USER_UID:$USER_GID" /claude/.claude.json
         chmod 600 /claude/.claude.json
     fi
+fi
+
+# Copy host ~/.claude.json if mounted (the root-level settings file that
+# contains onboarding state, OAuth account info, etc).
+if [ -f /mnt/claude-host-json ]; then
+    cp -L /mnt/claude-host-json /claude/.claude.json
+    chown "$USER_UID:$USER_GID" /claude/.claude.json
+    chmod 600 /claude/.claude.json
 fi
 
 if [ -d /workspace ]; then
@@ -74,6 +82,30 @@ fi
 USER_HOME=$(getent passwd "$USER_UID" | cut -d: -f6)
 USER_HOME=${USER_HOME:-/home/claude}
 export HOME="$USER_HOME"
+
+# Symlink $HOME/.claude -> /claude so Claude Code finds config at both
+# $HOME/.claude/ and CLAUDE_CONFIG_DIR=/claude.
+ln -sfn /claude "$HOME/.claude" 2>/dev/null || true
+
+# Ensure bypassPermissionsModeAccepted is set in .claude.json so that
+# --dangerously-skip-permissions works without an interactive prompt.
+# If no .claude.json was copied from host, create a minimal one.
+node -e "
+  const fs = require('fs');
+  const f = '/claude/.claude.json';
+  let d = {};
+  try { d = JSON.parse(fs.readFileSync(f, 'utf8')); } catch {}
+  d.bypassPermissionsModeAccepted = true;
+  fs.writeFileSync(f, JSON.stringify(d, null, 2));
+" 2>/dev/null || true
+chown "$USER_UID:$USER_GID" /claude/.claude.json 2>/dev/null || true
+
+# Also place .claude.json at $HOME/.claude.json (home root level) where
+# Claude Code looks for onboarding/auth state independently of CLAUDE_CONFIG_DIR.
+if [ -f /claude/.claude.json ]; then
+    cp /claude/.claude.json "$HOME/.claude.json" 2>/dev/null || true
+    chown "$USER_UID:$USER_GID" "$HOME/.claude.json" 2>/dev/null || true
+fi
 
 export SHELL=/bin/bash
 exec su-exec "${USER_NAME}" "$@"
