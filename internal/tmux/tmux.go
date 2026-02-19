@@ -3,15 +3,11 @@ package tmux
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
-	"github.com/creack/pty"
 	"golang.org/x/sys/unix"
 )
 
@@ -93,105 +89,29 @@ func CapturePane(session string) (string, error) {
 	return string(out), nil
 }
 
-// Attach attaches to the tmux session using a PTY for proper terminal
-// handling. It intercepts Ctrl+Q (0x11) on stdin to detach cleanly.
+// Attach attaches to the tmux session with direct terminal access.
+// Ctrl+Q is bound as a tmux key to detach cleanly.
 func Attach(ctx context.Context, session string) error {
 	name := SessionName(session)
 
-	// 1. Resize the tmux window to match the current terminal size.
+	// Bind Ctrl+Q to detach so the user can leave the session.
+	_ = exec.Command("tmux", "bind-key", "-n", "C-q", "detach-client").Run()
+
+	// Resize the tmux window to match the current terminal size.
 	ws, err := unix.IoctlGetWinsize(int(os.Stdin.Fd()), unix.TIOCGWINSZ)
 	if err == nil {
-		resizeCmd := exec.Command("tmux", "resize-window",
+		_ = exec.Command("tmux", "resize-window",
 			"-t", name,
 			"-x", fmt.Sprintf("%d", ws.Col),
-			"-y", fmt.Sprintf("%d", ws.Row))
-		_ = resizeCmd.Run()
+			"-y", fmt.Sprintf("%d", ws.Row)).Run()
 	}
 
-	// 2. Start tmux attach-session via a PTY.
+	// Attach directly — tmux handles raw mode and terminal management.
 	cmd := exec.CommandContext(ctx, "tmux", "attach-session", "-t", name)
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		return fmt.Errorf("start pty: %w", err)
-	}
-	defer ptmx.Close()
-
-	// Apply initial terminal size to the PTY as well.
-	if ws != nil {
-		_ = pty.Setsize(ptmx, &pty.Winsize{
-			Rows: ws.Row,
-			Cols: ws.Col,
-		})
-	}
-
-	// 3. Handle SIGWINCH to resize PTY and tmux on terminal resize.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGWINCH)
-	defer signal.Stop(sigCh)
-
-	go func() {
-		for range sigCh {
-			newWs, err := unix.IoctlGetWinsize(int(os.Stdin.Fd()), unix.TIOCGWINSZ)
-			if err != nil {
-				continue
-			}
-			_ = pty.Setsize(ptmx, &pty.Winsize{
-				Rows: newWs.Row,
-				Cols: newWs.Col,
-			})
-			resizeCmd := exec.Command("tmux", "resize-window",
-				"-t", name,
-				"-x", fmt.Sprintf("%d", newWs.Col),
-				"-y", fmt.Sprintf("%d", newWs.Row))
-			_ = resizeCmd.Run()
-		}
-	}()
-
-	// 4. Set stdin to raw mode so keypresses are forwarded immediately.
-	oldState, err := makeRaw(os.Stdin.Fd())
-	if err != nil {
-		return fmt.Errorf("set raw mode: %w", err)
-	}
-	defer restore(os.Stdin.Fd(), oldState)
-
-	// 5. Goroutine: copy PTY output to stdout.
-	done := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(os.Stdout, ptmx)
-		close(done)
-	}()
-
-	// 6. Goroutine: read stdin byte-by-byte, intercept Ctrl+Q to detach.
-	detach := make(chan struct{})
-	go func() {
-		buf := make([]byte, 1)
-		for {
-			n, err := os.Stdin.Read(buf)
-			if n > 0 {
-				if buf[0] == 0x11 { // Ctrl+Q
-					close(detach)
-					return
-				}
-				_, _ = ptmx.Write(buf[:n])
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-
-	// 7. Wait for detach, PTY EOF, or context cancellation.
-	select {
-	case <-detach:
-		// User pressed Ctrl+Q -- detach gracefully.
-	case <-done:
-		// PTY closed (tmux session ended).
-	case <-ctx.Done():
-		// Context cancelled.
-	}
-
-	// 8. Terminal restore and PTY close handled by defers.
-	return nil
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // ListSessions returns the names of all tmux sessions that have the
