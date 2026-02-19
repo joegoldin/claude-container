@@ -174,7 +174,7 @@ func createSession(opts createOpts) error {
 		return fmt.Errorf("create container config dir: %w", err)
 	}
 
-	dockerArgs := docker.RunArgs(docker.RunOpts{
+	runOpts := docker.RunOpts{
 		Name:            name,
 		Workspace:       workspace,
 		ConfigDir:       containerConfigDir,
@@ -184,14 +184,10 @@ func createSession(opts createOpts) error {
 		Yolo:            opts.yolo,
 		Prompt:          opts.prompt,
 		Continue:        opts.cont,
-	})
-
-	// g. Run container in detached mode.
-	if err := docker.Run(dockerArgs); err != nil {
-		return fmt.Errorf("create container: %w", err)
 	}
 
-	// h. Save session to store.
+	// g. Save session to store before running so it's tracked even if
+	// the user detaches quickly.
 	sess := &config.Session{
 		Name:          name,
 		Branch:        branch,
@@ -206,22 +202,29 @@ func createSession(opts createOpts) error {
 		return fmt.Errorf("save session: %w", err)
 	}
 
-	// i. Auto-attach unless background mode.
+	// h. Background mode: start detached, return immediately.
 	if opts.background {
+		dockerArgs := docker.RunArgs(runOpts, true)
+		if err := docker.RunDetached(dockerArgs); err != nil {
+			return fmt.Errorf("create container: %w", err)
+		}
 		fmt.Printf("Session %q created (background).\n", name)
 		fmt.Printf("  Attach: claude-container attach %s\n", name)
 		return nil
 	}
 
+	// i. Foreground mode: run interactively with full TTY.
+	// Ctrl+P,Ctrl+Q detaches and leaves the container running.
+	dockerArgs := docker.RunArgs(runOpts, false)
 	fmt.Printf("Session %q created. Attaching (Ctrl+P,Ctrl+Q to detach)...\n", name)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	attachErr := docker.Attach(ctx, name)
+	runErr := docker.RunInteractive(ctx, dockerArgs)
 
 	// Auto-remove after detach if --rm was used and container has exited.
 	if opts.autoRemove && !docker.IsRunning(name) {
 		removeSession(store, name)
 	}
 
-	return attachErr
+	return runErr
 }

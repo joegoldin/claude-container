@@ -42,7 +42,7 @@ func TestRunArgs(t *testing.T) {
 		UID:       1000,
 		GID:       1000,
 	}
-	args := RunArgs(opts)
+	args := RunArgs(opts, false)
 
 	joined := strings.Join(args, " ")
 
@@ -59,9 +59,9 @@ func TestRunArgs(t *testing.T) {
 		t.Errorf("RunArgs should not contain --rm, got %v", args)
 	}
 
-	// Must have -dit (detached interactive TTY).
-	if !slices.Contains(args, "-dit") {
-		t.Errorf("RunArgs missing -dit in %v", args)
+	// Must have -it (interactive TTY) when not detached.
+	if !slices.Contains(args, "-it") {
+		t.Errorf("RunArgs missing -it in %v", args)
 	}
 
 	// Volume mounts.
@@ -103,7 +103,7 @@ func TestRunArgsYolo(t *testing.T) {
 		GID:       1000,
 		Yolo:      true,
 	}
-	args := RunArgs(opts)
+	args := RunArgs(opts, false)
 
 	if !slices.Contains(args, "--dangerously-skip-permissions") {
 		t.Errorf("RunArgs with Yolo=true missing --dangerously-skip-permissions in %v", args)
@@ -119,7 +119,7 @@ func TestRunArgsWithPrompt(t *testing.T) {
 		GID:       1000,
 		Prompt:    "fix the tests",
 	}
-	args := RunArgs(opts)
+	args := RunArgs(opts, false)
 
 	// Find -p flag and its value.
 	foundP := false
@@ -146,7 +146,7 @@ func TestRunArgsContinue(t *testing.T) {
 		GID:       1000,
 		Continue:  true,
 	}
-	args := RunArgs(opts)
+	args := RunArgs(opts, false)
 
 	if !slices.Contains(args, "--continue") {
 		t.Errorf("RunArgs with Continue=true missing --continue in %v", args)
@@ -161,7 +161,7 @@ func TestRunArgsVolumeMounts(t *testing.T) {
 		UID:       1000,
 		GID:       1000,
 	}
-	args := RunArgs(opts)
+	args := RunArgs(opts, false)
 
 	// Count the number of -v flags.
 	volumeCount := 0
@@ -192,7 +192,7 @@ func TestRunArgsEnvVars(t *testing.T) {
 		UID:       5000,
 		GID:       5001,
 	}
-	args := RunArgs(opts)
+	args := RunArgs(opts, false)
 
 	joined := strings.Join(args, " ")
 
@@ -234,7 +234,7 @@ func TestShellArgsHasRm(t *testing.T) {
 		ConfigDir: "/tmp/cfg",
 		UID:       1000,
 		GID:       1000,
-	})
+	}, false)
 	if slices.Contains(runArgs, "--rm") {
 		t.Errorf("RunArgs should not have --rm but ShellArgs should")
 	}
@@ -259,7 +259,7 @@ func TestShellArgsBash(t *testing.T) {
 		ConfigDir: "/tmp/cfg",
 		UID:       1000,
 		GID:       1000,
-	})
+	}, false)
 	runLast := runArgs[len(runArgs)-1]
 	if runLast != "claude" {
 		t.Errorf("RunArgs last arg = %q, want %q", runLast, "claude")

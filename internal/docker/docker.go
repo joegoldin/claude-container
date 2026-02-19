@@ -41,15 +41,20 @@ func BuildArgs(contextDir string) []string {
 }
 
 // RunArgs returns the docker run command arguments for a persistent
-// Claude Code container. The container starts detached (-dit) so the
-// caller can attach later with docker attach.
-func RunArgs(opts RunOpts) []string {
+// Claude Code container. The container is NOT created with --rm so it
+// can be reattached later.
+func RunArgs(opts RunOpts, detached bool) []string {
 	name := ContainerName(opts.Name)
+
+	flag := "-it"
+	if detached {
+		flag = "-dit"
+	}
 
 	args := []string{
 		"run",
 		"--name", name,
-		"-dit",
+		flag,
 		"-v", opts.Workspace + ":/workspace",
 		"-v", opts.ConfigDir + ":/claude",
 		"-e", "CLAUDE_CONFIG_DIR=/claude",
@@ -97,9 +102,19 @@ func ShellArgs(workspace, configDir string, uid, gid int) []string {
 	}
 }
 
-// Run executes docker with the given arguments (e.g. from RunArgs).
-// Stdout and stderr are connected to the current process.
-func Run(args []string) error {
+// RunInteractive executes docker run in the foreground with full TTY access.
+// Used for non-background sessions where the user interacts directly.
+func RunInteractive(ctx context.Context, args []string) error {
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// RunDetached executes docker run in detached mode. Stdout/stderr are
+// connected so the user sees the container ID output.
+func RunDetached(args []string) error {
 	cmd := exec.Command("docker", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -154,10 +169,21 @@ func Remove(session string) error {
 	return cmd.Run()
 }
 
-// Start restarts a stopped container for the given session.
+// Start restarts a stopped container for the given session (detached).
 func Start(session string) error {
 	name := ContainerName(session)
 	cmd := exec.Command("docker", "start", name)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// StartAttach restarts a stopped container and attaches interactively.
+// Equivalent to docker start -ai.
+func StartAttach(ctx context.Context, session string) error {
+	name := ContainerName(session)
+	cmd := exec.CommandContext(ctx, "docker", "start", "-ai", name)
+	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

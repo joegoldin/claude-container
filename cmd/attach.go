@@ -25,54 +25,47 @@ var attachCmd = &cobra.Command{
 			return fmt.Errorf("session %q not found", name)
 		}
 
-		// If container is running, attach directly.
-		if docker.IsRunning(name) {
-			return attachToSession(store, sess)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+
+		var attachErr error
+
+		switch {
+		case docker.IsRunning(name):
+			// Container is running — attach directly.
+			fmt.Println("Attaching (Ctrl+P,Ctrl+Q to detach)...")
+			attachErr = docker.Attach(ctx, name)
+
+		case docker.Exists(name):
+			// Container exists but stopped — start and attach in one step.
+			fmt.Println("Restarting stopped container...")
+			attachErr = docker.StartAttach(ctx, name)
+
+		default:
+			// Container doesn't exist — recreate with --continue.
+			containerConfigDir := store.ContainerConfigDir(name)
+			dockerArgs := docker.RunArgs(docker.RunOpts{
+				Name:            name,
+				Workspace:       sess.WorktreePath,
+				ConfigDir:       containerConfigDir,
+				CredentialsFile: config.CredentialsFile(),
+				UID:             os.Getuid(),
+				GID:             os.Getgid(),
+				Yolo:            sess.Yolo,
+				Continue:        true,
+			}, false)
+
+			fmt.Println("Recreating container with --continue...")
+			attachErr = docker.RunInteractive(ctx, dockerArgs)
 		}
 
-		// If container exists but stopped, start it and attach.
-		if docker.Exists(name) {
-			if err := docker.Start(name); err != nil {
-				return fmt.Errorf("start container: %w", err)
-			}
-			fmt.Println("Restarted stopped container")
-			return attachToSession(store, sess)
+		// Auto-remove if session was created with --rm and container has exited.
+		if sess.AutoRemove && !docker.IsRunning(sess.Name) {
+			removeSession(store, sess.Name)
 		}
 
-		// Container doesn't exist — recreate with --continue.
-		containerConfigDir := store.ContainerConfigDir(name)
-		dockerArgs := docker.RunArgs(docker.RunOpts{
-			Name:            name,
-			Workspace:       sess.WorktreePath,
-			ConfigDir:       containerConfigDir,
-			CredentialsFile: config.CredentialsFile(),
-			UID:             os.Getuid(),
-			GID:             os.Getgid(),
-			Yolo:            sess.Yolo,
-			Continue:        true,
-		})
-
-		if err := docker.Run(dockerArgs); err != nil {
-			return fmt.Errorf("recreate container: %w", err)
-		}
-		fmt.Println("Recreated container with --continue")
-		return attachToSession(store, sess)
+		return attachErr
 	},
-}
-
-func attachToSession(store *config.Store, sess *config.Session) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
-	fmt.Println("Attaching (Ctrl+P,Ctrl+Q to detach)...")
-	attachErr := docker.Attach(ctx, sess.Name)
-
-	// Auto-remove if session was created with --rm and container has exited.
-	if sess.AutoRemove && !docker.IsRunning(sess.Name) {
-		removeSession(store, sess.Name)
-	}
-
-	return attachErr
 }
 
 func init() {
