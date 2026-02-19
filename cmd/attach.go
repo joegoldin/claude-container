@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
@@ -27,17 +28,19 @@ var attachCmd = &cobra.Command{
 			return fmt.Errorf("session %q not found", name)
 		}
 
-		var dockerArgs []string
+		containerName := docker.ContainerName(name)
+
 		switch {
 		case docker.IsRunning(name):
 			fmt.Println("Attaching...")
-			dockerArgs = []string{"attach", docker.ContainerName(name)}
 		case docker.Exists(name):
 			fmt.Println("Restarting stopped container...")
-			dockerArgs = []string{"start", "-ai", docker.ContainerName(name)}
+			if err := docker.Start(name); err != nil {
+				return fmt.Errorf("start container: %w", err)
+			}
 		default:
 			fmt.Println("Recreating container with --continue...")
-			dockerArgs = docker.RunArgs(docker.RunOpts{
+			detachedArgs := docker.RunArgs(docker.RunOpts{
 				Name:           name,
 				Workspace:      sess.WorktreePath,
 				ConfigDir:      store.ClaudeConfigDir(),
@@ -47,14 +50,20 @@ var attachCmd = &cobra.Command{
 				GID:            os.Getgid(),
 				Yolo:           sess.Yolo,
 				Continue:       true,
-			}, false)
+			}, true)
+			startCmd := exec.Command("docker", detachedArgs...)
+			startCmd.Stderr = os.Stderr
+			if err := startCmd.Run(); err != nil {
+				return fmt.Errorf("recreate container: %w", err)
+			}
 		}
 
 		return proxy.Run(proxy.Opts{
-			DockerArgs: dockerArgs,
-			StatusBar:  proxy.StatusBarInfo{Name: name, Branch: sess.Branch, Yolo: sess.Yolo},
-			AutoRemove: sess.AutoRemove,
-			Cleanup:    func(_ string) { removeSession(store, name) },
+			DockerArgs:    []string{"attach", containerName},
+			ContainerName: containerName,
+			StatusBar:     proxy.StatusBarInfo{Name: name, Branch: sess.Branch, Yolo: sess.Yolo},
+			AutoRemove:    sess.AutoRemove,
+			Cleanup:       func(_ string) { removeSession(store, name) },
 		})
 	},
 }

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -217,13 +218,21 @@ func createSession(opts createOpts) error {
 		return nil
 	}
 
-	// i. Foreground mode: attach via proxy with status bar and keybindings.
-	dockerArgs := docker.RunArgs(runOpts, false)
+	// i. Foreground mode: start container detached, then attach via proxy.
+	// Starting detached allows Ctrl+B d to detach without killing the container.
+	containerName := docker.ContainerName(name)
+	detachedArgs := docker.RunArgs(runOpts, true)
+	startCmd := exec.Command("docker", detachedArgs...)
+	startCmd.Stderr = os.Stderr
+	if err := startCmd.Run(); err != nil {
+		return fmt.Errorf("start container: %w", err)
+	}
 	fmt.Printf("Session %q created.\n", name)
 	return proxy.Run(proxy.Opts{
-		DockerArgs: dockerArgs,
-		StatusBar:  proxy.StatusBarInfo{Name: name, Branch: branch, Yolo: opts.yolo},
-		AutoRemove: opts.autoRemove,
-		Cleanup:    func(_ string) { removeSession(store, name) },
+		DockerArgs:    []string{"attach", containerName},
+		ContainerName: containerName,
+		StatusBar:     proxy.StatusBarInfo{Name: name, Branch: branch, Yolo: opts.yolo},
+		AutoRemove:    opts.autoRemove,
+		Cleanup:       func(_ string) { removeSession(store, name) },
 	})
 }

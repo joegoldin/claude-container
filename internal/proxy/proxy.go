@@ -33,10 +33,11 @@ type CleanupFunc func(name string)
 
 // Opts configures a proxy session.
 type Opts struct {
-	DockerArgs []string
-	StatusBar  StatusBarInfo
-	AutoRemove bool
-	Cleanup    CleanupFunc
+	DockerArgs    []string
+	ContainerName string // Docker container name; when set, detach keeps container alive
+	StatusBar     StatusBarInfo
+	AutoRemove    bool
+	Cleanup       CleanupFunc
 }
 
 // inputState tracks the prefix key state machine.
@@ -253,24 +254,38 @@ func Run(opts Opts) error {
 		}
 	case <-done:
 		// User triggered detach or quit.
-		if quit {
-			// Send SIGTERM to the docker subprocess, then wait for it.
+		if opts.ContainerName != "" {
+			// Container was started separately (detached); we're just
+			// running "docker attach". Kill the attach process instantly
+			// so it can't forward signals to the container.
 			if cmd.Process != nil {
-				cmd.Process.Signal(syscall.SIGTERM)
+				cmd.Process.Kill()
 			}
-			// Wait for process to exit (with a timeout to force kill).
-			select {
-			case cmdErr = <-cmdDone:
-			case <-time.After(5 * time.Second):
-				if cmd.Process != nil {
-					cmd.Process.Kill()
-				}
-				cmdErr = <-cmdDone
+			cmdErr = <-cmdDone
+
+			if quit {
+				// Stop the container gracefully.
+				stopCmd := exec.Command("docker", "stop", "-t", "5", opts.ContainerName)
+				stopCmd.Run()
 			}
 		} else {
-			// Detached: close PTY master so the container keeps running.
-			ptmx.Close()
-			// Don't wait for docker to exit; just proceed with cleanup.
+			// Direct docker run mode (e.g. shell). The docker process
+			// IS the container lifecycle.
+			if quit {
+				if cmd.Process != nil {
+					cmd.Process.Signal(syscall.SIGTERM)
+				}
+				select {
+				case cmdErr = <-cmdDone:
+				case <-time.After(5 * time.Second):
+					if cmd.Process != nil {
+						cmd.Process.Kill()
+					}
+					cmdErr = <-cmdDone
+				}
+			} else {
+				ptmx.Close()
+			}
 		}
 	}
 
@@ -280,7 +295,9 @@ func Run(opts Opts) error {
 
 	// Restore terminal.
 	clearScrollRegion()
+	fmt.Fprint(os.Stdout, "\033[?25h") // ensure cursor is visible
 	term.Restore(stdinFd, oldState)
+	fmt.Fprint(os.Stderr, "\r\n") // clean line for shell prompt
 
 	// Post-exit cleanup.
 	containerExitedNormally := !detached && !quit
