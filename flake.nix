@@ -16,7 +16,7 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        vendorHash = "sha256-9BRW6b6WsJuHWzWc/xp3AguaWTnLOTc7zUYvECGLuS4=";
+        vendorHash = "sha256-/j3feGw2tK1jN65ld/vQn6LNgftvUP+fxLgG+TTxrrY=";
       in
       {
         packages.default = self.packages.${system}.claude-container;
