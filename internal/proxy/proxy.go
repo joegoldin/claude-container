@@ -124,14 +124,13 @@ func Run(opts Opts) error {
 		buf := make([]byte, 4096)
 
 		// Rolling buffer to detect the workspace trust prompt across
-		// read boundaries. We only need enough to match the needle.
-		// Only active during the first 5 seconds of the session to
-		// avoid accidental triggers during normal operation.
+		// read boundaries. Only active during the first 30 seconds
+		// to avoid accidental triggers during normal operation.
 		const needle = "Yes, I trust this folder"
-		var ring [256]byte
+		var ring [4096]byte
 		var ringLen int
 		scanning := true
-		scanDeadline := time.After(5 * time.Second)
+		scanDeadline := time.After(30 * time.Second)
 
 		for {
 			select {
