@@ -4,6 +4,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    llm-agents = {
+      url = "github:numtide/llm-agents.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -11,27 +15,81 @@
       self,
       nixpkgs,
       flake-utils,
+      llm-agents,
     }:
-    flake-utils.lib.eachDefaultSystem (
+    {
+      lib.mkClaudeContainer =
+        {
+          pkgs,
+          claude-code,
+          settings ? { },
+          managedSettings ? import ./nix/managed-settings.nix,
+          extraPackages ? [ ],
+        }:
+        let
+          system = pkgs.stdenv.hostPlatform.system;
+
+          image = pkgs.callPackage ./nix/image.nix {
+            inherit
+              claude-code
+              settings
+              managedSettings
+              extraPackages
+              ;
+          };
+
+          cli = pkgs.symlinkJoin {
+            name = "claude-container";
+            paths = [ self.packages.${system}.claude-container-unwrapped ];
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            postBuild = ''
+              wrapProgram $out/bin/claude-container \
+                --prefix PATH : ${
+                  pkgs.lib.makeBinPath (
+                    with pkgs;
+                    [
+                      git
+                      docker
+                    ]
+                  )
+                } \
+                --set CLAUDE_CONTAINER_IMAGE_TARBALL "${image}" \
+                --set CLAUDE_CONTAINER_IMAGE_TAG "claude-code:nix"
+
+              # Create yacc alias pointing to wrapped binary
+              ln -sf $out/bin/claude-container $out/bin/yacc
+            '';
+          };
+        in
+        { inherit image cli; };
+    }
+    // flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ llm-agents.overlays.default ];
+        };
         vendorHash = "sha256-t6Hbr5aArRL70MotJuhZZL0JEmXZztTbevzMayHDXcs=";
+
+        defaultContainer = self.lib.mkClaudeContainer {
+          inherit pkgs;
+          claude-code = pkgs.llm-agents.claude-code;
+        };
       in
       {
-        packages.default = self.packages.${system}.claude-container;
+        packages.default = defaultContainer.cli;
+        packages.claude-container = defaultContainer.cli;
+        packages.claude-container-image = defaultContainer.image;
 
-        packages.claude-container = pkgs.buildGoModule {
+        packages.claude-container-unwrapped = pkgs.buildGoModule {
           pname = "claude-container";
           version = "0.1.0";
           src = ./.;
           inherit vendorHash;
-          doCheck = false; # tests run via checks.default with proper env
+          doCheck = false;
 
-          nativeBuildInputs = with pkgs; [
-            installShellFiles
-            makeWrapper
-          ];
+          nativeBuildInputs = with pkgs; [ installShellFiles ];
 
           postInstall = ''
             # Generate shell completions
@@ -39,26 +97,6 @@
             $out/bin/claude-container completion fish > claude-container.fish
             $out/bin/claude-container completion zsh > _claude-container
             installShellCompletion claude-container.{bash,fish} _claude-container
-
-            # Copy docker context files
-            mkdir -p $out/share/claude-container
-            cp -r ${./docker}/* $out/share/claude-container/
-
-            # Wrap binary to ensure runtime deps on PATH
-            wrapProgram $out/bin/claude-container \
-              --prefix PATH : ${
-                pkgs.lib.makeBinPath (
-                  with pkgs;
-                  [
-                    git
-                    docker
-                  ]
-                )
-              } \
-              --set CLAUDE_CONTAINER_DOCKER_CONTEXT "$out/share/claude-container"
-
-            # Create yacc alias (after wrapProgram so it points to the wrapper)
-            ln -s $out/bin/claude-container $out/bin/yacc
           '';
 
           meta = with pkgs.lib; {
