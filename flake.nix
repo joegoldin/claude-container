@@ -56,6 +56,9 @@
                 )
               } \
               --set CLAUDE_CONTAINER_DOCKER_CONTEXT "$out/share/claude-container"
+
+            # Create yacc alias (after wrapProgram so it points to the wrapper)
+            ln -s $out/bin/claude-container $out/bin/yacc
           '';
 
           meta = with pkgs.lib; {
