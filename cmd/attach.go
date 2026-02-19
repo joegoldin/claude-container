@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/signal"
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
@@ -25,21 +23,16 @@ var attachCmd = &cobra.Command{
 			return fmt.Errorf("session %q not found", name)
 		}
 
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-		defer stop()
-
-		var attachErr error
-
 		switch {
 		case docker.IsRunning(name):
-			// Container is running — attach directly.
+			// Container is running — exec into docker attach.
 			fmt.Println("Attaching (Ctrl+P,Ctrl+Q to detach)...")
-			attachErr = docker.Attach(ctx, name)
+			return docker.ExecAttach(name)
 
 		case docker.Exists(name):
-			// Container exists but stopped — start and attach in one step.
+			// Container exists but stopped — exec into docker start -ai.
 			fmt.Println("Restarting stopped container...")
-			attachErr = docker.StartAttach(ctx, name)
+			return docker.ExecStartAttach(name)
 
 		default:
 			// Container doesn't exist — recreate with --continue.
@@ -56,15 +49,8 @@ var attachCmd = &cobra.Command{
 			}, false)
 
 			fmt.Println("Recreating container with --continue...")
-			attachErr = docker.RunInteractive(ctx, dockerArgs)
+			return docker.ExecForeground(dockerArgs)
 		}
-
-		// Auto-remove if session was created with --rm and container has exited.
-		if sess.AutoRemove && !docker.IsRunning(sess.Name) {
-			removeSession(store, sess.Name)
-		}
-
-		return attachErr
 	},
 }
 

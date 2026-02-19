@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"time"
 
@@ -213,18 +211,10 @@ func createSession(opts createOpts) error {
 		return nil
 	}
 
-	// i. Foreground mode: run interactively with full TTY.
+	// i. Foreground mode: exec into docker for full terminal control.
+	// This replaces the current process — no Go code runs after this.
 	// Ctrl+P,Ctrl+Q detaches and leaves the container running.
 	dockerArgs := docker.RunArgs(runOpts, false)
 	fmt.Printf("Session %q created. Attaching (Ctrl+P,Ctrl+Q to detach)...\n", name)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	runErr := docker.RunInteractive(ctx, dockerArgs)
-
-	// Auto-remove after detach if --rm was used and container has exited.
-	if opts.autoRemove && !docker.IsRunning(name) {
-		removeSession(store, name)
-	}
-
-	return runErr
+	return docker.ExecForeground(dockerArgs)
 }

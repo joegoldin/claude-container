@@ -121,19 +121,18 @@ func TestRunArgsWithPrompt(t *testing.T) {
 	}
 	args := RunArgs(opts, false)
 
-	// Find -p flag and its value.
-	foundP := false
-	for i, arg := range args {
-		if arg == "-p" && i+1 < len(args) {
-			foundP = true
-			if args[i+1] != "fix the tests" {
-				t.Errorf("prompt value = %q, want %q", args[i+1], "fix the tests")
-			}
+	// Prompt should be the last positional argument (not -p flag).
+	last := args[len(args)-1]
+	if last != "fix the tests" {
+		t.Errorf("RunArgs last arg = %q, want prompt %q", last, "fix the tests")
+	}
+
+	// Should NOT contain -p flag (that's non-interactive print mode).
+	for _, arg := range args {
+		if arg == "-p" {
+			t.Errorf("RunArgs should not contain -p flag, got %v", args)
 			break
 		}
-	}
-	if !foundP {
-		t.Errorf("RunArgs with Prompt missing -p flag in %v", args)
 	}
 }
 
