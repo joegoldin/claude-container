@@ -75,6 +75,7 @@ if [ -f /mnt/claude-host-json ]; then
 fi
 
 if [ -d /workspace ]; then
+    chown "$USER_UID:$USER_GID" /workspace 2>/dev/null || true
     chmod 755 /workspace 2>/dev/null || true
 fi
 

@@ -1,6 +1,7 @@
 // Package proxy provides a PTY proxy between the host terminal and a Docker
 // subprocess. It intercepts a configurable prefix key (Ctrl+B) to provide
-// detach/quit functionality and shows session info in the terminal title.
+// detach/quit functionality and renders a persistent status bar on the last
+// terminal row.
 package proxy
 
 import (
@@ -19,7 +20,7 @@ import (
 	"golang.org/x/term"
 )
 
-// StatusBarInfo holds the data rendered in the terminal title.
+// StatusBarInfo holds the data rendered in the status bar.
 type StatusBarInfo struct {
 	Name   string
 	Branch string
@@ -54,8 +55,7 @@ const prefixKey byte = 0x02
 const prefixTimeout = 2 * time.Second
 
 // Run starts a Docker subprocess and proxies I/O between the host terminal
-// and the container, providing prefix key interception and session info in
-// the terminal title. The terminal's native scrollback buffer is preserved.
+// and the container, providing prefix key interception and a status bar.
 func Run(opts Opts) error {
 	if len(opts.DockerArgs) == 0 {
 		return errors.New("proxy: DockerArgs must not be empty")
@@ -78,11 +78,10 @@ func Run(opts Opts) error {
 	}
 
 	// Start docker subprocess with a real PTY so Docker's -it flag works.
-	// Give the container the full terminal height — no row reservation.
 	cmd := exec.Command("docker", opts.DockerArgs...)
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
-		Rows: uint16(height),
+		Rows: uint16(height - 1), // reserve one row for status bar
 		Cols: uint16(width),
 	})
 	if err != nil {
@@ -97,8 +96,10 @@ func Run(opts Opts) error {
 		return fmt.Errorf("proxy: failed to set pty raw mode: %w", err)
 	}
 
-	// Show session info in the terminal title.
-	setTitle(os.Stdout, opts.StatusBar, false)
+	// Clear screen, set up scroll region, and render initial status bar.
+	fmt.Fprint(os.Stdout, "\033[2J\033[H") // clear screen + cursor home
+	setScrollRegion(height)
+	renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
 
 	// done channel signals goroutines to exit.
 	done := make(chan struct{})
@@ -133,9 +134,12 @@ func Run(opts Opts) error {
 	// main input loop can also select on a timeout channel (avoiding
 	// races between timer callbacks and the read loop).
 	stdinCh := make(chan byte, 64)
-	wg.Add(1)
+
+	// NOTE: the stdin reader is deliberately NOT in the WaitGroup.
+	// os.Stdin.Read() blocks until the user types something, and there's
+	// no portable way to interrupt it. Excluding it from wg prevents
+	// the cleanup path from hanging until the user presses a key.
 	go func() {
-		defer wg.Done()
 		buf := make([]byte, 1)
 		for {
 			n, err := os.Stdin.Read(buf)
@@ -169,7 +173,7 @@ func Run(opts Opts) error {
 					if b == prefixKey {
 						state = statePrefixWait
 						timeout = time.After(prefixTimeout)
-						setTitle(os.Stdout, opts.StatusBar, true)
+						renderStatusBar(os.Stdout, width, height, opts.StatusBar, true)
 					} else {
 						ptmx.Write([]byte{b})
 					}
@@ -181,18 +185,20 @@ func Run(opts Opts) error {
 					return
 				case <-timeout:
 					state = stateNormal
-					setTitle(os.Stdout, opts.StatusBar, false)
+					renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
 				case b := <-stdinCh:
 					state = stateNormal
-					setTitle(os.Stdout, opts.StatusBar, false)
+					renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
 
 					switch b {
 					case 'd':
 						detached = true
+						renderOverlay(os.Stdout, width, height, "Detaching...")
 						close(done)
 						return
 					case 'q':
 						quit = true
+						renderOverlay(os.Stdout, width, height, "Stopping container...")
 						close(done)
 						return
 					case prefixKey:
@@ -205,7 +211,7 @@ func Run(opts Opts) error {
 		}
 	}()
 
-	// SIGWINCH handler: resize PTY on terminal resize.
+	// SIGWINCH handler: update scroll region, status bar, and PTY size on resize.
 	sigwinch := make(chan os.Signal, 1)
 	signal.Notify(sigwinch, syscall.SIGWINCH)
 	wg.Add(1)
@@ -220,8 +226,11 @@ func Run(opts Opts) error {
 				if err == nil {
 					width = w
 					height = h
+					setScrollRegion(height)
+					renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
+					// Resize the PTY so the container sees the new dimensions.
 					pty.Setsize(ptmx, &pty.Winsize{
-						Rows: uint16(height),
+						Rows: uint16(height - 1),
 						Cols: uint16(width),
 					})
 				}
@@ -288,8 +297,8 @@ func Run(opts Opts) error {
 	wg.Wait()
 
 	// Restore terminal.
-	fmt.Fprint(os.Stdout, "\033]0;\007")   // reset terminal title
-	fmt.Fprint(os.Stdout, "\033[?25h")     // ensure cursor is visible
+	clearScrollRegion()
+	fmt.Fprint(os.Stdout, "\033[?25h") // ensure cursor is visible
 	term.Restore(stdinFd, oldState)
 	fmt.Fprint(os.Stderr, "\r\n") // clean line for shell prompt
 
@@ -313,8 +322,28 @@ func Run(opts Opts) error {
 	return nil
 }
 
-// setTitle sets the terminal title with session info and optional prefix hints.
-func setTitle(w io.Writer, info StatusBarInfo, prefixActive bool) {
+// setScrollRegion sets the ANSI scroll region to rows 1 through height-1,
+// reserving the last row for the status bar.
+func setScrollRegion(height int) {
+	if height < 2 {
+		return
+	}
+	fmt.Fprintf(os.Stdout, "\033[1;%dr", height-1)
+}
+
+// clearScrollRegion resets the scroll region to the full terminal.
+func clearScrollRegion() {
+	fmt.Fprint(os.Stdout, "\033[r")
+}
+
+// renderStatusBar draws the status bar on the last row of the terminal.
+// If prefixActive is true, it shows the prefix key command hints.
+func renderStatusBar(w io.Writer, width, height int, info StatusBarInfo, prefixActive bool) {
+	if height < 2 || width < 1 {
+		return
+	}
+
+	// Build status bar content.
 	var parts []string
 	if info.Name != "" {
 		parts = append(parts, info.Name)
@@ -330,16 +359,37 @@ func setTitle(w io.Writer, info StatusBarInfo, prefixActive bool) {
 	if prefixActive {
 		hint = "d:detach  q:quit  ^B:literal"
 	} else {
-		hint = "^B for options"
+		hint = "^B d:detach q:quit"
 	}
 
-	title := strings.Join(parts, " | ")
-	if hint != "" {
-		if title != "" {
-			title += " | "
-		}
-		title += hint
+	left := strings.Join(parts, " \u2502 ")
+	bar := fmt.Sprintf(" %s \u2502 %s ", left, hint)
+
+	// Pad or truncate to terminal width.
+	barRunes := []rune(bar)
+	if len(barRunes) < width {
+		bar = bar + strings.Repeat(" ", width-len(barRunes))
+	} else if len(barRunes) > width {
+		bar = string(barRunes[:width])
 	}
 
-	fmt.Fprintf(w, "\033]0;%s\007", title)
+	// Save cursor, move to status row, clear line, draw bar in inverse video, restore cursor.
+	fmt.Fprintf(w, "\033[s\033[%d;1H\033[2K\033[7m%s\033[0m\033[u", height, bar)
+}
+
+// renderOverlay clears the scroll region and shows a centered message,
+// used to provide feedback during quit/detach operations.
+func renderOverlay(w io.Writer, width, height int, msg string) {
+	if height < 2 || width < 1 {
+		return
+	}
+	// Clear the scroll region.
+	fmt.Fprint(w, "\033[2J\033[H")
+	// Center the message vertically and horizontally.
+	row := height / 2
+	col := (width - len(msg)) / 2
+	if col < 1 {
+		col = 1
+	}
+	fmt.Fprintf(w, "\033[%d;%dH%s", row, col, msg)
 }
