@@ -51,7 +51,7 @@ const (
 const prefixKey byte = 0x02
 
 // prefixTimeout is how long we wait for a command key after Ctrl+B.
-const prefixTimeout = 200 * time.Millisecond
+const prefixTimeout = 2 * time.Second
 
 // Run starts a Docker subprocess and proxies I/O between the host terminal
 // and the container, providing prefix key interception and a status bar.
@@ -129,67 +129,77 @@ func Run(opts Opts) error {
 	}()
 
 	// stdin proxy: host stdin -> docker pty, with prefix key interception.
+	// We read stdin in a goroutine and send bytes on a channel so the
+	// main input loop can also select on a timeout channel (avoiding
+	// races between timer callbacks and the read loop).
+	stdinCh := make(chan byte, 64)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		buf := make([]byte, 1)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if err != nil {
+				return
+			}
+			if n > 0 {
+				select {
+				case stdinCh <- buf[0]:
+				case <-done:
+					return
+				}
+			}
+		}
+	}()
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 
 		state := stateNormal
-		var prefixTimer *time.Timer
-		buf := make([]byte, 1)
+		var timeout <-chan time.Time
 
 		for {
-			select {
-			case <-done:
-				return
-			default:
-			}
-
-			n, err := os.Stdin.Read(buf)
-			if err != nil {
-				return
-			}
-			if n == 0 {
-				continue
-			}
-
-			b := buf[0]
-
 			switch state {
 			case stateNormal:
-				if b == prefixKey {
-					state = statePrefixWait
-					// Show prefix-active status bar.
-					renderStatusBar(os.Stdout, width, height, opts.StatusBar, true)
-					// Start timeout.
-					prefixTimer = time.AfterFunc(prefixTimeout, func() {
-						state = stateNormal
-						renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
-					})
-				} else {
-					ptmx.Write([]byte{b})
+				select {
+				case <-done:
+					return
+				case b := <-stdinCh:
+					if b == prefixKey {
+						state = statePrefixWait
+						timeout = time.After(prefixTimeout)
+						renderStatusBar(os.Stdout, width, height, opts.StatusBar, true)
+					} else {
+						ptmx.Write([]byte{b})
+					}
 				}
 
 			case statePrefixWait:
-				if prefixTimer != nil {
-					prefixTimer.Stop()
-				}
-				state = stateNormal
-				renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
+				select {
+				case <-done:
+					return
+				case <-timeout:
+					state = stateNormal
+					renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
+				case b := <-stdinCh:
+					state = stateNormal
+					renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
 
-				switch b {
-				case 'd':
-					detached = true
-					close(done)
-					return
-				case 'q':
-					quit = true
-					close(done)
-					return
-				case prefixKey:
-					// Forward literal Ctrl+B.
-					ptmx.Write([]byte{prefixKey})
-				default:
-					// Ignore unknown prefix command.
+					switch b {
+					case 'd':
+						detached = true
+						close(done)
+						return
+					case 'q':
+						quit = true
+						close(done)
+						return
+					case prefixKey:
+						ptmx.Write([]byte{prefixKey})
+					default:
+						// Ignore unknown prefix command.
+					}
 				}
 			}
 		}
