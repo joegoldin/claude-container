@@ -90,12 +90,9 @@ func CapturePane(session string) (string, error) {
 }
 
 // Attach attaches to the tmux session with direct terminal access.
-// Ctrl+Q is bound as a tmux key to detach cleanly.
+// Use the standard tmux detach (Ctrl+B, d) to leave the session.
 func Attach(ctx context.Context, session string) error {
 	name := SessionName(session)
-
-	// Bind Ctrl+Q to detach so the user can leave the session.
-	_ = exec.Command("tmux", "bind-key", "-n", "C-q", "detach-client").Run()
 
 	// Resize the tmux window to match the current terminal size.
 	ws, err := unix.IoctlGetWinsize(int(os.Stdin.Fd()), unix.TIOCGWINSZ)

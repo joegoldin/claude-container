@@ -59,7 +59,7 @@ var attachCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
 
-		fmt.Println("Attaching (Ctrl+Q to detach)...")
+		fmt.Println("Attaching (Ctrl+B, d to detach)...")
 		attachErr := tmux.Attach(ctx, name)
 
 		// Auto-remove if session was created with --rm and has ended.
