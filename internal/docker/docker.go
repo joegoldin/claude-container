@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -16,6 +17,59 @@ const ImageName = "claude-code"
 // ContainerName returns the Docker container name for the given session.
 func ContainerName(session string) string {
 	return "claude-container_" + session
+}
+
+// ImageTag returns the full Docker image reference (name:tag).
+// When CLAUDE_CONTAINER_IMAGE_TAG is set (by the Nix wrapper), it is used.
+// Otherwise falls back to the legacy image name.
+func ImageTag() string {
+	if tag := os.Getenv("CLAUDE_CONTAINER_IMAGE_TAG"); tag != "" {
+		return tag
+	}
+	return ImageName
+}
+
+// LoadImage loads the Docker image from the Nix-built tarball.
+func LoadImage() error {
+	tarball := os.Getenv("CLAUDE_CONTAINER_IMAGE_TARBALL")
+	if tarball == "" {
+		return fmt.Errorf("CLAUDE_CONTAINER_IMAGE_TARBALL is not set")
+	}
+	fmt.Println("Loading Docker image...")
+	cmd := exec.Command("docker", "load", "-i", tarball)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// EnsureImage ensures the Docker image is available, loading it from the
+// Nix-built tarball if necessary. The configDir is used to store a marker
+// file tracking which tarball was last loaded.
+func EnsureImage(configDir string) error {
+	tarball := os.Getenv("CLAUDE_CONTAINER_IMAGE_TARBALL")
+	if tarball == "" {
+		if ImageExists() {
+			return nil
+		}
+		return fmt.Errorf("image %q not found and CLAUDE_CONTAINER_IMAGE_TARBALL not set", ImageTag())
+	}
+
+	// Check marker to see if we already loaded this tarball.
+	markerPath := filepath.Join(configDir, "loaded-image")
+	if data, err := os.ReadFile(markerPath); err == nil {
+		if string(bytes.TrimSpace(data)) == tarball && ImageExists() {
+			return nil
+		}
+	}
+
+	if err := LoadImage(); err != nil {
+		return fmt.Errorf("load image: %w", err)
+	}
+
+	// Update marker.
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(markerPath, []byte(tarball), 0o644)
+	return nil
 }
 
 // RunOpts holds options for running a Claude Code container.
@@ -31,16 +85,6 @@ type RunOpts struct {
 	Prompt         string
 	Continue       bool
 	Resume         string // claude --resume <id>
-}
-
-// BuildArgs returns the docker build command arguments for the given
-// context directory.
-func BuildArgs(contextDir string) []string {
-	return []string{
-		"build",
-		"-t", ImageName,
-		contextDir,
-	}
 }
 
 // RunArgs returns the docker run command arguments for a persistent
@@ -73,7 +117,7 @@ func RunArgs(opts RunOpts, detached bool) []string {
 		args = append(args, "-v", opts.HostClaudeJSON+":/mnt/claude-host-json:ro")
 	}
 
-	args = append(args, ImageName, "claude")
+	args = append(args, ImageTag(), "claude")
 
 	// Append optional claude flags after the base "claude" command.
 	if opts.Yolo {
@@ -110,7 +154,7 @@ func ShellArgs(workspace, configDir, hostClaudeDir, hostClaudeJSON string, uid, 
 	if hostClaudeJSON != "" {
 		args = append(args, "-v", hostClaudeJSON+":/mnt/claude-host-json:ro")
 	}
-	args = append(args, ImageName, "/bin/bash")
+	args = append(args, ImageTag(), "/bin/bash")
 	return args
 }
 
@@ -125,7 +169,7 @@ func RunDetached(args []string) error {
 
 // ImageExists returns true if the Claude Code Docker image has been built.
 func ImageExists() bool {
-	cmd := exec.Command("docker", "image", "inspect", ImageName)
+	cmd := exec.Command("docker", "image", "inspect", ImageTag())
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd.Run() == nil
@@ -191,17 +235,6 @@ func Logs(ctx context.Context, session string, follow bool) *exec.Cmd {
 	}
 	args = append(args, name)
 	return exec.CommandContext(ctx, "docker", args...)
-}
-
-// Build returns a prepared *exec.Cmd that builds the Docker image from
-// the given context directory. Stdout and stderr are connected to the
-// current process so the user sees build output.
-func Build(contextDir string) *exec.Cmd {
-	args := BuildArgs(contextDir)
-	cmd := exec.Command("docker", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd
 }
 
 // ansiRe matches ANSI escape sequences (CSI, OSC, and single-character escapes).

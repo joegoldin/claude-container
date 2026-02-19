@@ -14,26 +14,6 @@ func TestContainerName(t *testing.T) {
 	}
 }
 
-func TestBuildArgs(t *testing.T) {
-	args := BuildArgs("/path/to/context")
-
-	if len(args) == 0 {
-		t.Fatal("BuildArgs returned empty slice")
-	}
-	if args[0] != "build" {
-		t.Errorf("args[0] = %q, want %q", args[0], "build")
-	}
-
-	// The image name should appear as -t <ImageName>.
-	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, ImageName) {
-		t.Errorf("BuildArgs missing image name %q in %v", ImageName, args)
-	}
-	if !strings.Contains(joined, "/path/to/context") {
-		t.Errorf("BuildArgs missing context dir in %v", args)
-	}
-}
-
 func TestRunArgs(t *testing.T) {
 	opts := RunOpts{
 		Name:      "test-session",
@@ -83,9 +63,9 @@ func TestRunArgs(t *testing.T) {
 		t.Errorf("RunArgs missing USER_GID env in %v", args)
 	}
 
-	// Image name should be present.
-	if !slices.Contains(args, ImageName) {
-		t.Errorf("RunArgs missing image name %q in %v", ImageName, args)
+	// Image tag should be present.
+	if !slices.Contains(args, ImageTag()) {
+		t.Errorf("RunArgs missing image tag %q in %v", ImageTag(), args)
 	}
 
 	// Should end with "claude" command (no extra flags for base case).
@@ -302,5 +282,29 @@ func TestShellArgs(t *testing.T) {
 	// Must end with /bin/bash.
 	if args[len(args)-1] != "/bin/bash" {
 		t.Errorf("ShellArgs last arg = %q, want %q", args[len(args)-1], "/bin/bash")
+	}
+}
+
+func TestImageTag(t *testing.T) {
+	// Default: returns ImageName when env var not set.
+	t.Setenv("CLAUDE_CONTAINER_IMAGE_TAG", "")
+	if got := ImageTag(); got != ImageName {
+		t.Errorf("ImageTag() = %q, want %q (default)", got, ImageName)
+	}
+
+	// With env var set.
+	t.Setenv("CLAUDE_CONTAINER_IMAGE_TAG", "claude-code:nix")
+	if got := ImageTag(); got != "claude-code:nix" {
+		t.Errorf("ImageTag() = %q, want %q", got, "claude-code:nix")
+	}
+}
+
+func TestEnsureImageMarker(t *testing.T) {
+	// When no tarball env and image doesn't exist, should error.
+	t.Setenv("CLAUDE_CONTAINER_IMAGE_TARBALL", "")
+	t.Setenv("CLAUDE_CONTAINER_IMAGE_TAG", "nonexistent:test")
+	err := EnsureImage(t.TempDir())
+	if err == nil {
+		t.Error("EnsureImage should error when no tarball and image missing")
 	}
 }
