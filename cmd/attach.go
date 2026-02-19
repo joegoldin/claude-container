@@ -11,6 +11,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	attachBackground bool
+	attachDashboard  bool
+)
+
 var attachCmd = &cobra.Command{
 	Use:               "attach <session>",
 	Short:             "Attach to a running session",
@@ -28,43 +33,21 @@ var attachCmd = &cobra.Command{
 			return fmt.Errorf("session %q not found", name)
 		}
 
-		containerName := docker.ContainerName(name)
-
-		switch {
-		case docker.IsRunning(name):
-			fmt.Println("Attaching...")
-		case docker.Exists(name):
-			fmt.Println("Restarting stopped container...")
-			if err := docker.Start(name); err != nil {
-				return fmt.Errorf("start container: %w", err)
-			}
-		default:
-			// Container is gone — recreate it. Use --resume if we have a
-			// saved session ID, otherwise fall back to --continue.
-			if sess.ResumeID != "" {
-				fmt.Printf("Recreating container with --resume %s...\n", sess.ResumeID)
-			} else {
-				fmt.Println("Recreating container with --continue...")
-			}
-			detachedArgs := docker.RunArgs(docker.RunOpts{
-				Name:           name,
-				Workspace:      sess.WorktreePath,
-				ConfigDir:      store.ClaudeConfigDir(),
-				HostClaudeDir:  config.HostClaudeDir(),
-				HostClaudeJSON: config.HostClaudeJSON(),
-				UID:            os.Getuid(),
-				GID:            os.Getgid(),
-				Yolo:           sess.Yolo,
-				Resume:         sess.ResumeID,
-				Continue:       sess.ResumeID == "", // only if no resume ID
-			}, true)
-			startCmd := exec.Command("docker", detachedArgs...)
-			startCmd.Stderr = os.Stderr
-			if err := startCmd.Run(); err != nil {
-				return fmt.Errorf("recreate container: %w", err)
-			}
+		// Ensure the container is running (start/recreate as needed).
+		if err := ensureRunning(store, name, sess); err != nil {
+			return err
 		}
 
+		if attachBackground {
+			fmt.Printf("Session %q is running (background).\n", name)
+			return nil
+		}
+
+		if attachDashboard {
+			return rootCmd.RunE(cmd, nil)
+		}
+
+		containerName := docker.ContainerName(name)
 		proxyErr := proxy.Run(proxy.Opts{
 			DockerArgs:    []string{"attach", containerName},
 			ContainerName: containerName,
@@ -77,7 +60,48 @@ var attachCmd = &cobra.Command{
 	},
 }
 
+// ensureRunning makes sure the container for the given session is running,
+// starting or recreating it as needed.
+func ensureRunning(store *config.Store, name string, sess *config.Session) error {
+	switch {
+	case docker.IsRunning(name):
+		return nil
+	case docker.Exists(name):
+		fmt.Println("Restarting stopped container...")
+		if err := docker.Start(name); err != nil {
+			return fmt.Errorf("start container: %w", err)
+		}
+		return nil
+	default:
+		if sess.ResumeID != "" {
+			fmt.Printf("Recreating container with --resume %s...\n", sess.ResumeID)
+		} else {
+			fmt.Println("Recreating container with --continue...")
+		}
+		detachedArgs := docker.RunArgs(docker.RunOpts{
+			Name:           name,
+			Workspace:      sess.WorktreePath,
+			ConfigDir:      store.ClaudeConfigDir(),
+			HostClaudeDir:  config.HostClaudeDir(),
+			HostClaudeJSON: config.HostClaudeJSON(),
+			UID:            os.Getuid(),
+			GID:            os.Getgid(),
+			Yolo:           sess.Yolo,
+			Resume:         sess.ResumeID,
+			Continue:       sess.ResumeID == "",
+		}, true)
+		startCmd := exec.Command("docker", detachedArgs...)
+		startCmd.Stderr = os.Stderr
+		if err := startCmd.Run(); err != nil {
+			return fmt.Errorf("recreate container: %w", err)
+		}
+		return nil
+	}
+}
+
 func init() {
+	attachCmd.Flags().BoolVarP(&attachBackground, "background", "b", false, "Start container in background without attaching")
+	attachCmd.Flags().BoolVarP(&attachDashboard, "dashboard", "d", false, "Start container then open the TUI dashboard")
 	rootCmd.AddCommand(attachCmd)
 }
 
