@@ -265,6 +265,50 @@ func TestWorktreeDir(t *testing.T) {
 	}
 }
 
+func TestGenerateName(t *testing.T) {
+	tests := []struct {
+		dir  string
+		desc string
+	}{
+		{"/home/user/my-project", "normal directory"},
+		{"/tmp", "short directory"},
+		{".", "dot directory"},
+		{"", "empty string"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			name := GenerateName(tt.dir)
+			if name == "" {
+				t.Error("GenerateName returned empty string")
+			}
+			parts := strings.Split(name, "-")
+			if len(parts) < 3 {
+				t.Errorf("GenerateName(%q) = %q, expected at least 3 hyphen-separated parts", tt.dir, name)
+			}
+			// Should not contain slashes or spaces.
+			if strings.ContainsAny(name, "/ \t") {
+				t.Errorf("GenerateName(%q) = %q, contains invalid characters", tt.dir, name)
+			}
+		})
+	}
+
+	// Two calls should (almost certainly) produce different names.
+	a := GenerateName("/home/user/project")
+	b := GenerateName("/home/user/project")
+	// With 40*55=2200 combos, collision is ~0.05% per pair. Run a few times.
+	different := false
+	for i := 0; i < 10; i++ {
+		if GenerateName("/x") != GenerateName("/x") {
+			different = true
+			break
+		}
+	}
+	if !different && a == b {
+		t.Log("warning: GenerateName produced identical names (unlikely but possible)")
+	}
+}
+
 func TestSanitizeName(t *testing.T) {
 	tests := []struct {
 		input string

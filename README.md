@@ -14,7 +14,9 @@ claude-container - run multiple Claude Code instances in isolated containers
 
 ```
 claude-container                          # TUI dashboard
-claude-container new [flags]              # create session
+claude-container run [flags]              # quick-start in current dir
+claude-container work [flags]             # quick-start with worktree
+claude-container new [flags]              # create session (wizard)
 claude-container ps [--json]              # list sessions
 claude-container attach <session>         # attach to session
 claude-container stop <session>           # stop session
@@ -48,8 +50,45 @@ Available Commands:
   new         Create a new Claude Code session
   ps          List all sessions
   rm          Remove a session (stop + delete worktree + branch)
+  run         Quick-start a session in the current directory
   shell       Drop into a bash shell in a container
   stop        Stop a session (keep worktree)
+  work        Quick-start an isolated worktree session
+```
+
+### run
+
+Quick-start a session in the current directory. No worktree, no wizard.
+Name is auto-generated (e.g. `myproject-calm-reef`) unless `--name` is given.
+
+<!-- Generated from: claude-container run --help -->
+
+```
+Usage:
+  claude-container run [flags]
+
+Flags:
+      --name string     Session name (auto-generated if omitted)
+  -p, --prompt string   Initial prompt to send to Claude
+      --yolo            Skip permission prompts
+```
+
+### work
+
+Quick-start a session with its own git worktree for isolation. Name and
+branch are auto-generated unless `--name` is given.
+
+<!-- Generated from: claude-container work --help -->
+
+```
+Usage:
+  claude-container work [flags]
+
+Flags:
+      --from string     Base branch for worktree (default: current HEAD)
+      --name string     Session name (auto-generated if omitted)
+  -p, --prompt string   Initial prompt to send to Claude
+      --yolo            Skip permission prompts
 ```
 
 ### new
@@ -255,12 +294,25 @@ creating sessions.
 
 ## FILES
 
-    ~/.config/claude-container/sessions.json    session metadata
-    ~/.config/claude-container/worktrees/       git worktrees
+    ~/.config/claude-container/sessions.json       session metadata
+    ~/.config/claude-container/worktrees/           git worktrees
+    ~/.config/claude-container/containers/<name>/   per-session Claude Code config
 
 ## EXAMPLES
 
 ```sh
+# Quick-start in current directory (auto-generated name)
+claude-container run
+
+# Quick-start in yolo mode with a prompt
+claude-container run --yolo -p "fix the login bug"
+
+# Start an isolated worktree session
+claude-container work
+
+# Worktree session from a specific branch
+claude-container work --from release-2.0
+
 # Launch the TUI dashboard
 claude-container
 
@@ -269,16 +321,6 @@ claude-container new
 
 # Create a session with flags (skip wizard)
 claude-container new --name auth --worktree feature-auth
-
-# Create from a specific branch
-claude-container new --name hotfix --worktree fix-bug --from release-2.0
-
-# Create without worktree (use current directory)
-claude-container new --name quick --no-worktree --yolo
-
-# Create with an initial prompt
-claude-container new --name refactor --worktree refactor-db \
-  -p "refactor the database layer to use connection pooling"
 
 # List sessions
 claude-container ps

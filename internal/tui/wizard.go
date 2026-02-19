@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/joegoldin/claude-container/internal/config"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
 )
 
@@ -32,23 +33,27 @@ type WizardResult struct {
 
 // WizardModel is the Bubble Tea model for the interactive new-session wizard.
 type WizardModel struct {
-	step      int
-	textInput textinput.Model
-	result    WizardResult
-	choices   []string
-	cursor    int
-	repoPath  string
-	branches  []string
-	scroll    int // scroll offset for branch list
-	width     int
-	height    int
+	step        int
+	textInput   textinput.Model
+	result      WizardResult
+	choices     []string
+	cursor      int
+	repoPath    string
+	branches    []string
+	scroll      int // scroll offset for branch list
+	width       int
+	height      int
+	defaultName string // auto-generated name shown as default
 }
 
 // NewWizard creates a WizardModel. If repoPath is non-empty, branches are
-// loaded for the "from existing branch" option.
-func NewWizard(repoPath string) WizardModel {
+// loaded for the "from existing branch" option. A random readable name is
+// generated from dir and pre-filled as the default session name.
+func NewWizard(repoPath string, dir string) WizardModel {
+	generated := config.GenerateName(dir)
+
 	ti := textinput.New()
-	ti.Placeholder = "session-name"
+	ti.Placeholder = generated
 	ti.Focus()
 	ti.CharLimit = 80
 
@@ -58,10 +63,11 @@ func NewWizard(repoPath string) WizardModel {
 	}
 
 	return WizardModel{
-		step:      stepName,
-		textInput: ti,
-		repoPath:  repoPath,
-		branches:  branches,
+		step:        stepName,
+		textInput:   ti,
+		repoPath:    repoPath,
+		branches:    branches,
+		defaultName: generated,
 	}
 }
 
@@ -122,7 +128,7 @@ func (m WizardModel) updateName(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "enter" {
 		val := strings.TrimSpace(m.textInput.Value())
 		if val == "" {
-			return m, nil // require non-empty
+			val = m.defaultName // use generated name
 		}
 		m.result.Name = val
 
@@ -273,7 +279,7 @@ func (m WizardModel) View() string {
 		b.WriteString("Session name:\n")
 		b.WriteString(m.textInput.View())
 		b.WriteString("\n\n")
-		b.WriteString(dimStyle.Render("enter confirm  esc cancel"))
+		b.WriteString(dimStyle.Render("enter confirm (empty = " + m.defaultName + ")  esc cancel"))
 
 	case stepWorktree:
 		b.WriteString(titleStyle.Render("Worktree Setup"))

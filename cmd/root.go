@@ -50,7 +50,7 @@ var rootCmd = &cobra.Command{
 				}
 				repoPath, _ := gitpkg.RepoRoot(cwd)
 
-				wiz := tui.NewWizard(repoPath)
+				wiz := tui.NewWizard(repoPath, cwd)
 				wp := tea.NewProgram(wiz, tea.WithAltScreen())
 				wResult, err := wp.Run()
 				if err != nil {

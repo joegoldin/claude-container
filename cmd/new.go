@@ -49,7 +49,7 @@ var newCmd = &cobra.Command{
 			}
 			repoPath, _ := gitpkg.RepoRoot(cwd)
 
-			wiz := tui.NewWizard(repoPath)
+			wiz := tui.NewWizard(repoPath, cwd)
 			wp := tea.NewProgram(wiz, tea.WithAltScreen())
 			wResult, err := wp.Run()
 			if err != nil {
@@ -159,15 +159,18 @@ func createSession(opts createOpts) error {
 	}
 
 	// f. Build docker run args.
-	configDir := config.DefaultDir()
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
+	// Each container gets its own config subdir so the container's Claude Code
+	// config files (owned by container UID) don't conflict with host-side
+	// sessions.json.
+	containerConfigDir := store.ContainerConfigDir(name)
+	if err := os.MkdirAll(containerConfigDir, 0o755); err != nil {
+		return fmt.Errorf("create container config dir: %w", err)
 	}
 
 	dockerArgs := docker.RunArgs(docker.RunOpts{
 		Name:      name,
 		Workspace: workspace,
-		ConfigDir: configDir,
+		ConfigDir: containerConfigDir,
 		UID:       os.Getuid(),
 		GID:       os.Getgid(),
 		Yolo:      opts.yolo,

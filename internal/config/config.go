@@ -3,10 +3,12 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -55,6 +57,14 @@ func DefaultDir() string {
 // WorktreeDir returns the path where git worktrees are stored.
 func (s *Store) WorktreeDir() string {
 	return filepath.Join(s.dir, "worktrees")
+}
+
+// ContainerConfigDir returns the per-session directory that gets mounted
+// into the Docker container for Claude Code's own config files. Each
+// session gets an isolated config so the host sessions.json isn't
+// clobbered by container writes.
+func (s *Store) ContainerConfigDir(name string) string {
+	return filepath.Join(s.dir, "containers", name)
 }
 
 // Save persists sess into the store, creating the directory and file if
@@ -162,6 +172,50 @@ var sanitizeRe = regexp.MustCompile(`[/\s]+`)
 // SanitizeName replaces slashes and whitespace runs with a single hyphen.
 func SanitizeName(name string) string {
 	return sanitizeRe.ReplaceAllString(name, "-")
+}
+
+// adjectives used for random name generation.
+var adjectives = []string{
+	"bold", "calm", "cool", "dark", "deep",
+	"fast", "keen", "loud", "neat", "pale",
+	"pure", "rare", "slim", "soft", "tall",
+	"warm", "wise", "wild", "firm", "glad",
+	"epic", "fair", "fine", "free", "gold",
+	"grim", "hazy", "icy", "jade", "kind",
+	"lazy", "mild", "neon", "odd", "pink",
+	"red", "safe", "tidy", "vast", "zinc",
+}
+
+// nouns used for random name generation.
+var nouns = []string{
+	"arch", "beam", "bolt", "cape", "cave",
+	"claw", "core", "cube", "dawn", "disk",
+	"dome", "dune", "echo", "edge", "fern",
+	"flux", "foam", "fork", "gate", "glow",
+	"grid", "haze", "helm", "hill", "iris",
+	"jade", "knot", "lake", "leaf", "link",
+	"loom", "mist", "moon", "nest", "node",
+	"opal", "orb", "palm", "peak", "pine",
+	"pond", "reef", "rune", "sage", "seed",
+	"shard", "star", "tide", "vale", "vine",
+	"wave", "well", "wing", "yard", "zone",
+}
+
+// GenerateName creates a readable session name from the directory basename
+// plus a random adjective-noun pair. Example: "myproject-calm-reef".
+func GenerateName(dir string) string {
+	base := filepath.Base(dir)
+	// Clean the base name: lowercase, replace non-alphanumeric with hyphen.
+	base = strings.ToLower(base)
+	base = sanitizeRe.ReplaceAllString(base, "-")
+	base = strings.Trim(base, "-")
+	if base == "" || base == "." {
+		base = "session"
+	}
+
+	adj := adjectives[rand.Intn(len(adjectives))]
+	noun := nouns[rand.Intn(len(nouns))]
+	return fmt.Sprintf("%s-%s-%s", base, adj, noun)
 }
 
 // loadLocked reads the sessions file. Must be called with s.mu held.
