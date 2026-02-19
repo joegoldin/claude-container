@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
@@ -76,6 +77,7 @@ func authLoginRun(cmd *cobra.Command, args []string) error {
 		"-e", fmt.Sprintf("USER_GID=%d", os.Getgid()),
 		docker.ImageName,
 		"claude",
+		"--dangerously-skip-permissions",
 	}
 
 	c := exec.Command("docker", dockerArgs...)
@@ -83,15 +85,32 @@ func authLoginRun(cmd *cobra.Command, args []string) error {
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 
-	if err := c.Run(); err != nil {
+	if err := c.Start(); err != nil {
 		return fmt.Errorf("docker run: %w", err)
 	}
 
-	// Report auth status after the container exits.
+	// Poll for credentials file — auto-exit when authenticated.
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			if store.IsAuthenticated() {
+				c.Process.Signal(os.Interrupt)
+				return
+			}
+			if c.ProcessState != nil {
+				return
+			}
+		}
+	}()
+
+	_ = c.Wait()
+
+	// Report auth status.
 	if store.IsAuthenticated() {
-		fmt.Println("Authentication successful.")
+		fmt.Println("\nAuthentication successful.")
 	} else {
-		fmt.Println("Authentication was not completed. Run 'claude-container auth' to try again.")
+		fmt.Println("\nAuthentication was not completed. Run 'claude-container auth' to try again.")
 	}
 
 	return nil
