@@ -15,9 +15,13 @@ var authCmd = &cobra.Command{
 	Use:   "auth",
 	Short: "Authenticate Claude Code inside a container",
 	Long: `Log in to Claude Code by running an interactive authentication session inside a container.
+
+If you have already authenticated Claude Code on the host (credentials in ~/.claude/),
+those credentials are automatically mounted into containers — no separate auth step needed.
+
 Use 'claude-container auth status' to check authentication state.
 Use 'claude-container gc --auth' to remove stored credentials.`,
-	RunE:  authLoginRun,
+	RunE: authLoginRun,
 }
 
 var authStatusCmd = &cobra.Command{
@@ -25,8 +29,14 @@ var authStatusCmd = &cobra.Command{
 	Short: "Check authentication status",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store := config.NewStore(config.DefaultDir())
+		if hostDir := config.HostClaudeDir(); hostDir != "" {
+			if _, err := os.Stat(hostDir + "/.credentials.json"); err == nil {
+				fmt.Printf("Authenticated (host credentials: %s)\n", hostDir)
+				return nil
+			}
+		}
 		if store.IsAuthenticated() {
-			fmt.Println("Authenticated")
+			fmt.Printf("Authenticated (config: %s)\n", store.ClaudeConfigDir())
 		} else {
 			fmt.Println("Not authenticated. Run 'claude-container auth' to log in.")
 		}
@@ -36,6 +46,15 @@ var authStatusCmd = &cobra.Command{
 
 func authLoginRun(cmd *cobra.Command, args []string) error {
 	store := config.NewStore(config.DefaultDir())
+
+	// Check if host already has credentials — no container auth needed.
+	if hostDir := config.HostClaudeDir(); hostDir != "" {
+		if _, err := os.Stat(hostDir + "/.credentials.json"); err == nil {
+			fmt.Printf("Host credentials found at %s/.credentials.json\n", hostDir)
+			fmt.Println("These are automatically mounted into containers. No auth needed.")
+			return nil
+		}
+	}
 
 	// Ensure the shared config directory exists.
 	if err := os.MkdirAll(store.ClaudeConfigDir(), 0o755); err != nil {
@@ -71,12 +90,18 @@ func authLoginRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// Poll for credentials file — auto-exit when authenticated.
+	// Wait a few seconds after detecting credentials so Claude finishes
+	// writing all config files (.claude.json, settings, etc).
 	go func() {
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
 		for range ticker.C {
 			if store.IsAuthenticated() {
-				c.Process.Signal(os.Interrupt)
+				// Give Claude time to finish writing settings.
+				time.Sleep(3 * time.Second)
+				if c.ProcessState == nil {
+					c.Process.Signal(os.Interrupt)
+				}
 				return
 			}
 			if c.ProcessState != nil {

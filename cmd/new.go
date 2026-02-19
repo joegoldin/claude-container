@@ -178,14 +178,15 @@ func createSession(opts createOpts) error {
 	}
 
 	runOpts := docker.RunOpts{
-		Name:      name,
-		Workspace: workspace,
-		ConfigDir: claudeConfigDir,
-		UID:       os.Getuid(),
-		GID:       os.Getgid(),
-		Yolo:      opts.yolo,
-		Prompt:    opts.prompt,
-		Continue:  opts.cont,
+		Name:          name,
+		Workspace:     workspace,
+		ConfigDir:     claudeConfigDir,
+		HostClaudeDir: config.HostClaudeDir(),
+		UID:           os.Getuid(),
+		GID:           os.Getgid(),
+		Yolo:          opts.yolo,
+		Prompt:        opts.prompt,
+		Continue:      opts.cont,
 	}
 
 	// g. Save session to store before running so it's tracked even if

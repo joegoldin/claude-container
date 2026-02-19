@@ -66,13 +66,37 @@ func (s *Store) ClaudeConfigDir() string {
 	return filepath.Join(s.dir, "claude-config")
 }
 
-// IsAuthenticated reports whether Claude Code credentials exist in the
-// shared config directory. It checks for the presence of
-// .credentials.json inside ClaudeConfigDir().
+// HostClaudeDir returns the path to the host's ~/.claude/ directory,
+// or empty string if it doesn't exist. This is used to mount host
+// credentials read-only into containers.
+func HostClaudeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Join(home, ".claude")
+	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+		return dir
+	}
+	return ""
+}
+
+// IsAuthenticated reports whether Claude Code credentials exist either
+// in the shared config directory or in the host's ~/.claude/ directory.
 func (s *Store) IsAuthenticated() bool {
+	// Check shared config dir.
 	p := filepath.Join(s.ClaudeConfigDir(), ".credentials.json")
-	_, err := os.Stat(p)
-	return err == nil
+	if _, err := os.Stat(p); err == nil {
+		return true
+	}
+	// Check host ~/.claude/ dir.
+	if dir := HostClaudeDir(); dir != "" {
+		p = filepath.Join(dir, ".credentials.json")
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // ContainerConfigDir returns the per-session directory that gets mounted

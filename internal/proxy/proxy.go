@@ -189,10 +189,12 @@ func Run(opts Opts) error {
 					switch b {
 					case 'd':
 						detached = true
+						renderOverlay(os.Stdout, width, height, "Detaching...")
 						close(done)
 						return
 					case 'q':
 						quit = true
+						renderOverlay(os.Stdout, width, height, "Stopping container...")
 						close(done)
 						return
 					case prefixKey:
@@ -353,4 +355,21 @@ func renderStatusBar(w io.Writer, width, height int, info StatusBarInfo, prefixA
 
 	// Save cursor, move to status row, clear line, draw bar in inverse video, restore cursor.
 	fmt.Fprintf(w, "\033[s\033[%d;1H\033[2K\033[7m%s\033[0m\033[u", height, bar)
+}
+
+// renderOverlay clears the scroll region and shows a centered message,
+// used to provide feedback during quit/detach operations.
+func renderOverlay(w io.Writer, width, height int, msg string) {
+	if height < 2 || width < 1 {
+		return
+	}
+	// Clear the scroll region.
+	fmt.Fprint(w, "\033[2J\033[H")
+	// Center the message vertically and horizontally.
+	row := height / 2
+	col := (width - len(msg)) / 2
+	if col < 1 {
+		col = 1
+	}
+	fmt.Fprintf(w, "\033[%d;%dH%s", row, col, msg)
 }

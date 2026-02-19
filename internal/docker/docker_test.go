@@ -220,7 +220,7 @@ func TestRunArgsEnvVars(t *testing.T) {
 }
 
 func TestShellArgsHasRm(t *testing.T) {
-	args := ShellArgs("/tmp/ws", "/tmp/cfg", 1000, 1000)
+	args := ShellArgs("/tmp/ws", "/tmp/cfg", "", 1000, 1000)
 
 	if !slices.Contains(args, "--rm") {
 		t.Errorf("ShellArgs missing --rm flag in %v", args)
@@ -240,7 +240,7 @@ func TestShellArgsHasRm(t *testing.T) {
 }
 
 func TestShellArgsBash(t *testing.T) {
-	args := ShellArgs("/tmp/ws", "/tmp/cfg", 1000, 1000)
+	args := ShellArgs("/tmp/ws", "/tmp/cfg", "", 1000, 1000)
 
 	if len(args) == 0 {
 		t.Fatal("ShellArgs returned empty slice")
@@ -282,7 +282,7 @@ func TestContainerNamePrefix(t *testing.T) {
 }
 
 func TestShellArgs(t *testing.T) {
-	args := ShellArgs("/home/user/project", "/home/user/.config/claude", 1000, 1000)
+	args := ShellArgs("/home/user/project", "/home/user/.config/claude", "", 1000, 1000)
 
 	joined := strings.Join(args, " ")
 

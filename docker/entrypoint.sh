@@ -45,6 +45,27 @@ if [ -d /claude ]; then
     chmod 755 /claude 2>/dev/null || true
 fi
 
+# Copy host Claude credentials if mounted (read-only at /mnt/claude-host).
+# This allows using the host's existing authentication without re-login.
+if [ -d /mnt/claude-host ]; then
+    if [ -f /mnt/claude-host/.credentials.json ]; then
+        cp /mnt/claude-host/.credentials.json /claude/.credentials.json
+        chown "$USER_UID:$USER_GID" /claude/.credentials.json
+        chmod 600 /claude/.credentials.json
+    fi
+    # Copy settings (.claude.json or settings.json).
+    if [ -f /mnt/claude-host/settings.json ]; then
+        cp /mnt/claude-host/settings.json /claude/settings.json
+        chown "$USER_UID:$USER_GID" /claude/settings.json
+        chmod 600 /claude/settings.json
+    fi
+    if [ -f /mnt/claude-host/.claude.json ]; then
+        cp /mnt/claude-host/.claude.json /claude/.claude.json
+        chown "$USER_UID:$USER_GID" /claude/.claude.json
+        chmod 600 /claude/.claude.json
+    fi
+fi
+
 if [ -d /workspace ]; then
     chmod 755 /workspace 2>/dev/null || true
 fi

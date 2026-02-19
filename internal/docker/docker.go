@@ -19,14 +19,15 @@ func ContainerName(session string) string {
 
 // RunOpts holds options for running a Claude Code container.
 type RunOpts struct {
-	Name      string
-	Workspace string
-	ConfigDir string
-	UID       int
-	GID       int
-	Yolo      bool
-	Prompt    string
-	Continue  bool
+	Name           string
+	Workspace      string
+	ConfigDir      string
+	HostClaudeDir  string // host ~/.claude/ dir, mounted read-only for credential copying
+	UID            int
+	GID            int
+	Yolo           bool
+	Prompt         string
+	Continue       bool
 }
 
 // BuildArgs returns the docker build command arguments for the given
@@ -61,6 +62,11 @@ func RunArgs(opts RunOpts, detached bool) []string {
 		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
 	}
 
+	// Mount host Claude credentials read-only for entrypoint to copy.
+	if opts.HostClaudeDir != "" {
+		args = append(args, "-v", opts.HostClaudeDir+":/mnt/claude-host:ro")
+	}
+
 	args = append(args, ImageName, "claude")
 
 	// Append optional claude flags after the base "claude" command.
@@ -79,8 +85,8 @@ func RunArgs(opts RunOpts, detached bool) []string {
 
 // ShellArgs returns the docker run command arguments for an ephemeral
 // debug shell. Unlike RunArgs the container IS created with --rm.
-func ShellArgs(workspace, configDir string, uid, gid int) []string {
-	return []string{
+func ShellArgs(workspace, configDir, hostClaudeDir string, uid, gid int) []string {
+	args := []string{
 		"run",
 		"--rm",
 		"-it",
@@ -89,9 +95,12 @@ func ShellArgs(workspace, configDir string, uid, gid int) []string {
 		"-e", "CLAUDE_CONFIG_DIR=/claude",
 		"-e", fmt.Sprintf("USER_UID=%d", uid),
 		"-e", fmt.Sprintf("USER_GID=%d", gid),
-		ImageName,
-		"/bin/bash",
 	}
+	if hostClaudeDir != "" {
+		args = append(args, "-v", hostClaudeDir+":/mnt/claude-host:ro")
+	}
+	args = append(args, ImageName, "/bin/bash")
+	return args
 }
 
 // RunDetached executes docker run in detached mode. Stdout/stderr are
