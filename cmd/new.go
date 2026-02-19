@@ -179,14 +179,15 @@ func createSession(opts createOpts) error {
 	}
 
 	dockerArgs := docker.RunArgs(docker.RunOpts{
-		Name:      name,
-		Workspace: workspace,
-		ConfigDir: containerConfigDir,
-		UID:       os.Getuid(),
-		GID:       os.Getgid(),
-		Yolo:      opts.yolo,
-		Prompt:    opts.prompt,
-		Continue:  opts.cont,
+		Name:            name,
+		Workspace:       workspace,
+		ConfigDir:       containerConfigDir,
+		CredentialsFile: config.CredentialsFile(),
+		UID:             os.Getuid(),
+		GID:             os.Getgid(),
+		Yolo:            opts.yolo,
+		Prompt:          opts.prompt,
+		Continue:        opts.cont,
 	})
 
 	// g. Create tmux session running docker.

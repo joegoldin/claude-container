@@ -39,13 +39,14 @@ var attachCmd = &cobra.Command{
 			// Always use --continue for resume.
 			containerConfigDir := store.ContainerConfigDir(name)
 			dockerArgs := docker.RunArgs(docker.RunOpts{
-				Name:      name,
-				Workspace: sess.WorktreePath,
-				ConfigDir: containerConfigDir,
-				UID:       os.Getuid(),
-				GID:       os.Getgid(),
-				Yolo:      sess.Yolo,
-				Continue:  true,
+				Name:            name,
+				Workspace:       sess.WorktreePath,
+				ConfigDir:       containerConfigDir,
+				CredentialsFile: config.CredentialsFile(),
+				UID:             os.Getuid(),
+				GID:             os.Getgid(),
+				Yolo:            sess.Yolo,
+				Continue:        true,
 			})
 			fullCmd := append([]string{"docker"}, dockerArgs...)
 

@@ -18,14 +18,15 @@ func ContainerName(session string) string {
 
 // RunOpts holds options for running a Claude Code container.
 type RunOpts struct {
-	Name      string
-	Workspace string
-	ConfigDir string
-	UID       int
-	GID       int
-	Yolo      bool
-	Prompt    string
-	Continue  bool
+	Name            string
+	Workspace       string
+	ConfigDir       string
+	CredentialsFile string // host path to .credentials.json (mounted read-only)
+	UID             int
+	GID             int
+	Yolo            bool
+	Prompt          string
+	Continue        bool
 }
 
 // BuildArgs returns the docker build command arguments for the given
@@ -53,9 +54,15 @@ func RunArgs(opts RunOpts) []string {
 		"-e", "CLAUDE_CONFIG_DIR=/claude",
 		"-e", fmt.Sprintf("USER_UID=%d", opts.UID),
 		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
-		ImageName,
-		"claude",
 	}
+
+	// Mount host credentials file read-only so the container can
+	// authenticate without requiring /login.
+	if opts.CredentialsFile != "" {
+		args = append(args, "-v", opts.CredentialsFile+":/claude/.credentials.json:ro")
+	}
+
+	args = append(args, ImageName, "claude")
 
 	// Append optional claude flags after the base "claude" command.
 	if opts.Yolo {

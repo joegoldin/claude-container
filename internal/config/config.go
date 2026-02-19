@@ -60,6 +60,26 @@ func (s *Store) WorktreeDir() string {
 	return filepath.Join(s.dir, "worktrees")
 }
 
+// CredentialsFile returns the path to the Claude Code credentials file
+// on the host, or "" if not found. It checks CLAUDE_CONFIG_DIR, then
+// ~/.claude/.credentials.json.
+func CredentialsFile() string {
+	// Check CLAUDE_CONFIG_DIR first.
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		p := filepath.Join(dir, ".credentials.json")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	// Default location.
+	home, _ := os.UserHomeDir()
+	p := filepath.Join(home, ".claude", ".credentials.json")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return ""
+}
+
 // ContainerConfigDir returns the per-session directory that gets mounted
 // into the Docker container for Claude Code's own config files. Each
 // session gets an isolated config so the host sessions.json isn't
