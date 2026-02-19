@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
@@ -27,7 +28,7 @@ Use --auth to remove the shared Claude config directory (logs you out).`,
 
 		if gcAuth {
 			dir := store.ClaudeConfigDir()
-			if err := os.RemoveAll(dir); err != nil {
+			if err := removeClaudeConfig(dir); err != nil {
 				return fmt.Errorf("remove claude config dir: %w", err)
 			}
 			fmt.Printf("Removed claude config: %s\n", dir)
@@ -69,6 +70,27 @@ Use --auth to remove the shared Claude config directory (logs you out).`,
 		}
 		return nil
 	},
+}
+
+// removeClaudeConfig removes the shared claude config directory. Files inside
+// may be owned by the container's UID, so we first try os.RemoveAll and fall
+// back to running a Docker container as root to delete them.
+func removeClaudeConfig(dir string) error {
+	if err := os.RemoveAll(dir); err == nil {
+		return nil
+	}
+	// Files created by the container may have different ownership.
+	// Use a Docker container to remove them as root.
+	c := exec.Command("docker", "run", "--rm",
+		"-v", dir+":/cleanup",
+		"alpine", "rm", "-rf", "/cleanup")
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("docker rm cleanup: %w", err)
+	}
+	// The bind mount prevents removing the dir itself; remove the now-empty dir.
+	return os.Remove(dir)
 }
 
 func init() {
