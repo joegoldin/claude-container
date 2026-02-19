@@ -32,6 +32,8 @@ type DashboardModel struct {
 	creatingDir string // directory chosen for new session
 	dirInput    textinput.Model
 	pickingDir  bool // true when directory input is active
+	confirming  bool // true when awaiting y/n confirmation for remove
+	confirmName string // session name pending removal
 }
 
 // Internal message types.
@@ -101,6 +103,38 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.KeyMsg:
+		// Handle confirmation dialog.
+		if m.confirming {
+			switch msg.String() {
+			case "y", "Y":
+				m.confirming = false
+				// Stop container first (ignore error if already stopped).
+				_ = docker.Stop(m.confirmName)
+				_ = docker.Remove(m.confirmName)
+				// Clean up worktree/branch if applicable.
+				for _, si := range m.sessions {
+					if si.session.Name == m.confirmName {
+						if si.session.Branch != "" && si.session.RepoPath != "" {
+							_ = gitpkg.RemoveWorktree(si.session.RepoPath, si.session.WorktreePath, si.session.Branch)
+						}
+						break
+					}
+				}
+				_ = m.store.Delete(m.confirmName)
+				if m.cursor > 0 && m.cursor >= len(m.sessions)-1 {
+					m.cursor--
+				}
+				return m, m.refreshSessions()
+			case "n", "N", "esc":
+				m.confirming = false
+				return m, nil
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+
 		// Handle directory input mode.
 		if m.pickingDir {
 			switch msg.String() {
@@ -185,17 +219,10 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if idx >= len(m.sessions) {
 					idx = len(m.sessions) - 1
 				}
-				si := m.sessions[idx]
-				_ = docker.Remove(si.session.Name)
-				if si.session.Branch != "" && si.session.RepoPath != "" {
-					_ = gitpkg.RemoveWorktree(si.session.RepoPath, si.session.WorktreePath, si.session.Branch)
-				}
-				_ = m.store.Delete(si.session.Name)
-				if m.cursor > 0 && m.cursor >= len(m.sessions)-1 {
-					m.cursor--
-				}
+				m.confirming = true
+				m.confirmName = m.sessions[idx].session.Name
 			}
-			return m, m.refreshSessions()
+			return m, nil
 		}
 
 	case tea.WindowSizeMsg:
@@ -335,7 +362,12 @@ func (m DashboardModel) View() string {
 		Render(content)
 
 	var bottom string
-	if m.pickingDir {
+	if m.confirming {
+		bottom = fmt.Sprintf("  %s  %s",
+			statusStopped.Render(fmt.Sprintf("Remove %s?", m.confirmName)),
+			dimStyle.Render("y confirm  n cancel"),
+		)
+	} else if m.pickingDir {
 		bottom = fmt.Sprintf("  %s %s\n  %s",
 			titleStyle.Render("New session directory:"),
 			m.dirInput.View(),

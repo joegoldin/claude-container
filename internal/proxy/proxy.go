@@ -21,8 +21,8 @@ import (
 	"golang.org/x/term"
 )
 
-// ansiRe matches ANSI escape sequences (CSI, OSC, and simple escapes).
-var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[^[\]]`)
+// ansiRe matches ANSI escape sequences (CSI with DEC private modes, OSC, and simple escapes).
+var ansiRe = regexp.MustCompile(`\x1b\[[?>=!;0-9]*[A-Za-z~]|\x1b\][^\x07]*\x07|\x1b[^[\]]`)
 
 // stripANSI removes ANSI escape sequences from b.
 func stripANSI(b []byte) []byte {
@@ -123,14 +123,34 @@ func Run(opts Opts) error {
 		defer wg.Done()
 		buf := make([]byte, 4096)
 
-		// Rolling buffer to detect the workspace trust prompt across
-		// read boundaries. Only active during the first 30 seconds
-		// to avoid accidental triggers during normal operation.
-		const needle = "Yes, I trust this folder"
-		var ring [4096]byte
+		// Detect the workspace trust prompt and auto-accept it.
+		// Only active during the first 30 seconds to avoid
+		// accidental triggers during normal operation.
+		// Uses a rolling buffer so detection works even if the
+		// needle is split across PTY reads. After detection,
+		// waits for the TUI to finish rendering before sending Enter.
+		const needle = "Itrustthisfolder"
+		var ring [8192]byte
 		var ringLen int
+		var mu sync.Mutex
 		scanning := true
-		scanDeadline := time.After(30 * time.Second)
+
+		// Debug: dump ring buffer after deadline expires, independent of read loop.
+		go func() {
+			select {
+			case <-done:
+				return
+			case <-time.After(30 * time.Second):
+				mu.Lock()
+				if ringLen > 0 {
+					clean := stripANSI(ring[:ringLen])
+					os.WriteFile("/tmp/claude-container-scan-debug.txt", clean, 0644)
+					os.WriteFile("/tmp/claude-container-scan-raw.txt", ring[:ringLen], 0644)
+				}
+				scanning = false
+				mu.Unlock()
+			}
+		}()
 
 		for {
 			select {
@@ -142,14 +162,7 @@ func Run(opts Opts) error {
 			if n > 0 {
 				os.Stdout.Write(buf[:n])
 
-				// Check for workspace trust prompt during startup window.
-				if scanning {
-					select {
-					case <-scanDeadline:
-						scanning = false
-					default:
-					}
-				}
+				mu.Lock()
 				if scanning {
 					// Append new data to ring buffer.
 					for i := 0; i < n; i++ {
@@ -165,9 +178,15 @@ func Run(opts Opts) error {
 					clean := stripANSI(ring[:ringLen])
 					if strings.Contains(string(clean), needle) {
 						scanning = false
-						ptmx.Write([]byte("\r"))
+						// Wait for the TUI to finish rendering
+						// before sending Enter to accept.
+						go func() {
+							time.Sleep(100 * time.Millisecond)
+							ptmx.Write([]byte("\r"))
+						}()
 					}
 				}
+				mu.Unlock()
 			}
 			if err != nil {
 				return
