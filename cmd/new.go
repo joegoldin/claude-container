@@ -216,5 +216,5 @@ func createSession(opts createOpts) error {
 	fmt.Printf("Session %q created. Attaching...\n", name)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	return tmux.Attach(ctx, tmux.SessionName(name))
+	return tmux.Attach(ctx, name)
 }

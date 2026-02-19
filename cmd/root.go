@@ -78,7 +78,7 @@ var rootCmd = &cobra.Command{
 				}
 				if !res.Background {
 					ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-					_ = tmux.Attach(ctx, tmux.SessionName(res.Name))
+					_ = tmux.Attach(ctx, res.Name)
 					stop()
 				}
 				continue
