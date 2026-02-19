@@ -74,11 +74,6 @@ if [ -f /mnt/claude-host-json ]; then
     chmod 600 /claude/.claude.json
 fi
 
-if [ -d /workspace ]; then
-    chown "$USER_UID:$USER_GID" /workspace 2>/dev/null || true
-    chmod 755 /workspace 2>/dev/null || true
-fi
-
 # Set HOME so Claude Code finds $HOME/.claude/ correctly.
 USER_HOME=$(getent passwd "$USER_UID" | cut -d: -f6)
 USER_HOME=${USER_HOME:-/home/claude}
