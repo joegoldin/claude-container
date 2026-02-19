@@ -268,7 +268,17 @@ func (m DashboardModel) View() string {
 			}
 
 			if i == m.cursor {
-				row := fmt.Sprintf(" %s %s", dot, sess.Name)
+				// Build a plain status label for the highlighted row.
+				var statusLabel string
+				switch si.status {
+				case "running":
+					statusLabel = fmt.Sprintf(" [running %s]", formatUptime(time.Since(sess.CreatedAt)))
+				case "stopped":
+					statusLabel = " [stopped]"
+				default:
+					statusLabel = " [removed]"
+				}
+				row := fmt.Sprintf(" %s %s%s", dot, sess.Name, statusLabel)
 				if len(row) < rowW {
 					row += strings.Repeat(" ", rowW-len(row))
 				}
@@ -304,10 +314,6 @@ func (m DashboardModel) View() string {
 			}
 			if sess.AutoRemove {
 				flags = append(flags, "auto-remove")
-			}
-			if i == m.cursor {
-				// Show status on selected row (not inline since highlight covers it).
-				flags = append([]string{si.status}, flags...)
 			}
 			if len(flags) > 0 {
 				lines = append(lines, dimStyle.Render(fmt.Sprintf("     flags:  %s", strings.Join(flags, ", "))))
