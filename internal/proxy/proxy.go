@@ -95,7 +95,8 @@ func Run(opts Opts) error {
 		return fmt.Errorf("proxy: failed to set pty raw mode: %w", err)
 	}
 
-	// Set up scroll region and initial status bar.
+	// Clear screen, set up scroll region, and render initial status bar.
+	fmt.Fprint(os.Stdout, "\033[2J\033[H") // clear screen + cursor home
 	setScrollRegion(height)
 	renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
 
