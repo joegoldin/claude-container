@@ -19,35 +19,43 @@ func SessionName(session string) string {
 }
 
 // NewSessionArgs returns the tmux new-session arguments for creating a
-// detached session with mouse mode enabled that runs the given command.
+// detached session that directly runs the given command. The command is
+// executed without a shell wrapper so that interactive programs like
+// docker run -it get the tmux pane's PTY directly.
 func NewSessionArgs(session, workDir string, command []string) []string {
 	name := SessionName(session)
-	shell := shellJoin(command)
 
-	// Chain tmux setup commands before the actual command:
-	//   - mouse support
-	//   - status bar with session info and detach hint
-	setup := strings.Join([]string{
-		"tmux set-option -g mouse on",
-		"tmux set-option -g status on",
-		"tmux set-option -g status-style 'bg=#3b3b3b,fg=#d4d4d4'",
-		fmt.Sprintf("tmux set-option -g status-left '#[bg=#6a4c93,fg=#ffffff,bold]  %s '", session),
-		"tmux set-option -g status-left-length 40",
-		"tmux set-option -g status-right '#[fg=#888888] Ctrl+B,d detach '",
-		"tmux set-option -g status-right-length 30",
-		"tmux set-option -g status-justify left",
-		"tmux set-option -g window-status-format ''",
-		"tmux set-option -g window-status-current-format ''",
-	}, " ; ")
-	wrapped := fmt.Sprintf("%s ; %s", setup, shell)
-
-	return []string{
+	args := []string{
 		"new-session",
 		"-d",
 		"-s", name,
 		"-c", workDir,
-		"sh", "-c", wrapped,
 	}
+	args = append(args, command...)
+	return args
+}
+
+// configureSession sets tmux options on an existing session: mouse
+// support, status bar with session info and detach hint.
+func configureSession(session string) {
+	name := SessionName(session)
+	t := func(args ...string) {
+		cmd := exec.Command("tmux", args...)
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		_ = cmd.Run()
+	}
+
+	t("set-option", "-t", name, "mouse", "on")
+	t("set-option", "-t", name, "status", "on")
+	t("set-option", "-t", name, "status-style", "bg=#3b3b3b,fg=#d4d4d4")
+	t("set-option", "-t", name, "status-left", fmt.Sprintf("#[bg=#6a4c93,fg=#ffffff,bold]  %s ", session))
+	t("set-option", "-t", name, "status-left-length", "40")
+	t("set-option", "-t", name, "status-right", "#[fg=#888888] Ctrl+B,d detach ")
+	t("set-option", "-t", name, "status-right-length", "30")
+	t("set-option", "-t", name, "status-justify", "left")
+	t("set-option", "-t", name, "window-status-format", "")
+	t("set-option", "-t", name, "window-status-current-format", "")
 }
 
 // Exists returns true if a tmux session with the given name exists.
@@ -68,13 +76,18 @@ func Kill(session string) error {
 	return cmd.Run()
 }
 
-// Create creates a new detached tmux session that runs the given command.
+// Create creates a new detached tmux session that runs the given command,
+// then configures session options (mouse, status bar).
 func Create(session, workDir string, command []string) error {
 	args := NewSessionArgs(session, workDir, command)
 	cmd := exec.Command("tmux", args...)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	configureSession(session)
+	return nil
 }
 
 // CapturePaneArgs returns the tmux capture-pane arguments for the given

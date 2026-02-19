@@ -62,13 +62,15 @@ func TestNewSessionArgs(t *testing.T) {
 	}
 }
 
-func TestNewSessionArgsMouseMode(t *testing.T) {
-	args := NewSessionArgs("dev", "/tmp", []string{"echo", "hello"})
-	joined := strings.Join(args, " ")
+func TestNewSessionArgsContainsCommand(t *testing.T) {
+	args := NewSessionArgs("dev", "/tmp", []string{"docker", "run", "-it", "img"})
 
-	// Must enable mouse mode via set-option.
-	if !strings.Contains(joined, "set-option -g mouse on") {
-		t.Errorf("NewSessionArgs should enable mouse mode, got %v", args)
+	// The command should appear as direct args (no sh -c wrapper).
+	if !slices.Contains(args, "docker") {
+		t.Errorf("NewSessionArgs should contain command directly, got %v", args)
+	}
+	if !slices.Contains(args, "-it") {
+		t.Errorf("NewSessionArgs should contain command flags, got %v", args)
 	}
 }
 
