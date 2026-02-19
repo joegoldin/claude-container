@@ -24,11 +24,22 @@ func NewSessionArgs(session, workDir string, command []string) []string {
 	name := SessionName(session)
 	shell := shellJoin(command)
 
-	// We chain two tmux commands via the shell:
-	//   1. set-option -g mouse on  (enable mouse support)
-	//   2. the actual command
-	// tmux new-session runs the shell command in the new session.
-	wrapped := fmt.Sprintf("tmux set-option -g mouse on ; %s", shell)
+	// Chain tmux setup commands before the actual command:
+	//   - mouse support
+	//   - status bar with session info and detach hint
+	setup := strings.Join([]string{
+		"tmux set-option -g mouse on",
+		"tmux set-option -g status on",
+		"tmux set-option -g status-style 'bg=#3b3b3b,fg=#d4d4d4'",
+		fmt.Sprintf("tmux set-option -g status-left '#[bg=#6a4c93,fg=#ffffff,bold]  %s '", session),
+		"tmux set-option -g status-left-length 40",
+		"tmux set-option -g status-right '#[fg=#888888] Ctrl+B,d detach '",
+		"tmux set-option -g status-right-length 30",
+		"tmux set-option -g status-justify left",
+		"tmux set-option -g window-status-format ''",
+		"tmux set-option -g window-status-current-format ''",
+	}, " ; ")
+	wrapped := fmt.Sprintf("%s ; %s", setup, shell)
 
 	return []string{
 		"new-session",
