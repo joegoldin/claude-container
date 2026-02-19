@@ -129,16 +129,9 @@ func createSession(opts createOpts) error {
 		return fmt.Errorf("session %q already exists", name)
 	}
 
-	// d. Check docker image exists; auto-build if possible.
-	if !docker.ImageExists() {
-		contextDir := os.Getenv("CLAUDE_CONTAINER_DOCKER_CONTEXT")
-		if contextDir == "" {
-			return fmt.Errorf("docker image %q not found; run 'claude-container build' first or set CLAUDE_CONTAINER_DOCKER_CONTEXT", docker.ImageName)
-		}
-		fmt.Println("Docker image not found, building automatically...")
-		if err := docker.Build(contextDir).Run(); err != nil {
-			return fmt.Errorf("auto-build failed: %w", err)
-		}
+	// d. Ensure docker image is loaded.
+	if err := docker.EnsureImage(config.DefaultDir()); err != nil {
+		return err
 	}
 
 	// e. Resolve workspace directory.

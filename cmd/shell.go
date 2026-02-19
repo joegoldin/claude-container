@@ -28,6 +28,10 @@ var shellCmd = &cobra.Command{
 			return err
 		}
 
+		if err := docker.EnsureImage(config.DefaultDir()); err != nil {
+			return err
+		}
+
 		shellArgs := docker.ShellArgs(ws, claudeConfigDir, config.HostClaudeDir(), config.HostClaudeJSON(), os.Getuid(), os.Getgid())
 		return proxy.Run(proxy.Opts{
 			DockerArgs: shellArgs,

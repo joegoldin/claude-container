@@ -61,9 +61,9 @@ func authLoginRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create claude config dir: %w", err)
 	}
 
-	// Check that the docker image has been built.
-	if !docker.ImageExists() {
-		return fmt.Errorf("docker image %q not found; run 'claude-container build' first", docker.ImageName)
+	// Ensure docker image is loaded.
+	if err := docker.EnsureImage(config.DefaultDir()); err != nil {
+		return err
 	}
 
 	// Run an interactive container so the user can authenticate.
@@ -75,7 +75,7 @@ func authLoginRun(cmd *cobra.Command, args []string) error {
 		"-e", "CLAUDE_CONFIG_DIR=/claude",
 		"-e", fmt.Sprintf("USER_UID=%d", os.Getuid()),
 		"-e", fmt.Sprintf("USER_GID=%d", os.Getgid()),
-		docker.ImageName,
+		docker.ImageTag(),
 		"claude",
 		"--dangerously-skip-permissions",
 	}

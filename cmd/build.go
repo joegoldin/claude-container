@@ -1,24 +1,16 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
-
 	"github.com/joegoldin/claude-container/internal/docker"
 	"github.com/spf13/cobra"
 )
 
 var buildCmd = &cobra.Command{
 	Use:   "build",
-	Short: "Build the Claude Code container image",
+	Short: "Load the Claude Code Docker image",
+	Long:  `Load the Docker image from the Nix-built tarball. This happens automatically when creating sessions, but you can use this command to force a reload.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		contextDir := os.Getenv("CLAUDE_CONTAINER_DOCKER_CONTEXT")
-		if contextDir == "" {
-			return fmt.Errorf("CLAUDE_CONTAINER_DOCKER_CONTEXT is not set; point it at the directory containing your Dockerfile")
-		}
-
-		fmt.Println("Building Claude Code container...")
-		return docker.Build(contextDir).Run()
+		return docker.LoadImage()
 	},
 }
 
