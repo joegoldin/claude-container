@@ -265,6 +265,29 @@ func TestWorktreeDir(t *testing.T) {
 	}
 }
 
+func TestContainerConfigDir(t *testing.T) {
+	store := NewStore("/tmp/test-config")
+
+	got := store.ContainerConfigDir("my-session")
+	want := filepath.Join("/tmp/test-config", "containers", "my-session")
+	if got != want {
+		t.Errorf("ContainerConfigDir(%q) = %q, want %q", "my-session", got, want)
+	}
+
+	// Each session should get its own directory.
+	a := store.ContainerConfigDir("session-a")
+	b := store.ContainerConfigDir("session-b")
+	if a == b {
+		t.Errorf("ContainerConfigDir should be unique per session, both = %q", a)
+	}
+
+	// Container config dir should NOT be the same as the store base dir
+	// (prevents container writes from clobbering sessions.json).
+	if store.ContainerConfigDir("x") == "/tmp/test-config" {
+		t.Error("ContainerConfigDir should not equal store base dir")
+	}
+}
+
 func TestGenerateName(t *testing.T) {
 	tests := []struct {
 		dir  string

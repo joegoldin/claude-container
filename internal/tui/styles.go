@@ -9,7 +9,8 @@ var (
 
 	selectedStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("229"))
+			Foreground(lipgloss.Color("229")).
+			Background(lipgloss.Color("57"))
 
 	dimStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241"))

@@ -43,14 +43,13 @@ var rootCmd = &cobra.Command{
 			}
 
 			if dm.Creating() {
-				cwd, err := os.Getwd()
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "error:", err)
-					continue
+				dir := dm.CreatingDir()
+				if dir == "" {
+					dir, _ = os.Getwd()
 				}
-				repoPath, _ := gitpkg.RepoRoot(cwd)
+				repoPath, _ := gitpkg.RepoRoot(dir)
 
-				wiz := tui.NewWizard(repoPath, cwd)
+				wiz := tui.NewWizard(repoPath, dir)
 				wp := tea.NewProgram(wiz, tea.WithAltScreen())
 				wResult, err := wp.Run()
 				if err != nil {

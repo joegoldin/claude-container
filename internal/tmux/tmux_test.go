@@ -175,6 +175,100 @@ func TestSessionNameConsistency(t *testing.T) {
 	}
 }
 
+// TestAllFunctionsAcceptPlainName verifies that every public function in the
+// tmux package expects a plain session name (NOT prefixed). This prevents
+// callers from double-prefixing, which was the root cause of a bug where
+// tmux.Attach(ctx, tmux.SessionName(name)) produced
+// "claude-container_claude-container_name".
+func TestAllFunctionsAcceptPlainName(t *testing.T) {
+	session := "test-session"
+	expected := "claude-container_test-session"
+
+	// NewSessionArgs: verify the -s flag value uses single prefix.
+	args := NewSessionArgs(session, "/tmp", []string{"echo"})
+	sIdx := -1
+	for i, a := range args {
+		if a == "-s" {
+			sIdx = i
+			break
+		}
+	}
+	if sIdx == -1 || sIdx+1 >= len(args) {
+		t.Fatal("NewSessionArgs missing -s flag")
+	}
+	if args[sIdx+1] != expected {
+		t.Errorf("NewSessionArgs -s value = %q, want %q", args[sIdx+1], expected)
+	}
+
+	// CapturePaneArgs: verify the -t flag value uses single prefix.
+	cpArgs := CapturePaneArgs(session)
+	tIdx := -1
+	for i, a := range cpArgs {
+		if a == "-t" {
+			tIdx = i
+			break
+		}
+	}
+	if tIdx == -1 || tIdx+1 >= len(cpArgs) {
+		t.Fatal("CapturePaneArgs missing -t flag")
+	}
+	if cpArgs[tIdx+1] != expected {
+		t.Errorf("CapturePaneArgs -t value = %q, want %q", cpArgs[tIdx+1], expected)
+	}
+}
+
+// TestSessionNameIdempotency verifies that passing an already-prefixed name
+// through SessionName produces a DOUBLE prefix. This is intentional -- it
+// confirms that callers must NOT call SessionName() before passing to other
+// tmux functions (which call SessionName internally).
+func TestSessionNameIdempotency(t *testing.T) {
+	plain := "my-session"
+	prefixed := SessionName(plain)
+	doublePrefixed := SessionName(prefixed)
+
+	// The double prefix should be detectable.
+	if doublePrefixed == prefixed {
+		t.Error("SessionName is unexpectedly idempotent; double-prefix bug would be hidden")
+	}
+	if doublePrefixed != "claude-container_claude-container_my-session" {
+		t.Errorf("double-prefixed = %q, want %q", doublePrefixed, "claude-container_claude-container_my-session")
+	}
+}
+
+// TestNewSessionAndCapturePaneUseSamePrefix verifies Create and CapturePane
+// target the same tmux session name for the same input.
+func TestNewSessionAndCapturePaneUseSamePrefix(t *testing.T) {
+	session := "consistency-test"
+
+	createArgs := NewSessionArgs(session, "/tmp", []string{"echo"})
+	captureArgs := CapturePaneArgs(session)
+
+	// Extract session names from args.
+	var createName, captureName string
+	for i, a := range createArgs {
+		if a == "-s" && i+1 < len(createArgs) {
+			createName = createArgs[i+1]
+			break
+		}
+	}
+	for i, a := range captureArgs {
+		if a == "-t" && i+1 < len(captureArgs) {
+			captureName = captureArgs[i+1]
+			break
+		}
+	}
+
+	if createName == "" {
+		t.Fatal("could not extract session name from NewSessionArgs")
+	}
+	if captureName == "" {
+		t.Fatal("could not extract session name from CapturePaneArgs")
+	}
+	if createName != captureName {
+		t.Errorf("NewSessionArgs name %q != CapturePaneArgs name %q", createName, captureName)
+	}
+}
+
 func TestShellJoin(t *testing.T) {
 	tests := []struct {
 		name string

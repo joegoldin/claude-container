@@ -2,9 +2,11 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -22,16 +24,19 @@ type sessionInfo struct {
 
 // DashboardModel is the Bubble Tea model for the TUI dashboard.
 type DashboardModel struct {
-	store    *config.Store
-	sessions []sessionInfo
-	cursor   int
-	width    int
-	height   int
-	preview  viewport.Model
-	showDiff bool
-	quitting bool
-	attached string
-	creating bool
+	store      *config.Store
+	sessions   []sessionInfo
+	cursor     int
+	width      int
+	height     int
+	preview    viewport.Model
+	showDiff   bool
+	quitting   bool
+	attached   string
+	creating   bool
+	creatingDir string // directory chosen for new session
+	dirInput   textinput.Model
+	pickingDir bool // true when directory input is active
 }
 
 // Internal message types.
@@ -67,6 +72,11 @@ func (m DashboardModel) Attached() string {
 // Creating returns true if the user pressed 'n' to create a new session.
 func (m DashboardModel) Creating() bool {
 	return m.creating
+}
+
+// CreatingDir returns the directory chosen for the new session, or "" for cwd.
+func (m DashboardModel) CreatingDir() string {
+	return m.creatingDir
 }
 
 // tick returns a command that sends a tickMsg after 500ms.
@@ -151,6 +161,30 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.KeyMsg:
+		// Handle directory input mode.
+		if m.pickingDir {
+			switch msg.String() {
+			case "enter":
+				dir := strings.TrimSpace(m.dirInput.Value())
+				if dir == "" {
+					dir, _ = os.Getwd()
+				}
+				m.creatingDir = dir
+				m.creating = true
+				m.quitting = true
+				return m, tea.Quit
+			case "esc":
+				m.pickingDir = false
+				return m, nil
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			}
+			var cmd tea.Cmd
+			m.dirInput, cmd = m.dirInput.Update(msg)
+			return m, cmd
+		}
+
 		switch msg.String() {
 		case "q", "ctrl+c":
 			m.quitting = true
@@ -180,9 +214,20 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "n":
-			m.creating = true
-			m.quitting = true
-			return m, tea.Quit
+			if m.pickingDir {
+				break // already picking, let text input handle it
+			}
+			cwd, _ := os.Getwd()
+			ti := textinput.New()
+			ti.Placeholder = cwd
+			ti.SetValue(cwd)
+			ti.Focus()
+			ti.CharLimit = 256
+			// Place cursor at end of value.
+			ti.CursorEnd()
+			m.dirInput = ti
+			m.pickingDir = true
+			return m, textinput.Blink
 
 		case "d":
 			if len(m.sessions) > 0 {
@@ -253,7 +298,13 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.refreshSessions(), m.tick())
 	}
 
-	// Pass unhandled messages to the viewport.
+	// Pass unhandled messages to the dir input or viewport.
+	if m.pickingDir {
+		var cmd tea.Cmd
+		m.dirInput, cmd = m.dirInput.Update(msg)
+		return m, cmd
+	}
+
 	var cmd tea.Cmd
 	m.preview, cmd = m.preview.Update(msg)
 	return m, cmd
@@ -290,32 +341,60 @@ func (m DashboardModel) View() string {
 		leftLines = append(leftLines, dimStyle.Render("  No sessions yet."))
 		leftLines = append(leftLines, dimStyle.Render("  Press n to create one."))
 	} else {
+		// Compute row width for full-width highlight.
+		rowW := leftW - 4 // subtract border + padding
+		if rowW < 10 {
+			rowW = 10
+		}
+
 		for i, si := range m.sessions {
-			// Status indicator.
-			var indicator string
+			// Status indicator character (uncolored for selected row).
+			var dot string
 			switch si.status {
 			case "running":
-				indicator = statusRunning.Render("●")
+				dot = "●"
 			case "stopped":
-				indicator = statusStopped.Render("●")
+				dot = "●"
 			case "exited":
-				indicator = statusExited.Render("●")
+				dot = "●"
 			default:
-				indicator = dimStyle.Render("●")
+				dot = "●"
 			}
 
 			name := si.session.Name
 			branch := si.session.Branch
-			line := fmt.Sprintf(" %s %s", indicator, name)
+			branchStr := ""
 			if branch != "" {
-				line += dimStyle.Render(fmt.Sprintf(" (%s)", branch))
+				branchStr = fmt.Sprintf(" (%s)", branch)
 			}
 
 			if i == m.cursor {
-				line = selectedStyle.Render(line)
+				// Full-width highlighted row.
+				row := fmt.Sprintf(" %s %s%s", dot, name, branchStr)
+				// Pad to fill the row width.
+				if len(row) < rowW {
+					row += strings.Repeat(" ", rowW-len(row))
+				}
+				leftLines = append(leftLines, selectedStyle.Render(row))
+			} else {
+				// Normal row with colored status dot.
+				var indicator string
+				switch si.status {
+				case "running":
+					indicator = statusRunning.Render(dot)
+				case "stopped":
+					indicator = statusStopped.Render(dot)
+				case "exited":
+					indicator = statusExited.Render(dot)
+				default:
+					indicator = dimStyle.Render(dot)
+				}
+				line := fmt.Sprintf(" %s %s", indicator, name)
+				if branchStr != "" {
+					line += dimStyle.Render(branchStr)
+				}
+				leftLines = append(leftLines, line)
 			}
-
-			leftLines = append(leftLines, line)
 		}
 	}
 
@@ -342,10 +421,19 @@ func (m DashboardModel) View() string {
 	// Join panels horizontally.
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
 
-	// Help bar.
-	help := helpStyle.Render(
-		"  j/k navigate  enter attach  n new  d stop  x remove  tab diff/preview  q quit",
-	)
+	// Help bar or directory input.
+	var bottom string
+	if m.pickingDir {
+		bottom = fmt.Sprintf("  %s %s\n  %s",
+			titleStyle.Render("New session directory:"),
+			m.dirInput.View(),
+			dimStyle.Render("enter confirm  esc cancel"),
+		)
+	} else {
+		bottom = helpStyle.Render(
+			"  ↑/↓ navigate  enter attach  n new  d stop  x remove  tab diff/preview  q quit",
+		)
+	}
 
-	return panels + "\n" + help
+	return panels + "\n" + bottom
 }
