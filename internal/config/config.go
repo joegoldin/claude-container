@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -85,16 +86,63 @@ func CredentialsFile() string {
 func ClaudeSettingsFile() string {
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
 		p := filepath.Join(dir, ".claude.json")
-		if _, err := os.Stat(p); err == nil {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
 			return p
 		}
 	}
 	home, _ := os.UserHomeDir()
 	p := filepath.Join(home, ".claude", ".claude.json")
-	if _, err := os.Stat(p); err == nil {
+	if info, err := os.Stat(p); err == nil && !info.IsDir() {
 		return p
 	}
 	return ""
+}
+
+// SeedClaudeJSON copies .claude.json from an existing container config
+// dir into the target dir. This reuses account info from a previous
+// session so new containers skip first-run onboarding.
+//
+// Because container-created files may be owned by Docker's remapped UID,
+// the copy is performed via a short-lived Docker container that runs as
+// root and can read any file.
+func (s *Store) SeedClaudeJSON(name string) {
+	dst := s.ContainerConfigDir(name)
+
+	// Already has one — nothing to do.
+	if info, err := os.Stat(filepath.Join(dst, ".claude.json")); err == nil && !info.IsDir() {
+		return
+	}
+
+	containersDir := filepath.Join(s.dir, "containers")
+	entries, err := os.ReadDir(containersDir)
+	if err != nil {
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.Name() == name || !entry.IsDir() {
+			continue
+		}
+		src := filepath.Join(containersDir, entry.Name())
+		candidate := filepath.Join(src, ".claude.json")
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() || info.Size() == 0 {
+			continue
+		}
+
+		// Use docker to copy since the file may be owned by a
+		// remapped UID that the host user cannot read.
+		cmd := exec.Command("docker", "run", "--rm",
+			"--entrypoint", "sh",
+			"-v", src+":/src:ro",
+			"-v", dst+":/dst",
+			"claude-code",
+			"-c", "cp /src/.claude.json /dst/.claude.json",
+		)
+		if cmd.Run() == nil {
+			return
+		}
+	}
 }
 
 // ContainerConfigDir returns the per-session directory that gets mounted

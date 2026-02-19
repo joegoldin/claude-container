@@ -172,6 +172,9 @@ func createSession(opts createOpts) error {
 		return fmt.Errorf("create container config dir: %w", err)
 	}
 
+	// Seed .claude.json from a previous session to skip onboarding.
+	store.SeedClaudeJSON(name)
+
 	runOpts := docker.RunOpts{
 		Name:            name,
 		Workspace:       workspace,
