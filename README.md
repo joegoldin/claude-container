@@ -22,11 +22,12 @@ claude-container attach <session>         # attach to session
 claude-container stop <session>           # stop session
 claude-container rm <session>             # remove session
 claude-container logs [-f] <session>      # stream logs
-claude-container build                    # build docker image
+claude-container build                    # load docker image
 claude-container shell [workspace]        # debug shell
 claude-container auth                     # authenticate Claude Code
 claude-container doctor                   # check system health
 claude-container gc [--all] [--auth]      # garbage collect
+claude-container fix-perms <session>      # fix workspace ownership
 ```
 
 ## DESCRIPTION
@@ -42,14 +43,20 @@ Two isolation layers prevent agents from interfering with each other:
 All sessions share a single Claude config directory for authentication. Run
 `claude-container auth` once and all sessions use those credentials.
 
+The Docker image is built entirely with Nix via `dockerTools.buildLayeredImage`.
+No Dockerfile is involved -- the image is a Nix derivation that includes Claude
+Code, common Unix tools, and baked-in sandbox settings.
+
 ## GETTING STARTED
 
 ```sh
-claude-container build         # build the docker image (once)
 claude-container auth          # authenticate Claude Code (once)
 claude-container doctor        # verify everything is set up
 claude-container run --yolo    # quick-start a session
 ```
+
+The Docker image is loaded automatically on first use from the Nix-built
+tarball. No manual `build` step is required.
 
 ## COMMANDS
 
@@ -59,9 +66,10 @@ claude-container run --yolo    # quick-start a session
 Available Commands:
   attach      Attach to a running session
   auth        Authenticate Claude Code inside a container
-  build       Build the Claude Code container image
+  build       Load the Claude Code Docker image
   completion  Generate the autocompletion script for the specified shell
   doctor      Check system health and configuration
+  fix-perms   Fix workspace ownership after container UID remapping
   gc          Clean up stopped containers and stale sessions
   logs        Stream logs from a session
   new         Create a new Claude Code session
@@ -168,6 +176,10 @@ Attach to a running session. If the session is stopped, restarts it with
 ```
 Usage:
   claude-container attach <session> [flags]
+
+Flags:
+  -b, --background   Start container in background without attaching
+  -d, --dashboard    Start container then open the TUI dashboard
 ```
 
 See **KEY BINDINGS** below for detach/quit controls.
@@ -212,7 +224,8 @@ Flags:
 
 ### build
 
-Build the Claude Code docker image from the bundled Dockerfile.
+Load the Nix-built Docker image into Docker. This is done automatically
+when starting sessions, but can be run manually to force a reload.
 
 <!-- Generated from: claude-container build --help -->
 
@@ -258,7 +271,7 @@ Remove credentials: `claude-container gc --auth`
 ### doctor
 
 Check system health and configuration. Verifies Docker is available and
-running, the container image is built, the config directory exists, and
+running, the container image is loaded, the config directory exists, and
 authentication is set up.
 
 <!-- Generated from: claude-container doctor --help -->
@@ -266,6 +279,18 @@ authentication is set up.
 ```
 Usage:
   claude-container doctor [flags]
+```
+
+### fix-perms
+
+Fix workspace file ownership after container UID remapping. Runs
+`sudo chown -R` to restore ownership to the current user.
+
+<!-- Generated from: claude-container fix-perms --help -->
+
+```
+Usage:
+  claude-container fix-perms <session> [flags]
 ```
 
 ### gc
@@ -333,13 +358,14 @@ Session state and authentication are stored at `$XDG_CONFIG_HOME/claude-containe
 
 ## ENVIRONMENT
 
-    CLAUDE_CONTAINER_DOCKER_CONTEXT    path to Dockerfile and context
-                                       (set by nix wrapper)
-    XDG_CONFIG_HOME                    base config directory
+    CLAUDE_CONTAINER_IMAGE_TARBALL    path to Nix-built OCI image tarball
+                                      (set by nix wrapper)
+    CLAUDE_CONTAINER_IMAGE_TAG        docker image tag (set by nix wrapper)
+    XDG_CONFIG_HOME                   base config directory
 
 ## INSTALL
 
-### Nix flake
+### Nix flake (basic)
 
 ```nix
 # flake input
@@ -355,6 +381,30 @@ claude-container-packages = inputs.claude-container.overlays.default;
 home.packages = [ pkgs.claude-container ];
 ```
 
+### Nix flake (custom image)
+
+Use `lib.mkClaudeContainer` to customize the Docker image with extra
+packages, settings, or managed settings:
+
+```nix
+claude-container = {
+  url = "github:joegoldin/claude-container";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+
+# in your packages or overlay
+let
+  cc = inputs.claude-container.lib.mkClaudeContainer {
+    inherit pkgs;
+    claude-code = pkgs.llm-agents.claude-code;
+    extraPackages = with pkgs; [ ripgrep fd nodejs ];
+    settings = { /* settings.json content */ };
+  };
+in {
+  home.packages = [ cc.cli ];
+}
+```
+
 ### Build from source
 
 ```sh
@@ -363,15 +413,29 @@ nix build
 nix develop --command go build -o claude-container .
 ```
 
+## DOCKER IMAGE
+
+The Docker image is built with Nix (`dockerTools.buildLayeredImage`) and
+contains no Alpine or Debian base -- only Nix store paths.
+
+Default tools included in the image:
+
+    bash, coreutils, git, jq, bubblewrap, socat, curl, findutils,
+    grep, sed, awk, ripgrep, fd, tree, diffutils, tar, gzip,
+    less, file, which, python3
+
+Additional packages can be added via the `extraPackages` option in
+`lib.mkClaudeContainer`.
+
+The entrypoint handles UID/GID mapping via shadow utilities and su-exec,
+matching the host user inside the container.
+
 ## DEPENDENCIES
 
-Runtime: `git`, `docker`.
+Runtime: `docker`.
 
-The nix package wraps the binary with both on PATH and sets
-`CLAUDE_CONTAINER_DOCKER_CONTEXT` to the bundled Dockerfile.
-
-Run `claude-container build` once to create the docker image before
-creating sessions.
+The nix package wraps the binary with `git` and `docker` on PATH and sets
+`CLAUDE_CONTAINER_IMAGE_TARBALL` to the Nix-built image tarball.
 
 ## FILES
 
@@ -379,12 +443,12 @@ creating sessions.
     ~/.config/claude-container/worktrees/            git worktrees
     ~/.config/claude-container/claude-config/        shared Claude Code config
     ~/.config/claude-container/claude-config/.credentials.json   auth credentials
+    ~/.config/claude-container/loaded-image          image load marker
 
 ## EXAMPLES
 
 ```sh
 # First-time setup
-claude-container build
 claude-container auth
 claude-container doctor
 
@@ -434,6 +498,12 @@ claude-container attach auth
 
 # Remove completely
 claude-container rm auth
+
+# Fix file ownership after UID remapping
+claude-container fix-perms auth
+
+# Force reload the Docker image
+claude-container build
 
 # Clean up stopped containers
 claude-container gc
