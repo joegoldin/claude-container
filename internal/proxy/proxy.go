@@ -320,11 +320,13 @@ func Run(opts Opts) error {
 	signal.Stop(sigwinch)
 	wg.Wait()
 
-	// Restore terminal.
+	// Restore terminal: reset scroll region, switch back from alternate
+	// screen buffer if active, clear the screen, and show cursor.
 	clearScrollRegion()
-	fmt.Fprint(os.Stdout, "\033[?25h") // ensure cursor is visible
+	fmt.Fprint(os.Stdout, "\033[?1049l") // exit alternate screen buffer
+	fmt.Fprint(os.Stdout, "\033[2J\033[H") // clear screen + cursor home
+	fmt.Fprint(os.Stdout, "\033[?25h")     // ensure cursor is visible
 	term.Restore(stdinFd, oldState)
-	fmt.Fprint(os.Stderr, "\r\n") // clean line for shell prompt
 
 	// Post-exit cleanup.
 	containerExitedNormally := !detached && !quit
