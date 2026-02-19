@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/creack/pty"
 	"golang.org/x/term"
 )
 
@@ -75,27 +76,17 @@ func Run(opts Opts) error {
 		width, height = 80, 24
 	}
 
-	// Start docker subprocess. DockerArgs contains the arguments to pass
-	// to "docker" (e.g. ["run", "--name", ...] or ["attach", "name"]).
+	// Start docker subprocess with a real PTY so Docker's -it flag works.
 	cmd := exec.Command("docker", opts.DockerArgs...)
-	cmd.Stderr = nil // we'll merge stderr into stdout via pipe
 
-	stdinPipe, err := cmd.StdinPipe()
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
+		Rows: uint16(height - 1), // reserve one row for status bar
+		Cols: uint16(width),
+	})
 	if err != nil {
-		return fmt.Errorf("proxy: failed to create stdin pipe: %w", err)
+		return fmt.Errorf("proxy: failed to start docker with pty: %w", err)
 	}
-
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("proxy: failed to create stdout pipe: %w", err)
-	}
-
-	// Merge stderr into stdout.
-	cmd.Stderr = cmd.Stdout
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("proxy: failed to start docker: %w", err)
-	}
+	defer ptmx.Close()
 
 	// Set up scroll region and initial status bar.
 	setScrollRegion(height)
@@ -108,7 +99,7 @@ func Run(opts Opts) error {
 	var detached bool
 	var quit bool
 
-	// stdout proxy: docker stdout -> host stdout.
+	// stdout proxy: docker pty -> host stdout.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -119,7 +110,7 @@ func Run(opts Opts) error {
 				return
 			default:
 			}
-			n, err := stdoutPipe.Read(buf)
+			n, err := ptmx.Read(buf)
 			if n > 0 {
 				os.Stdout.Write(buf[:n])
 			}
@@ -129,7 +120,7 @@ func Run(opts Opts) error {
 		}
 	}()
 
-	// stdin proxy: host stdin -> docker stdin, with prefix key interception.
+	// stdin proxy: host stdin -> docker pty, with prefix key interception.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -167,7 +158,7 @@ func Run(opts Opts) error {
 						renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
 					})
 				} else {
-					stdinPipe.Write([]byte{b})
+					ptmx.Write([]byte{b})
 				}
 
 			case statePrefixWait:
@@ -188,7 +179,7 @@ func Run(opts Opts) error {
 					return
 				case prefixKey:
 					// Forward literal Ctrl+B.
-					stdinPipe.Write([]byte{prefixKey})
+					ptmx.Write([]byte{prefixKey})
 				default:
 					// Ignore unknown prefix command.
 				}
@@ -196,7 +187,7 @@ func Run(opts Opts) error {
 		}
 	}()
 
-	// SIGWINCH handler: update scroll region and status bar on resize.
+	// SIGWINCH handler: update scroll region, status bar, and PTY size on resize.
 	sigwinch := make(chan os.Signal, 1)
 	signal.Notify(sigwinch, syscall.SIGWINCH)
 	wg.Add(1)
@@ -213,6 +204,11 @@ func Run(opts Opts) error {
 					height = h
 					setScrollRegion(height)
 					renderStatusBar(os.Stdout, width, height, opts.StatusBar, false)
+					// Resize the PTY so the container sees the new dimensions.
+					pty.Setsize(ptmx, &pty.Winsize{
+						Rows: uint16(height - 1),
+						Cols: uint16(width),
+					})
 				}
 			}
 		}
@@ -252,14 +248,11 @@ func Run(opts Opts) error {
 				cmdErr = <-cmdDone
 			}
 		} else {
-			// Detached: close stdin so the container keeps running.
-			stdinPipe.Close()
+			// Detached: close PTY master so the container keeps running.
+			ptmx.Close()
 			// Don't wait for docker to exit; just proceed with cleanup.
 		}
 	}
-
-	// Close stdin pipe (idempotent).
-	stdinPipe.Close()
 
 	// Wait for goroutines to finish.
 	signal.Stop(sigwinch)
