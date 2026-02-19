@@ -14,6 +14,7 @@ var (
 	workName       string
 	workFrom       string
 	workBackground bool
+	workAutoRemove bool
 )
 
 var workCmd = &cobra.Command{
@@ -37,6 +38,7 @@ var workCmd = &cobra.Command{
 			yolo:       workYolo,
 			prompt:     workPrompt,
 			background: workBackground,
+			autoRemove: workAutoRemove,
 		})
 	},
 }
@@ -47,5 +49,6 @@ func init() {
 	workCmd.Flags().StringVar(&workName, "name", "", "Session name (auto-generated if omitted)")
 	workCmd.Flags().StringVar(&workFrom, "from", "", "Base branch for worktree (default: current HEAD)")
 	workCmd.Flags().BoolVarP(&workBackground, "background", "b", false, "Don't attach after creation")
+	workCmd.Flags().BoolVar(&workAutoRemove, "rm", false, "Auto-remove session when it exits")
 	rootCmd.AddCommand(workCmd)
 }

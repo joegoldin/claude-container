@@ -13,6 +13,7 @@ var (
 	runPrompt     string
 	runName       string
 	runBackground bool
+	runAutoRemove bool
 )
 
 var runCmd = &cobra.Command{
@@ -35,6 +36,7 @@ var runCmd = &cobra.Command{
 			yolo:       runYolo,
 			prompt:     runPrompt,
 			background: runBackground,
+			autoRemove: runAutoRemove,
 		})
 	},
 }
@@ -44,5 +46,6 @@ func init() {
 	runCmd.Flags().StringVarP(&runPrompt, "prompt", "p", "", "Initial prompt to send to Claude")
 	runCmd.Flags().StringVar(&runName, "name", "", "Session name (auto-generated if omitted)")
 	runCmd.Flags().BoolVarP(&runBackground, "background", "b", false, "Don't attach after creation")
+	runCmd.Flags().BoolVar(&runAutoRemove, "rm", false, "Auto-remove session when it exits")
 	rootCmd.AddCommand(runCmd)
 }

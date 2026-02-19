@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
@@ -17,42 +18,36 @@ var rmCmd = &cobra.Command{
 	ValidArgsFunction: completeSessionNames,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
-
 		store := config.NewStore(config.DefaultDir())
-		sess, err := store.Get(name)
-		if err != nil {
-			return fmt.Errorf("session %q not found", name)
-		}
-
-		// Force remove docker container if it exists.
-		if docker.Exists(name) {
-			if err := docker.Remove(name); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove container: %v\n", err)
-			}
-		}
-
-		// Kill tmux session if it exists.
-		if tmux.Exists(name) {
-			if err := tmux.Kill(name); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: kill tmux session: %v\n", err)
-			}
-		}
-
-		// Remove worktree and branch if session has them.
-		if sess.Branch != "" && sess.RepoPath != "" {
-			if err := gitpkg.RemoveWorktree(sess.RepoPath, sess.WorktreePath, sess.Branch); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove worktree: %v\n", err)
-			}
-		}
-
-		// Delete session from store.
-		if err := store.Delete(name); err != nil {
-			return fmt.Errorf("delete session: %w", err)
-		}
-
+		removeSession(store, name)
 		fmt.Println("Session removed.")
 		return nil
 	},
+}
+
+// removeSession tears down a session: stops docker, kills tmux, removes
+// worktree, and deletes the session record. Errors are printed as warnings.
+func removeSession(store *config.Store, name string) {
+	sess, _ := store.Get(name)
+
+	if docker.Exists(name) {
+		if err := docker.Remove(name); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: remove container: %v\n", err)
+		}
+	}
+	if tmux.Exists(name) {
+		if err := tmux.Kill(name); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: kill tmux session: %v\n", err)
+		}
+	}
+	if sess != nil && sess.Branch != "" && sess.RepoPath != "" {
+		if err := gitpkg.RemoveWorktree(sess.RepoPath, sess.WorktreePath, sess.Branch); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: remove worktree: %v\n", err)
+		}
+	}
+	if err := store.Delete(name); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: delete session: %v\n", err)
+	}
 }
 
 func init() {

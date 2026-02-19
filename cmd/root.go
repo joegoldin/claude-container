@@ -36,9 +36,14 @@ var rootCmd = &cobra.Command{
 			}
 
 			if dm.Attached() != "" {
+				attachName := dm.Attached()
 				ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-				_ = tmux.Attach(ctx, dm.Attached())
+				_ = tmux.Attach(ctx, attachName)
 				stop()
+				// Auto-remove if session was created with --rm and has ended.
+				if sess, err := store.Get(attachName); err == nil && sess.AutoRemove && !tmux.Exists(attachName) {
+					removeSession(store, attachName)
+				}
 				continue // return to dashboard after detach
 			}
 

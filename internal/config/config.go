@@ -30,6 +30,7 @@ type Session struct {
 	ContainerName string    `json:"container_name"`
 	TmuxSession   string    `json:"tmux_session"`
 	Yolo          bool      `json:"yolo"`
+	AutoRemove    bool      `json:"auto_remove,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 

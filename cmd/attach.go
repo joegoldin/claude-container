@@ -37,11 +37,11 @@ var attachCmd = &cobra.Command{
 
 			// Rebuild docker run command using stored session metadata.
 			// Always use --continue for resume.
-			configDir := config.DefaultDir()
+			containerConfigDir := store.ContainerConfigDir(name)
 			dockerArgs := docker.RunArgs(docker.RunOpts{
 				Name:      name,
 				Workspace: sess.WorktreePath,
-				ConfigDir: configDir,
+				ConfigDir: containerConfigDir,
 				UID:       os.Getuid(),
 				GID:       os.Getgid(),
 				Yolo:      sess.Yolo,
@@ -59,7 +59,14 @@ var attachCmd = &cobra.Command{
 		defer stop()
 
 		fmt.Println("Attaching (Ctrl+Q to detach)...")
-		return tmux.Attach(ctx, name)
+		attachErr := tmux.Attach(ctx, name)
+
+		// Auto-remove if session was created with --rm and has ended.
+		if sess.AutoRemove && !tmux.Exists(name) {
+			removeSession(store, name)
+		}
+
+		return attachErr
 	},
 }
 

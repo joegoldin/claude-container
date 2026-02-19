@@ -25,7 +25,8 @@ var (
 	newYolo       bool
 	newPrompt     string
 	newContinue   bool
-	newBackground bool
+	newBackground  bool
+	newAutoRemove  bool
 )
 
 // createOpts holds the resolved options for creating a new session.
@@ -38,6 +39,7 @@ type createOpts struct {
 	prompt     string
 	cont       bool // "continue" is a keyword
 	background bool // don't auto-attach after creation
+	autoRemove bool // clean up session when it stops
 }
 
 var newCmd = &cobra.Command{
@@ -83,6 +85,7 @@ var newCmd = &cobra.Command{
 			prompt:     newPrompt,
 			cont:       newContinue,
 			background: newBackground,
+			autoRemove: newAutoRemove,
 		})
 	},
 }
@@ -96,6 +99,7 @@ func init() {
 	newCmd.Flags().StringVarP(&newPrompt, "prompt", "p", "", "Initial prompt to send to Claude")
 	newCmd.Flags().BoolVarP(&newContinue, "continue", "c", false, "Resume previous conversation")
 	newCmd.Flags().BoolVarP(&newBackground, "background", "b", false, "Don't attach after creation")
+	newCmd.Flags().BoolVar(&newAutoRemove, "rm", false, "Auto-remove session when it exits")
 	rootCmd.AddCommand(newCmd)
 }
 
@@ -200,6 +204,7 @@ func createSession(opts createOpts) error {
 		ContainerName: docker.ContainerName(name),
 		TmuxSession:   tmux.SessionName(name),
 		Yolo:          opts.yolo,
+		AutoRemove:    opts.autoRemove,
 		CreatedAt:     time.Now(),
 	}
 	if err := store.Save(sess); err != nil {
@@ -216,5 +221,12 @@ func createSession(opts createOpts) error {
 	fmt.Printf("Session %q created. Attaching...\n", name)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	return tmux.Attach(ctx, name)
+	attachErr := tmux.Attach(ctx, name)
+
+	// Auto-remove after detach if --rm was used and the session has ended.
+	if opts.autoRemove && !tmux.Exists(name) {
+		removeSession(store, name)
+	}
+
+	return attachErr
 }
