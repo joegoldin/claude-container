@@ -132,25 +132,8 @@ func Run(opts Opts) error {
 		const needle = "Itrustthisfolder"
 		var ring [8192]byte
 		var ringLen int
-		var mu sync.Mutex
 		scanning := true
-
-		// Debug: dump ring buffer after deadline expires, independent of read loop.
-		go func() {
-			select {
-			case <-done:
-				return
-			case <-time.After(30 * time.Second):
-				mu.Lock()
-				if ringLen > 0 {
-					clean := stripANSI(ring[:ringLen])
-					os.WriteFile("/tmp/claude-container-scan-debug.txt", clean, 0644)
-					os.WriteFile("/tmp/claude-container-scan-raw.txt", ring[:ringLen], 0644)
-				}
-				scanning = false
-				mu.Unlock()
-			}
-		}()
+		scanDeadline := time.After(30 * time.Second)
 
 		for {
 			select {
@@ -162,7 +145,13 @@ func Run(opts Opts) error {
 			if n > 0 {
 				os.Stdout.Write(buf[:n])
 
-				mu.Lock()
+				if scanning {
+					select {
+					case <-scanDeadline:
+						scanning = false
+					default:
+					}
+				}
 				if scanning {
 					// Append new data to ring buffer.
 					for i := 0; i < n; i++ {
@@ -186,7 +175,6 @@ func Run(opts Opts) error {
 						}()
 					}
 				}
-				mu.Unlock()
 			}
 			if err != nil {
 				return
