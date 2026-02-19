@@ -19,20 +19,18 @@ func SessionName(session string) string {
 }
 
 // NewSessionArgs returns the tmux new-session arguments for creating a
-// detached session that directly runs the given command. The command is
-// executed without a shell wrapper so that interactive programs like
-// docker run -it get the tmux pane's PTY directly.
-func NewSessionArgs(session, workDir string, command []string) []string {
+// detached session with a default shell. The actual command is sent
+// separately via send-keys so that interactive programs like
+// docker run -it inherit a proper controlling terminal.
+func NewSessionArgs(session, workDir string) []string {
 	name := SessionName(session)
 
-	args := []string{
+	return []string{
 		"new-session",
 		"-d",
 		"-s", name,
 		"-c", workDir,
 	}
-	args = append(args, command...)
-	return args
 }
 
 // configureSession sets tmux options on an existing session: mouse
@@ -76,10 +74,11 @@ func Kill(session string) error {
 	return cmd.Run()
 }
 
-// Create creates a new detached tmux session that runs the given command,
-// then configures session options (mouse, status bar).
+// Create creates a new detached tmux session with a default shell,
+// configures session options (mouse, status bar), then sends the
+// command via send-keys so docker gets a proper interactive terminal.
 func Create(session, workDir string, command []string) error {
-	args := NewSessionArgs(session, workDir, command)
+	args := NewSessionArgs(session, workDir)
 	cmd := exec.Command("tmux", args...)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -87,7 +86,14 @@ func Create(session, workDir string, command []string) error {
 		return err
 	}
 	configureSession(session)
-	return nil
+
+	// Send the command to the shell running in the pane.
+	name := SessionName(session)
+	shell := shellJoin(command)
+	sendCmd := exec.Command("tmux", "send-keys", "-t", name, shell, "Enter")
+	sendCmd.Stdout = nil
+	sendCmd.Stderr = nil
+	return sendCmd.Run()
 }
 
 // CapturePaneArgs returns the tmux capture-pane arguments for the given

@@ -22,7 +22,7 @@ func TestSessionNamePrefix(t *testing.T) {
 }
 
 func TestNewSessionArgs(t *testing.T) {
-	args := NewSessionArgs("dev", "/home/user/project", []string{"docker", "run", "-it", "claude-code"})
+	args := NewSessionArgs("dev", "/home/user/project")
 
 	if len(args) == 0 {
 		t.Fatal("NewSessionArgs returned empty slice")
@@ -55,22 +55,17 @@ func TestNewSessionArgs(t *testing.T) {
 	if !strings.Contains(joined, "/home/user/project") {
 		t.Errorf("NewSessionArgs missing working directory in %v", args)
 	}
-
-	// Must contain the command to run.
-	if !strings.Contains(joined, "docker") {
-		t.Errorf("NewSessionArgs missing command in %v", args)
-	}
 }
 
-func TestNewSessionArgsContainsCommand(t *testing.T) {
-	args := NewSessionArgs("dev", "/tmp", []string{"docker", "run", "-it", "img"})
+func TestNewSessionArgsNoCommand(t *testing.T) {
+	args := NewSessionArgs("dev", "/tmp")
 
-	// The command should appear as direct args (no sh -c wrapper).
-	if !slices.Contains(args, "docker") {
-		t.Errorf("NewSessionArgs should contain command directly, got %v", args)
-	}
-	if !slices.Contains(args, "-it") {
-		t.Errorf("NewSessionArgs should contain command flags, got %v", args)
+	// NewSessionArgs should NOT contain any command — the command is
+	// sent separately via send-keys in Create().
+	for _, a := range args {
+		if a == "docker" || a == "sh" {
+			t.Errorf("NewSessionArgs should not contain command, got %v", args)
+		}
 	}
 }
 
@@ -105,7 +100,7 @@ func TestCapturePaneArgs(t *testing.T) {
 }
 
 func TestNewSessionArgsWorkDir(t *testing.T) {
-	args := NewSessionArgs("test", "/home/user/myproject", []string{"echo", "hello"})
+	args := NewSessionArgs("test", "/home/user/myproject")
 
 	// Verify -c flag is present with the correct working directory.
 	foundC := false
@@ -123,17 +118,12 @@ func TestNewSessionArgsWorkDir(t *testing.T) {
 	}
 }
 
-func TestNewSessionArgsCommand(t *testing.T) {
-	command := []string{"docker", "run", "-it", "claude-code"}
-	args := NewSessionArgs("cmd-test", "/tmp", command)
+func TestNewSessionArgsLength(t *testing.T) {
+	args := NewSessionArgs("cmd-test", "/tmp")
 
-	joined := strings.Join(args, " ")
-
-	// The command should appear somewhere in the args (it gets shell-joined and wrapped).
-	for _, part := range command {
-		if !strings.Contains(joined, part) {
-			t.Errorf("NewSessionArgs missing command part %q in %v", part, args)
-		}
+	// Should contain: new-session -d -s <name> -c /tmp = 6 args
+	if len(args) != 6 {
+		t.Errorf("NewSessionArgs returned %d args, want 6: %v", len(args), args)
 	}
 }
 
@@ -187,7 +177,7 @@ func TestAllFunctionsAcceptPlainName(t *testing.T) {
 	expected := "claude-container_test-session"
 
 	// NewSessionArgs: verify the -s flag value uses single prefix.
-	args := NewSessionArgs(session, "/tmp", []string{"echo"})
+	args := NewSessionArgs(session, "/tmp")
 	sIdx := -1
 	for i, a := range args {
 		if a == "-s" {
@@ -242,7 +232,7 @@ func TestSessionNameIdempotency(t *testing.T) {
 func TestNewSessionAndCapturePaneUseSamePrefix(t *testing.T) {
 	session := "consistency-test"
 
-	createArgs := NewSessionArgs(session, "/tmp", []string{"echo"})
+	createArgs := NewSessionArgs(session, "/tmp")
 	captureArgs := CapturePaneArgs(session)
 
 	// Extract session names from args.
