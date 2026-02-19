@@ -252,32 +252,27 @@ func (m DashboardModel) View() string {
 		}
 
 		for i, si := range m.sessions {
-			// Status indicator.
 			dot := "●"
+			sess := si.session
 
-			name := si.session.Name
-			status := si.status
-			branch := si.session.Branch
-			repo := shortenHome(si.session.RepoPath)
-
-			// Build detail line: status, branch, repo.
-			var details []string
-			details = append(details, status)
-			if branch != "" {
-				details = append(details, branch)
+			// Header line: dot + name + status tag.
+			var statusTag string
+			switch si.status {
+			case "running":
+				uptime := formatUptime(time.Since(sess.CreatedAt))
+				statusTag = statusRunning.Render(fmt.Sprintf(" [running %s]", uptime))
+			case "stopped":
+				statusTag = statusStopped.Render(" [stopped]")
+			default:
+				statusTag = dimStyle.Render(" [removed]")
 			}
-			if repo != "" {
-				details = append(details, repo)
-			}
-			detailStr := strings.Join(details, " │ ")
 
 			if i == m.cursor {
-				row := fmt.Sprintf(" %s %s", dot, name)
+				row := fmt.Sprintf(" %s %s", dot, sess.Name)
 				if len(row) < rowW {
 					row += strings.Repeat(" ", rowW-len(row))
 				}
 				lines = append(lines, selectedStyle.Render(row))
-				lines = append(lines, "   "+dimStyle.Render(detailStr))
 			} else {
 				var indicator string
 				switch si.status {
@@ -288,8 +283,41 @@ func (m DashboardModel) View() string {
 				default:
 					indicator = dimStyle.Render(dot)
 				}
-				lines = append(lines, fmt.Sprintf(" %s %s", indicator, name))
-				lines = append(lines, "   "+dimStyle.Render(detailStr))
+				lines = append(lines, fmt.Sprintf(" %s %s%s", indicator, sess.Name, statusTag))
+			}
+
+			// Detail lines with session info.
+			if sess.Branch != "" {
+				lines = append(lines, dimStyle.Render(fmt.Sprintf("     branch: %s", sess.Branch)))
+			}
+			if sess.RepoPath != "" {
+				lines = append(lines, dimStyle.Render(fmt.Sprintf("     repo:   %s", shortenHome(sess.RepoPath))))
+			}
+			if sess.WorktreePath != "" && sess.WorktreePath != sess.RepoPath {
+				lines = append(lines, dimStyle.Render(fmt.Sprintf("     work:   %s", shortenHome(sess.WorktreePath))))
+			}
+
+			// Flags line.
+			var flags []string
+			if sess.Yolo {
+				flags = append(flags, "yolo")
+			}
+			if sess.AutoRemove {
+				flags = append(flags, "auto-remove")
+			}
+			if i == m.cursor {
+				// Show status on selected row (not inline since highlight covers it).
+				flags = append([]string{si.status}, flags...)
+			}
+			if len(flags) > 0 {
+				lines = append(lines, dimStyle.Render(fmt.Sprintf("     flags:  %s", strings.Join(flags, ", "))))
+			}
+
+			lines = append(lines, dimStyle.Render(fmt.Sprintf("     created: %s", sess.CreatedAt.Format("2006-01-02 15:04"))))
+
+			// Blank line between sessions.
+			if i < len(m.sessions)-1 {
+				lines = append(lines, "")
 			}
 		}
 	}
@@ -314,6 +342,24 @@ func (m DashboardModel) View() string {
 	}
 
 	return panel + "\n" + bottom
+}
+
+// formatUptime returns a human-readable duration string.
+func formatUptime(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		return fmt.Sprintf("%dh%dm", h, m)
+	default:
+		days := int(d.Hours()) / 24
+		h := int(d.Hours()) % 24
+		return fmt.Sprintf("%dd%dh", days, h)
+	}
 }
 
 // shortenHome replaces the user's home directory prefix with ~.
