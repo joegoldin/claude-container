@@ -80,17 +80,20 @@ func removeClaudeConfig(dir string) error {
 		return nil
 	}
 	// Files created by the container may have different ownership.
-	// Use a Docker container to remove them as root.
+	// Use a Docker container to remove the contents as root.
+	// We can't rm the mount point itself (busy), so delete contents with shell glob.
 	c := exec.Command("docker", "run", "--rm",
 		"-v", dir+":/cleanup",
-		"alpine", "rm", "-rf", "/cleanup")
+		"alpine", "sh", "-c", "rm -rf /cleanup/* /cleanup/.[!.]* /cleanup/..?*")
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	if err := c.Run(); err != nil {
 		return fmt.Errorf("docker rm cleanup: %w", err)
 	}
-	// The bind mount prevents removing the dir itself; remove the now-empty dir.
-	return os.Remove(dir)
+	// Directory itself is now empty; try to remove but ignore errors
+	// (it may still be owned by container UID, and gets recreated on next auth).
+	os.Remove(dir)
+	return nil
 }
 
 func init() {
