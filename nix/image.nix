@@ -126,6 +126,23 @@ let
       jq
       claude-code
     ]
+    ++ (with pkgs; [
+      curl
+      findutils
+      gnugrep
+      gnused
+      gawk
+      ripgrep
+      fd
+      tree
+      diffutils
+      gnutar
+      gzip
+      less
+      file
+      which
+      python3Minimal
+    ])
     ++ extraPackages;
 
 in
