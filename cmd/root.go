@@ -56,11 +56,13 @@ var rootCmd = &cobra.Command{
 					yolo = sess.Yolo
 					autoRemove = sess.AutoRemove
 				}
+				containerName := docker.ContainerName(attachName)
 				_ = proxy.Run(proxy.Opts{
-					DockerArgs: dockerArgs,
-					StatusBar:  proxy.StatusBarInfo{Name: attachName, Branch: branch, Yolo: yolo},
-					AutoRemove: autoRemove,
-					Cleanup:    func(_ string) { removeSession(store, attachName) },
+					DockerArgs:    dockerArgs,
+					ContainerName: containerName,
+					StatusBar:     proxy.StatusBarInfo{Name: attachName, Branch: branch, Yolo: yolo},
+					AutoRemove:    autoRemove,
+					Cleanup:       func(_ string) { removeSession(store, attachName) },
 				})
 				continue
 			}
@@ -99,15 +101,18 @@ var rootCmd = &cobra.Command{
 					continue
 				}
 				if !res.Background {
+					cn := docker.ContainerName(res.Name)
 					var dockerArgs []string
 					if docker.IsRunning(res.Name) {
-						dockerArgs = []string{"attach", docker.ContainerName(res.Name)}
+						dockerArgs = []string{"attach", cn}
 					} else {
-						dockerArgs = []string{"start", "-ai", docker.ContainerName(res.Name)}
+						dockerArgs = []string{"start", "-ai", cn}
 					}
 					_ = proxy.Run(proxy.Opts{
-						DockerArgs: dockerArgs,
-						StatusBar:  proxy.StatusBarInfo{Name: res.Name, Yolo: res.Yolo},
+						DockerArgs:    dockerArgs,
+						ContainerName: cn,
+						StatusBar:     proxy.StatusBarInfo{Name: res.Name, Yolo: res.Yolo},
+						Cleanup:       func(_ string) { removeSession(store, res.Name) },
 					})
 				}
 				continue
