@@ -47,5 +47,24 @@ if [ -d /workspace ]; then
     chmod 755 /workspace 2>/dev/null || true
 fi
 
+# Copy host credentials into the user's home .claude dir and the config dir.
+# The host file is bind-mounted read-only at /tmp/host-credentials.json and
+# may be unreadable due to Docker user namespace remapping, so we copy it
+# as root (which can read any file) before dropping privileges.
+if [ -f /tmp/host-credentials.json ]; then
+    USER_HOME=$(getent passwd "$USER_UID" | cut -d: -f6)
+    USER_HOME=${USER_HOME:-/home/claude}
+    mkdir -p "$USER_HOME/.claude"
+    cp /tmp/host-credentials.json "$USER_HOME/.claude/.credentials.json"
+    chown -R "$USER_UID:$USER_GID" "$USER_HOME/.claude"
+    chmod 600 "$USER_HOME/.claude/.credentials.json"
+    # Also copy into CLAUDE_CONFIG_DIR in case claude looks there.
+    if [ -n "$CLAUDE_CONFIG_DIR" ] && [ -d "$CLAUDE_CONFIG_DIR" ]; then
+        cp /tmp/host-credentials.json "$CLAUDE_CONFIG_DIR/.credentials.json"
+        chown "$USER_UID:$USER_GID" "$CLAUDE_CONFIG_DIR/.credentials.json"
+        chmod 600 "$CLAUDE_CONFIG_DIR/.credentials.json"
+    fi
+fi
+
 export SHELL=/bin/bash
 exec su-exec "${USER_NAME}" "$@"

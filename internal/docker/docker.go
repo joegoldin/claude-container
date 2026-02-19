@@ -56,10 +56,11 @@ func RunArgs(opts RunOpts) []string {
 		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
 	}
 
-	// Mount host credentials file read-only so the container can
-	// authenticate without requiring /login.
+	// Mount host credentials file at a temp path. The entrypoint copies
+	// it to $HOME/.claude/.credentials.json with correct ownership,
+	// which handles Docker user namespace remapping.
 	if opts.CredentialsFile != "" {
-		args = append(args, "-v", opts.CredentialsFile+":/claude/.credentials.json:ro")
+		args = append(args, "-v", opts.CredentialsFile+":/tmp/host-credentials.json:ro")
 	}
 
 	args = append(args, ImageName, "claude")
