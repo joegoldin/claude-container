@@ -19,6 +19,9 @@ var rootCmd = &cobra.Command{
 	Long:  `A CLI tool for running multiple Claude Code instances in isolated, sandboxed Docker containers with git worktree separation and a TUI dashboard.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store := config.NewStore(config.DefaultDir())
+		if err := requireAuth(store); err != nil {
+			return err
+		}
 
 		for {
 			m := tui.NewDashboard(store)
@@ -121,4 +124,12 @@ func Execute() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// requireAuth returns an error if the user has not authenticated yet.
+func requireAuth(store *config.Store) error {
+	if !store.IsAuthenticated() {
+		return fmt.Errorf("not authenticated; run 'claude-container auth' first")
+	}
+	return nil
 }

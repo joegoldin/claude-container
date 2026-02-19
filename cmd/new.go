@@ -173,9 +173,8 @@ func createSession(opts createOpts) error {
 		return fmt.Errorf("create claude config dir: %w", err)
 	}
 
-	// Hint if not yet authenticated (don't block — user might auth inside).
-	if !store.IsAuthenticated() {
-		fmt.Println("Note: not authenticated. Run 'claude-container auth' to log in.")
+	if err := requireAuth(store); err != nil {
+		return err
 	}
 
 	runOpts := docker.RunOpts{

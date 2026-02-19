@@ -19,6 +19,9 @@ var attachCmd = &cobra.Command{
 		name := args[0]
 
 		store := config.NewStore(config.DefaultDir())
+		if err := requireAuth(store); err != nil {
+			return err
+		}
 		sess, err := store.Get(name)
 		if err != nil {
 			return fmt.Errorf("session %q not found", name)
