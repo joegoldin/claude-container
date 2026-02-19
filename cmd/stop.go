@@ -5,7 +5,6 @@ import (
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
-	"github.com/joegoldin/claude-container/internal/tmux"
 	"github.com/spf13/cobra"
 )
 
@@ -25,12 +24,6 @@ var stopCmd = &cobra.Command{
 		if docker.IsRunning(name) {
 			if err := docker.Stop(name); err != nil {
 				return fmt.Errorf("stop container: %w", err)
-			}
-		}
-
-		if tmux.Exists(name) {
-			if err := tmux.Kill(name); err != nil {
-				return fmt.Errorf("kill tmux session: %w", err)
 			}
 		}
 

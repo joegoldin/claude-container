@@ -9,7 +9,6 @@ import (
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
-	"github.com/joegoldin/claude-container/internal/tmux"
 	"github.com/spf13/cobra"
 )
 
@@ -41,19 +40,16 @@ var psCmd = &cobra.Command{
 
 		entries := make([]psEntry, 0, len(sessions))
 		for _, sess := range sessions {
-			tmuxAlive := tmux.Exists(sess.Name)
-			containerRunning := docker.IsRunning(sess.Name)
-
 			var status, uptime string
 			switch {
-			case tmuxAlive && containerRunning:
+			case docker.IsRunning(sess.Name):
 				status = "running"
 				uptime = formatUptime(time.Since(sess.CreatedAt))
-			case tmuxAlive:
-				status = "exited"
+			case docker.Exists(sess.Name):
+				status = "stopped"
 				uptime = "-"
 			default:
-				status = "stopped"
+				status = "removed"
 				uptime = "-"
 			}
 

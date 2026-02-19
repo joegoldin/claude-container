@@ -13,13 +13,12 @@ import (
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
-	"github.com/joegoldin/claude-container/internal/tmux"
 )
 
 // sessionInfo pairs a persisted session with its live status.
 type sessionInfo struct {
 	session *config.Session
-	status  string // "running", "stopped", "exited"
+	status  string // "running", "stopped", "removed"
 }
 
 // DashboardModel is the Bubble Tea model for the TUI dashboard.
@@ -92,13 +91,14 @@ func (m DashboardModel) refreshSessions() tea.Cmd {
 		list := m.store.List()
 		infos := make([]sessionInfo, 0, len(list))
 		for _, sess := range list {
-			status := "stopped"
-			if tmux.Exists(sess.Name) {
-				if docker.IsRunning(sess.Name) {
-					status = "running"
-				} else {
-					status = "exited"
-				}
+			var status string
+			switch {
+			case docker.IsRunning(sess.Name):
+				status = "running"
+			case docker.Exists(sess.Name):
+				status = "stopped"
+			default:
+				status = "removed"
 			}
 			infos = append(infos, sessionInfo{session: sess, status: status})
 		}
@@ -119,8 +119,8 @@ func (m DashboardModel) fetchPreview() tea.Cmd {
 	si := m.sessions[idx]
 
 	return func() tea.Msg {
-		if si.status == "stopped" {
-			return previewMsg{content: "(session stopped)"}
+		if si.status != "running" {
+			return previewMsg{content: fmt.Sprintf("(session %s)", si.status)}
 		}
 
 		if m.showDiff {
@@ -144,13 +144,13 @@ func (m DashboardModel) fetchPreview() tea.Cmd {
 			return previewMsg{content: content}
 		}
 
-		// Live tmux pane capture.
-		output, err := tmux.CapturePane(si.session.Name)
+		// Show recent container logs.
+		output, err := docker.LogsTail(si.session.Name, 20)
 		if err != nil {
-			return previewMsg{content: fmt.Sprintf("(capture error: %v)", err)}
+			return previewMsg{content: fmt.Sprintf("(logs error: %v)", err)}
 		}
 		if strings.TrimSpace(output) == "" {
-			return previewMsg{content: "(empty pane)"}
+			return previewMsg{content: "(no output yet)"}
 		}
 		return previewMsg{content: output}
 	}
@@ -237,7 +237,6 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				si := m.sessions[idx]
 				_ = docker.Stop(si.session.Name)
-				_ = tmux.Kill(si.session.Name)
 			}
 			return m, m.refreshSessions()
 
@@ -249,7 +248,6 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				si := m.sessions[idx]
 				_ = docker.Remove(si.session.Name)
-				_ = tmux.Kill(si.session.Name)
 				if si.session.Branch != "" && si.session.RepoPath != "" {
 					_ = gitpkg.RemoveWorktree(si.session.RepoPath, si.session.WorktreePath, si.session.Branch)
 				}
@@ -355,7 +353,7 @@ func (m DashboardModel) View() string {
 				dot = "●"
 			case "stopped":
 				dot = "●"
-			case "exited":
+			case "removed":
 				dot = "●"
 			default:
 				dot = "●"
@@ -384,8 +382,8 @@ func (m DashboardModel) View() string {
 					indicator = statusRunning.Render(dot)
 				case "stopped":
 					indicator = statusStopped.Render(dot)
-				case "exited":
-					indicator = statusExited.Render(dot)
+				case "removed":
+					indicator = dimStyle.Render(dot)
 				default:
 					indicator = dimStyle.Render(dot)
 				}
@@ -409,7 +407,7 @@ func (m DashboardModel) View() string {
 	if m.showDiff {
 		previewTitle = previewTitleStyle.Render("Git Diff")
 	} else {
-		previewTitle = previewTitleStyle.Render("Live Preview")
+		previewTitle = previewTitleStyle.Render("Container Logs")
 	}
 
 	rightContent := previewTitle + "\n" + m.preview.View()
@@ -431,7 +429,7 @@ func (m DashboardModel) View() string {
 		)
 	} else {
 		bottom = helpStyle.Render(
-			"  ↑/↓ navigate  enter attach  n new  d stop  x remove  tab diff/preview  q quit",
+			"  ↑/↓ navigate  enter attach  n new  d stop  x remove  tab diff/logs  q quit",
 		)
 	}
 

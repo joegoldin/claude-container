@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	// Prefix is prepended to container and tmux session names.
+	// Prefix is prepended to container names.
 	Prefix = "claude-container_"
 
 	// SessionFile is the JSON file where sessions are persisted.
@@ -28,7 +28,6 @@ type Session struct {
 	WorktreePath  string    `json:"worktree_path"`
 	RepoPath      string    `json:"repo_path"`
 	ContainerName string    `json:"container_name"`
-	TmuxSession   string    `json:"tmux_session"`
 	Yolo          bool      `json:"yolo"`
 	AutoRemove    bool      `json:"auto_remove,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`

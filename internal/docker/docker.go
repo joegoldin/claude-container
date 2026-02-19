@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -40,15 +41,15 @@ func BuildArgs(contextDir string) []string {
 }
 
 // RunArgs returns the docker run command arguments for a persistent
-// Claude Code container. The container is NOT created with --rm so it
-// can be reattached later.
+// Claude Code container. The container starts detached (-dit) so the
+// caller can attach later with docker attach.
 func RunArgs(opts RunOpts) []string {
 	name := ContainerName(opts.Name)
 
 	args := []string{
 		"run",
 		"--name", name,
-		"-it",
+		"-dit",
 		"-v", opts.Workspace + ":/workspace",
 		"-v", opts.ConfigDir + ":/claude",
 		"-e", "CLAUDE_CONFIG_DIR=/claude",
@@ -94,6 +95,15 @@ func ShellArgs(workspace, configDir string, uid, gid int) []string {
 		ImageName,
 		"/bin/bash",
 	}
+}
+
+// Run executes docker with the given arguments (e.g. from RunArgs).
+// Stdout and stderr are connected to the current process.
+func Run(args []string) error {
+	cmd := exec.Command("docker", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // ImageExists returns true if the Claude Code Docker image has been built.
@@ -175,4 +185,28 @@ func Build(contextDir string) *exec.Cmd {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd
+}
+
+// Attach attaches to a running container with interactive stdin/stdout/stderr.
+// The user can detach with Ctrl+P, Ctrl+Q (default docker attach behavior).
+func Attach(ctx context.Context, session string) error {
+	name := ContainerName(session)
+	cmd := exec.CommandContext(ctx, "docker", "attach", name)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// LogsTail returns the last n lines of container logs.
+func LogsTail(session string, n int) (string, error) {
+	name := ContainerName(session)
+	cmd := exec.Command("docker", "logs", "--tail", fmt.Sprintf("%d", n), name)
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }

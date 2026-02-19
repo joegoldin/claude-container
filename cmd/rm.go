@@ -7,7 +7,6 @@ import (
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
-	"github.com/joegoldin/claude-container/internal/tmux"
 	"github.com/spf13/cobra"
 )
 
@@ -25,19 +24,14 @@ var rmCmd = &cobra.Command{
 	},
 }
 
-// removeSession tears down a session: stops docker, kills tmux, removes
-// worktree, and deletes the session record. Errors are printed as warnings.
+// removeSession tears down a session: stops and removes the docker container,
+// removes the worktree, and deletes the session record. Errors are printed as warnings.
 func removeSession(store *config.Store, name string) {
 	sess, _ := store.Get(name)
 
 	if docker.Exists(name) {
 		if err := docker.Remove(name); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: remove container: %v\n", err)
-		}
-	}
-	if tmux.Exists(name) {
-		if err := tmux.Kill(name); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: kill tmux session: %v\n", err)
 		}
 	}
 	if sess != nil && sess.Branch != "" && sess.RepoPath != "" {

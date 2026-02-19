@@ -19,7 +19,6 @@ func TestSessionRoundTrip(t *testing.T) {
 		WorktreePath:  "/tmp/worktrees/feature-auth",
 		RepoPath:      "/home/user/project",
 		ContainerName: Prefix + "test-session",
-		TmuxSession:   Prefix + "test-session",
 		Yolo:          true,
 		CreatedAt:     now,
 	}
@@ -47,9 +46,6 @@ func TestSessionRoundTrip(t *testing.T) {
 	}
 	if got.ContainerName != sess.ContainerName {
 		t.Errorf("ContainerName = %q, want %q", got.ContainerName, sess.ContainerName)
-	}
-	if got.TmuxSession != sess.TmuxSession {
-		t.Errorf("TmuxSession = %q, want %q", got.TmuxSession, sess.TmuxSession)
 	}
 	if got.Yolo != sess.Yolo {
 		t.Errorf("Yolo = %v, want %v", got.Yolo, sess.Yolo)

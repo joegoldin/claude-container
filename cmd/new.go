@@ -12,7 +12,6 @@ import (
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
-	"github.com/joegoldin/claude-container/internal/tmux"
 	"github.com/joegoldin/claude-container/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -169,10 +168,7 @@ func createSession(opts createOpts) error {
 		}
 	}
 
-	// f. Build docker run args.
-	// Each container gets its own config subdir so the container's Claude Code
-	// config files (owned by container UID) don't conflict with host-side
-	// sessions.json.
+	// f. Build docker run args and create container (detached).
 	containerConfigDir := store.ContainerConfigDir(name)
 	if err := os.MkdirAll(containerConfigDir, 0o755); err != nil {
 		return fmt.Errorf("create container config dir: %w", err)
@@ -190,10 +186,9 @@ func createSession(opts createOpts) error {
 		Continue:        opts.cont,
 	})
 
-	// g. Create tmux session running docker.
-	fullCmd := append([]string{"docker"}, dockerArgs...)
-	if err := tmux.Create(name, workspace, fullCmd); err != nil {
-		return fmt.Errorf("create tmux session: %w", err)
+	// g. Run container in detached mode.
+	if err := docker.Run(dockerArgs); err != nil {
+		return fmt.Errorf("create container: %w", err)
 	}
 
 	// h. Save session to store.
@@ -203,7 +198,6 @@ func createSession(opts createOpts) error {
 		WorktreePath:  workspace,
 		RepoPath:      repoRoot,
 		ContainerName: docker.ContainerName(name),
-		TmuxSession:   tmux.SessionName(name),
 		Yolo:          opts.yolo,
 		AutoRemove:    opts.autoRemove,
 		CreatedAt:     time.Now(),
@@ -219,13 +213,13 @@ func createSession(opts createOpts) error {
 		return nil
 	}
 
-	fmt.Printf("Session %q created. Attaching...\n", name)
+	fmt.Printf("Session %q created. Attaching (Ctrl+P,Ctrl+Q to detach)...\n", name)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	attachErr := tmux.Attach(ctx, name)
+	attachErr := docker.Attach(ctx, name)
 
-	// Auto-remove after detach if --rm was used and the session has ended.
-	if opts.autoRemove && !tmux.Exists(name) {
+	// Auto-remove after detach if --rm was used and container has exited.
+	if opts.autoRemove && !docker.IsRunning(name) {
 		removeSession(store, name)
 	}
 

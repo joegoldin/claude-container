@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joegoldin/claude-container/internal/config"
+	"github.com/joegoldin/claude-container/internal/docker"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
-	"github.com/joegoldin/claude-container/internal/tmux"
 	"github.com/joegoldin/claude-container/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -38,10 +38,10 @@ var rootCmd = &cobra.Command{
 			if dm.Attached() != "" {
 				attachName := dm.Attached()
 				ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-				_ = tmux.Attach(ctx, attachName)
+				_ = docker.Attach(ctx, attachName)
 				stop()
-				// Auto-remove if session was created with --rm and has ended.
-				if sess, err := store.Get(attachName); err == nil && sess.AutoRemove && !tmux.Exists(attachName) {
+				// Auto-remove if session was created with --rm and has exited.
+				if sess, err := store.Get(attachName); err == nil && sess.AutoRemove && !docker.IsRunning(attachName) {
 					removeSession(store, attachName)
 				}
 				continue // return to dashboard after detach
@@ -82,7 +82,7 @@ var rootCmd = &cobra.Command{
 				}
 				if !res.Background {
 					ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-					_ = tmux.Attach(ctx, res.Name)
+					_ = docker.Attach(ctx, res.Name)
 					stop()
 				}
 				continue

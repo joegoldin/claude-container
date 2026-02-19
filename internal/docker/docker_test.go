@@ -59,9 +59,9 @@ func TestRunArgs(t *testing.T) {
 		t.Errorf("RunArgs should not contain --rm, got %v", args)
 	}
 
-	// Must have -it.
-	if !slices.Contains(args, "-it") {
-		t.Errorf("RunArgs missing -it in %v", args)
+	// Must have -dit (detached interactive TTY).
+	if !slices.Contains(args, "-dit") {
+		t.Errorf("RunArgs missing -dit in %v", args)
 	}
 
 	// Volume mounts.

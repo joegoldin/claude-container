@@ -16,7 +16,7 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        vendorHash = "sha256-/j3feGw2tK1jN65ld/vQn6LNgftvUP+fxLgG+TTxrrY=";
+        vendorHash = "sha256-R2ZdV4TED0zp/nQUcxo1uvXQxPljlRg5CCCiwN6+3aY=";
       in
       {
         packages.default = self.packages.${system}.claude-container;
@@ -50,7 +50,6 @@
                 pkgs.lib.makeBinPath (
                   with pkgs;
                   [
-                    tmux
                     git
                     docker
                   ]
@@ -90,7 +89,6 @@
           buildInputs = with pkgs; [
             go
             gopls
-            tmux
             git
             docker
           ];
