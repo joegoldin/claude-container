@@ -39,7 +39,13 @@ var attachCmd = &cobra.Command{
 				return fmt.Errorf("start container: %w", err)
 			}
 		default:
-			fmt.Println("Recreating container with --continue...")
+			// Container is gone — recreate it. Use --resume if we have a
+			// saved session ID, otherwise fall back to --continue.
+			if sess.ResumeID != "" {
+				fmt.Printf("Recreating container with --resume %s...\n", sess.ResumeID)
+			} else {
+				fmt.Println("Recreating container with --continue...")
+			}
 			detachedArgs := docker.RunArgs(docker.RunOpts{
 				Name:           name,
 				Workspace:      sess.WorktreePath,
@@ -49,7 +55,8 @@ var attachCmd = &cobra.Command{
 				UID:            os.Getuid(),
 				GID:            os.Getgid(),
 				Yolo:           sess.Yolo,
-				Continue:       true,
+				Resume:         sess.ResumeID,
+				Continue:       sess.ResumeID == "", // only if no resume ID
 			}, true)
 			startCmd := exec.Command("docker", detachedArgs...)
 			startCmd.Stderr = os.Stderr
@@ -58,13 +65,15 @@ var attachCmd = &cobra.Command{
 			}
 		}
 
-		return proxy.Run(proxy.Opts{
+		proxyErr := proxy.Run(proxy.Opts{
 			DockerArgs:    []string{"attach", containerName},
 			ContainerName: containerName,
 			StatusBar:     proxy.StatusBarInfo{Name: name, Branch: sess.Branch, Yolo: sess.Yolo},
 			AutoRemove:    sess.AutoRemove,
 			Cleanup:       func(_ string) { removeSession(store, name) },
 		})
+		saveResumeID(store, name)
+		return proxyErr
 	},
 }
 

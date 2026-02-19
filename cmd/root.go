@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joegoldin/claude-container/internal/config"
@@ -40,11 +41,35 @@ var rootCmd = &cobra.Command{
 			if dm.Attached() != "" {
 				attachName := dm.Attached()
 				sess, _ := store.Get(attachName)
-				var dockerArgs []string
+				containerName := docker.ContainerName(attachName)
 				if docker.IsRunning(attachName) {
-					dockerArgs = []string{"attach", docker.ContainerName(attachName)}
+					// Already running, just attach.
 				} else if docker.Exists(attachName) {
-					dockerArgs = []string{"start", "-ai", docker.ContainerName(attachName)}
+					// Stopped, restart it.
+					if err := docker.Start(attachName); err != nil {
+						fmt.Fprintf(os.Stderr, "error: start container: %v\n", err)
+						continue
+					}
+				} else if sess != nil {
+					// Container gone — recreate with resume or continue.
+					runOpts := docker.RunOpts{
+						Name:           attachName,
+						Workspace:      sess.WorktreePath,
+						ConfigDir:      store.ClaudeConfigDir(),
+						HostClaudeDir:  config.HostClaudeDir(),
+						HostClaudeJSON: config.HostClaudeJSON(),
+						UID:            os.Getuid(),
+						GID:            os.Getgid(),
+						Yolo:           sess.Yolo,
+						Resume:         sess.ResumeID,
+						Continue:       sess.ResumeID == "",
+					}
+					startCmd := exec.Command("docker", docker.RunArgs(runOpts, true)...)
+					startCmd.Stderr = os.Stderr
+					if err := startCmd.Run(); err != nil {
+						fmt.Fprintf(os.Stderr, "error: recreate container: %v\n", err)
+						continue
+					}
 				} else {
 					continue
 				}
@@ -56,14 +81,14 @@ var rootCmd = &cobra.Command{
 					yolo = sess.Yolo
 					autoRemove = sess.AutoRemove
 				}
-				containerName := docker.ContainerName(attachName)
 				_ = proxy.Run(proxy.Opts{
-					DockerArgs:    dockerArgs,
+					DockerArgs:    []string{"attach", containerName},
 					ContainerName: containerName,
 					StatusBar:     proxy.StatusBarInfo{Name: attachName, Branch: branch, Yolo: yolo},
 					AutoRemove:    autoRemove,
 					Cleanup:       func(_ string) { removeSession(store, attachName) },
 				})
+				saveResumeID(store, attachName)
 				continue
 			}
 
@@ -102,18 +127,13 @@ var rootCmd = &cobra.Command{
 				}
 				if !res.Background {
 					cn := docker.ContainerName(res.Name)
-					var dockerArgs []string
-					if docker.IsRunning(res.Name) {
-						dockerArgs = []string{"attach", cn}
-					} else {
-						dockerArgs = []string{"start", "-ai", cn}
-					}
 					_ = proxy.Run(proxy.Opts{
-						DockerArgs:    dockerArgs,
+						DockerArgs:    []string{"attach", cn},
 						ContainerName: cn,
 						StatusBar:     proxy.StatusBarInfo{Name: res.Name, Yolo: res.Yolo},
 						Cleanup:       func(_ string) { removeSession(store, res.Name) },
 					})
+					saveResumeID(store, res.Name)
 				}
 				continue
 			}

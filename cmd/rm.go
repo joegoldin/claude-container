@@ -44,6 +44,21 @@ func removeSession(store *config.Store, name string) {
 	}
 }
 
+// saveResumeID parses the container logs for a Claude resume session ID
+// and saves it to the session record for future reattach.
+func saveResumeID(store *config.Store, name string) {
+	id := docker.ParseResumeID(name)
+	if id == "" {
+		return
+	}
+	sess, err := store.Get(name)
+	if err != nil {
+		return
+	}
+	sess.ResumeID = id
+	_ = store.Save(sess)
+}
+
 func init() {
 	rootCmd.AddCommand(rmCmd)
 }

@@ -228,11 +228,14 @@ func createSession(opts createOpts) error {
 		return fmt.Errorf("start container: %w", err)
 	}
 	fmt.Printf("Session %q created.\n", name)
-	return proxy.Run(proxy.Opts{
+	proxyErr := proxy.Run(proxy.Opts{
 		DockerArgs:    []string{"attach", containerName},
 		ContainerName: containerName,
 		StatusBar:     proxy.StatusBarInfo{Name: name, Branch: branch, Yolo: opts.yolo},
 		AutoRemove:    opts.autoRemove,
 		Cleanup:       func(_ string) { removeSession(store, name) },
 	})
+	// Save resume ID from container logs so future reattach uses --resume.
+	saveResumeID(store, name)
+	return proxyErr
 }

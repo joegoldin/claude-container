@@ -30,6 +30,7 @@ type Session struct {
 	ContainerName string    `json:"container_name"`
 	Yolo          bool      `json:"yolo"`
 	AutoRemove    bool      `json:"auto_remove,omitempty"`
+	ResumeID      string    `json:"resume_id,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 

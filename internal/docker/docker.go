@@ -30,6 +30,7 @@ type RunOpts struct {
 	Yolo           bool
 	Prompt         string
 	Continue       bool
+	Resume         string // claude --resume <id>
 }
 
 // BuildArgs returns the docker build command arguments for the given
@@ -78,7 +79,9 @@ func RunArgs(opts RunOpts, detached bool) []string {
 	if opts.Yolo {
 		args = append(args, "--dangerously-skip-permissions")
 	}
-	if opts.Continue {
+	if opts.Resume != "" {
+		args = append(args, "--resume", opts.Resume)
+	} else if opts.Continue {
 		args = append(args, "--continue")
 	}
 	if opts.Prompt != "" {
@@ -203,6 +206,24 @@ func Build(contextDir string) *exec.Cmd {
 
 // ansiRe matches ANSI escape sequences (CSI, OSC, and single-character escapes).
 var ansiRe = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07]*\x07|\([A-Z])`)
+
+// resumeRe matches "claude --resume <uuid>" in container output.
+var resumeRe = regexp.MustCompile(`claude\s+--resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})`)
+
+// ParseResumeID extracts the Claude resume session ID from container logs.
+// It looks for the last occurrence of "claude --resume <uuid>" in the output.
+func ParseResumeID(session string) string {
+	output, err := LogsTail(session, 50)
+	if err != nil {
+		return ""
+	}
+	matches := resumeRe.FindAllStringSubmatch(output, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	// Return the last match (most recent resume ID).
+	return matches[len(matches)-1][1]
+}
 
 // StripANSI removes ANSI escape sequences from s.
 func StripANSI(s string) string {
