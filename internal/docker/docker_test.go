@@ -398,3 +398,77 @@ func TestRunArgsNoProxy(t *testing.T) {
 		t.Errorf("unexpected --network in non-proxy args: %v", args)
 	}
 }
+
+func TestTaskRunArgs(t *testing.T) {
+	opts := RunOpts{
+		Name:      "task-test",
+		Workspace: "/home/user/project",
+		ConfigDir: "/home/user/.config/claude",
+		UID:       1000,
+		GID:       1000,
+		Prompt:    "fix the tests",
+	}
+	args := TaskRunArgs(opts, "", 0)
+	joined := strings.Join(args, " ")
+
+	// Must have -d (detached, no TTY).
+	if !slices.Contains(args, "-d") {
+		t.Errorf("TaskRunArgs missing -d in %v", args)
+	}
+	// Must NOT have -it or -dit.
+	for _, a := range args {
+		if a == "-it" || a == "-dit" {
+			t.Errorf("TaskRunArgs should not have %s in %v", a, args)
+		}
+	}
+	// Must have -p flag for print mode.
+	if !slices.Contains(args, "-p") {
+		t.Errorf("TaskRunArgs missing -p in %v", args)
+	}
+	// Must have --output-format stream-json.
+	if !strings.Contains(joined, "--output-format stream-json") {
+		t.Errorf("TaskRunArgs missing --output-format stream-json in %v", args)
+	}
+	// Must have --dangerously-skip-permissions (task mode always uses yolo).
+	if !slices.Contains(args, "--dangerously-skip-permissions") {
+		t.Errorf("TaskRunArgs missing --dangerously-skip-permissions in %v", args)
+	}
+	// Prompt should be last.
+	if args[len(args)-1] != "fix the tests" {
+		t.Errorf("TaskRunArgs last arg = %q, want prompt", args[len(args)-1])
+	}
+}
+
+func TestTaskRunArgsModel(t *testing.T) {
+	opts := RunOpts{
+		Name:      "model-test",
+		Workspace: "/tmp/ws",
+		ConfigDir: "/tmp/cfg",
+		UID:       1000,
+		GID:       1000,
+		Prompt:    "hello",
+	}
+	args := TaskRunArgs(opts, "sonnet", 0)
+	joined := strings.Join(args, " ")
+
+	if !strings.Contains(joined, "--model sonnet") {
+		t.Errorf("TaskRunArgs missing --model sonnet in %v", args)
+	}
+}
+
+func TestTaskRunArgsMaxTurns(t *testing.T) {
+	opts := RunOpts{
+		Name:      "turns-test",
+		Workspace: "/tmp/ws",
+		ConfigDir: "/tmp/cfg",
+		UID:       1000,
+		GID:       1000,
+		Prompt:    "hello",
+	}
+	args := TaskRunArgs(opts, "", 5)
+	joined := strings.Join(args, " ")
+
+	if !strings.Contains(joined, "--max-turns 5") {
+		t.Errorf("TaskRunArgs missing --max-turns 5 in %v", args)
+	}
+}

@@ -170,6 +170,78 @@ func RunArgs(opts RunOpts, detached bool) []string {
 	return args
 }
 
+// TaskRunArgs returns docker run arguments for a non-interactive task container.
+// The container runs detached (-d, no TTY) with claude in print mode (-p) and
+// stream-json output. The model and maxTurns parameters are passed through to
+// Claude CLI when non-empty/non-zero.
+func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
+	name := ContainerName(opts.Name)
+
+	args := []string{
+		"run",
+		"--name", name,
+		"-d",
+	}
+
+	if opts.Workspace != "" {
+		args = append(args, "-v", opts.Workspace+":/workspace")
+	}
+	for _, ws := range opts.ExtraWorkspaces {
+		base := filepath.Base(ws)
+		args = append(args, "-v", ws+":/workspace/"+base)
+	}
+
+	if opts.ProxyProfile != "" {
+		proxyContainer := "claude-proxy_" + opts.ProxyProfile
+		network := "claude-proxy-net_" + opts.ProxyProfile
+		args = append(args,
+			"--network", network,
+			"-e", fmt.Sprintf("HTTP_PROXY=http://%s:8080", proxyContainer),
+			"-e", fmt.Sprintf("HTTPS_PROXY=http://%s:8080", proxyContainer),
+		)
+		if opts.ProxyCACertDir != "" {
+			args = append(args,
+				"-v", opts.ProxyCACertDir+":/proxy-ca:ro",
+				"-e", "SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
+				"-e", "NIX_SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
+				"-e", "NODE_EXTRA_CA_CERTS=/proxy-ca/mitmproxy-ca-cert.pem",
+			)
+		}
+	}
+
+	args = append(args,
+		"-v", opts.ConfigDir+":/claude",
+		"-e", "CLAUDE_CONFIG_DIR=/claude",
+		"-e", fmt.Sprintf("USER_UID=%d", opts.UID),
+		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
+	)
+
+	if opts.HostClaudeDir != "" {
+		args = append(args, "-v", opts.HostClaudeDir+":/mnt/claude-host:ro")
+	}
+	if opts.HostClaudeJSON != "" {
+		args = append(args, "-v", opts.HostClaudeJSON+":/mnt/claude-host-json:ro")
+	}
+
+	args = append(args, ImageTag(), "claude",
+		"-p",
+		"--output-format", "stream-json",
+		"--dangerously-skip-permissions",
+	)
+
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	if maxTurns > 0 {
+		args = append(args, "--max-turns", fmt.Sprintf("%d", maxTurns))
+	}
+	if opts.Prompt != "" {
+		args = append(args, opts.Prompt)
+	}
+
+	return args
+}
+
 // ShellArgs returns the docker run command arguments for an ephemeral
 // debug shell. Unlike RunArgs the container IS created with --rm.
 func ShellArgs(workspace, configDir, hostClaudeDir, hostClaudeJSON string, uid, gid int) []string {
