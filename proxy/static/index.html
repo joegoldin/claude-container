@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Proxy</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>Claude Proxy</h1>
+        <nav>
+            <button class="tab active" data-tab="pending">Pending</button>
+            <button class="tab" data-tab="rules">Rules</button>
+        </nav>
+    </header>
+
+    <main>
+        <section id="pending-view" class="view active">
+            <div id="pending-list" class="card-list">
+                <p class="empty-state">No pending requests.</p>
+            </div>
+        </section>
+
+        <section id="rules-view" class="view">
+            <div id="rules-table-wrap">
+                <table id="rules-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Pattern</th>
+                            <th>Label</th>
+                            <th>Expires</th>
+                            <th>Source</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="rules-body">
+                        <tr class="empty-row">
+                            <td colspan="6">No rules configured.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <div id="status-bar">
+        <span id="ws-status">Connecting...</span>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

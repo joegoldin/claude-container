@@ -46,7 +46,8 @@ class ProxyAddon:
             flow.kill()
             return
 
-        # Unknown — hold the flow as pending
+        # Unknown — intercept and hold the flow as pending
+        flow.intercept()
         entry = {
             "flow": flow,
             "flow_id": flow.id,
@@ -90,6 +91,8 @@ class ProxyAddon:
 
         if action == "deny":
             entry["flow"].kill()
+        else:
+            entry["flow"].resume()
 
         return True
 
