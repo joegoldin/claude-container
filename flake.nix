@@ -38,6 +38,8 @@
               ;
           };
 
+          proxyImage = pkgs.callPackage ./nix/proxy-image.nix { };
+
           cli = pkgs.symlinkJoin {
             name = "claude-container";
             paths = [ self.packages.${system}.claude-container-unwrapped ];
@@ -54,14 +56,16 @@
                   )
                 } \
                 --set CLAUDE_CONTAINER_IMAGE_TARBALL "${image}" \
-                --set CLAUDE_CONTAINER_IMAGE_TAG "claude-code:nix"
+                --set CLAUDE_CONTAINER_IMAGE_TAG "claude-code:nix" \
+                --set CLAUDE_PROXY_IMAGE_TARBALL "${proxyImage}" \
+                --set CLAUDE_PROXY_IMAGE_TAG "claude-proxy:nix"
 
               # Create yacc alias pointing to wrapped binary
               ln -sf $out/bin/claude-container $out/bin/yacc
             '';
           };
         in
-        { inherit image cli; };
+        { inherit image proxyImage cli; };
     }
     // flake-utils.lib.eachDefaultSystem (
       system:
@@ -81,6 +85,7 @@
         packages.default = defaultContainer.cli;
         packages.claude-container = defaultContainer.cli;
         packages.claude-container-image = defaultContainer.image;
+        packages.claude-proxy-image = defaultContainer.proxyImage;
 
         packages.claude-container-unwrapped = pkgs.buildGoModule {
           pname = "claude-container";
