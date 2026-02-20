@@ -16,6 +16,7 @@ claude-container - run multiple Claude Code instances in isolated containers
 claude-container                          # TUI dashboard
 claude-container run [flags]              # quick-start in current dir
 claude-container work [flags]             # quick-start with worktree
+claude-container task [flags]             # run task, print result to stdout
 claude-container new [flags]              # create session (wizard)
 claude-container ps [--json]              # list sessions
 claude-container attach <session>         # attach to session
@@ -51,13 +52,17 @@ Code, common Unix tools, and baked-in sandbox settings.
 ## GETTING STARTED
 
 ```sh
-claude-container auth          # authenticate Claude Code (once)
+claude-container auth          # authenticate (once, or use host ~/.claude/)
 claude-container doctor        # verify everything is set up
-claude-container run --yolo    # quick-start a session
+claude-container run --yolo    # quick-start an interactive session
 ```
 
 The Docker image is loaded automatically on first use from the Nix-built
 tarball. No manual `build` step is required.
+
+If you have already authenticated Claude Code on the host (credentials in
+`~/.claude/`), those credentials are automatically mounted into containers --
+no separate auth step needed.
 
 ## COMMANDS
 
@@ -79,6 +84,7 @@ Available Commands:
   run         Quick-start a session in the current directory
   shell       Drop into a bash shell in a container
   stop        Stop a session (keep worktree)
+  task        Run a task and print the result to stdout
   work        Quick-start an isolated worktree session
   workspace   Manage named workspace definitions
 ```
@@ -95,19 +101,20 @@ Usage:
   claude-container run [flags]
 
 Flags:
-      --allow-domain stringArray   Add domain to sandbox allowlist
-  -b, --background                 Don't attach after creation
-  -w, --mount stringArray          Additional folders to mount (repeatable)
-      --name string                Session name (auto-generated if omitted)
-      --profile string             Sandbox profile: low, med, high (default "med")
-  -p, --prompt string              Initial prompt to send to Claude
-      --deny-path stringArray      Add path to sandbox deny list
-      --rm                         Auto-remove session when it exits
-  -W, --workspace string           Named workspace from workspaces.json
-      --yolo                       Skip permission prompts
-      --network-sandbox string   Network enforcement: proxy, claude, both, none (default "claude")
-      --proxy-profile string     Proxy rule profile name (default "default")
-      --proxy-port int           Dashboard port on host (default 8081)
+      --allow-command stringArray   Add command pattern to allow list (e.g., 'docker *')
+      --allow-domain stringArray    Add domain to proxy allowlist
+  -b, --background                  Don't attach after creation
+      --deny-command stringArray    Add command pattern to deny list (e.g., 'rm -rf *')
+      --deny-path stringArray       Add path to permissions deny list
+  -w, --mount stringArray           Additional folders to mount (repeatable)
+      --name string                 Session name (auto-generated if omitted)
+      --profile string              Sandbox profile: low, default, med, high (default "default")
+  -p, --prompt string               Initial prompt to send to Claude
+      --proxy-port int              Dashboard port on host (0 = auto-assign)
+      --proxy-profile string        Proxy rule profile name (default "default")
+      --rm                          Auto-remove session when it exits
+  -W, --workspace string            Named workspace from workspaces.json
+      --yolo                        Skip permission prompts
 ```
 
 ### work
@@ -122,21 +129,54 @@ Usage:
   claude-container work [flags]
 
 Flags:
-      --allow-domain stringArray   Add domain to sandbox allowlist
-  -b, --background                 Don't attach after creation
-      --from string                Base branch for worktree (default: current HEAD)
-  -w, --mount stringArray          Additional folders to mount (repeatable)
-      --name string                Session name (auto-generated if omitted)
-      --profile string             Sandbox profile: low, med, high (default "med")
-  -p, --prompt string              Initial prompt to send to Claude
-      --deny-path stringArray      Add path to sandbox deny list
-      --rm                         Auto-remove session when it exits
-  -W, --workspace string           Named workspace from workspaces.json
-      --yolo                       Skip permission prompts
-      --network-sandbox string   Network enforcement: proxy, claude, both, none (default "claude")
-      --proxy-profile string     Proxy rule profile name (default "default")
-      --proxy-port int           Dashboard port on host (default 8081)
+      --allow-command stringArray   Add command pattern to allow list (e.g., 'docker *')
+      --allow-domain stringArray    Add domain to proxy allowlist
+  -b, --background                  Don't attach after creation
+      --deny-command stringArray    Add command pattern to deny list (e.g., 'rm -rf *')
+      --deny-path stringArray       Add path to permissions deny list
+      --from string                 Base branch for worktree (default: current HEAD)
+  -w, --mount stringArray           Additional folders to mount (repeatable)
+      --name string                 Session name (auto-generated if omitted)
+      --profile string              Sandbox profile: low, default, med, high (default "default")
+  -p, --prompt string               Initial prompt to send to Claude
+      --proxy-port int              Dashboard port on host (0 = auto-assign)
+      --proxy-profile string        Proxy rule profile name (default "default")
+      --rm                          Auto-remove session when it exits
+  -W, --workspace string            Named workspace from workspaces.json
+      --yolo                        Skip permission prompts
 ```
+
+### task
+
+Run Claude non-interactively. Final output goes to stdout (pipeable).
+Summary (changed files, duration, tokens) goes to stderr.
+
+<!-- Generated from: claude-container task --help -->
+
+```
+Usage:
+  claude-container task [flags]
+
+Flags:
+      --allow-command stringArray   Add command pattern to allow list
+      --allow-domain stringArray    Add domain to proxy allowlist
+      --deny-command stringArray    Add command pattern to deny list
+      --deny-path stringArray       Add path to permissions deny list
+      --keep                        Keep session after completion (default: ephemeral)
+      --max-turns int               Max agentic turns (passed to Claude CLI)
+      --model string                Model to use (passed to Claude CLI)
+  -w, --mount stringArray           Additional folders to mount
+      --name string                 Session name (auto-generated if omitted)
+      --profile string              Sandbox profile: low, default, med, high (default "default")
+  -p, --prompt string               Task prompt (required)
+      --proxy-port int              Dashboard port on host (0 = auto-assign)
+      --proxy-profile string        Proxy rule profile name (default "default")
+  -W, --workspace string            Named workspace from workspaces.json
+```
+
+Sessions are ephemeral by default -- the container and session record are
+removed after Claude finishes. Use `--keep` to persist the session for
+later inspection with `attach` or `logs`.
 
 ### new
 
@@ -150,23 +190,24 @@ Usage:
   claude-container new [flags]
 
 Flags:
-      --allow-domain stringArray   Add domain to sandbox allowlist
-  -b, --background                 Don't attach after creation
-  -c, --continue                   Resume previous conversation
-      --from string                Base branch for worktree (default: current HEAD)
-  -w, --mount stringArray          Additional folders to mount (repeatable)
-      --name string                Session name
-      --no-worktree                Use current directory directly
-      --profile string             Sandbox profile: low, med, high (default "med")
-  -p, --prompt string              Initial prompt to send to Claude
-      --deny-path stringArray      Add path to sandbox deny list
-      --rm                         Auto-remove session when it exits
-  -W, --workspace string           Named workspace from workspaces.json
-      --worktree string            Create worktree on new branch
-      --yolo                       Skip permission prompts
-      --network-sandbox string   Network enforcement: proxy, claude, both, none (default "claude")
-      --proxy-profile string     Proxy rule profile name (default "default")
-      --proxy-port int           Dashboard port on host (default 8081)
+      --allow-command stringArray   Add command pattern to allow list (e.g., 'docker *')
+      --allow-domain stringArray    Add domain to proxy allowlist
+  -b, --background                  Don't attach after creation
+  -c, --continue                    Resume previous conversation
+      --deny-command stringArray    Add command pattern to deny list (e.g., 'rm -rf *')
+      --deny-path stringArray       Add path to permissions deny list
+      --from string                 Base branch for worktree (default: current HEAD)
+  -w, --mount stringArray           Additional folders to mount (repeatable)
+      --name string                 Session name
+      --no-worktree                 Use current directory directly
+      --profile string              Sandbox profile: low, default, med, high (default "default")
+  -p, --prompt string               Initial prompt to send to Claude
+      --proxy-port int              Dashboard port on host (0 = auto-assign)
+      --proxy-profile string        Proxy rule profile name (default "default")
+      --rm                          Auto-remove session when it exits
+  -W, --workspace string            Named workspace from workspaces.json
+      --worktree string             Create worktree on new branch
+      --yolo                        Skip permission prompts
 ```
 
 The interactive wizard asks:
@@ -399,17 +440,20 @@ Session state and authentication are stored at `$XDG_CONFIG_HOME/claude-containe
 
 ## SANDBOX PROFILES
 
-Three built-in profiles control sandbox security:
+Four built-in profiles control sandbox security:
 
     low        sandbox off, unrestricted network, full filesystem
-    med        sandbox on, allowlisted domains, deny sensitive paths (default)
+    default    sandbox on, allowlisted domains, deny sensitive paths (default)
+    med        same as default
     high       sandbox on, Anthropic API only, /workspace only
 
-Use `--profile` to select, `--allow-domain` and `--deny-path` to customize:
+Use `--profile` to select, `--allow-domain`, `--deny-path`, `--allow-command`,
+and `--deny-command` to customize:
 
 ```sh
 claude-container run --profile=high --allow-domain=github.com
 claude-container work -w ~/code/a --profile=low
+claude-container run --allow-command='docker *' --deny-command='rm -rf *'
 ```
 
 `--yolo` is equivalent to `--profile=low`.
@@ -419,29 +463,14 @@ claude-container work -w ~/code/a --profile=low
 An HTTP/HTTPS proxy sidecar can sit between Claude and the internet, providing
 interactive network access control with a web dashboard.
 
-### Modes
-
-The `--network-sandbox` flag controls network enforcement:
-
-    proxy     proxy handles network, Claude sandbox allows all traffic
-    claude    Claude sandbox handles network (default)
-    both      both proxy and Claude sandbox enforce rules
-    none      no network restrictions
-
 ### Usage
 
 ```sh
-# Start with proxy-based network control
-claude-container run --network-sandbox=proxy
-
-# Open dashboard at http://localhost:8081
-# Pending requests appear as cards — allow or deny with pattern presets
-
-# Custom profile name (share rules across sessions)
-claude-container run --network-sandbox=proxy --proxy-profile=work
+# Start with proxy — dashboard at http://localhost:<auto-port>
+claude-container run --proxy-profile=work
 
 # Custom dashboard port
-claude-container run --network-sandbox=proxy --proxy-port=9090
+claude-container run --proxy-profile=work --proxy-port=9090
 ```
 
 When unknown domains are accessed, the proxy holds the connection and notifies
@@ -450,9 +479,8 @@ with pattern-based rules that persist across sessions.
 
 ### Flags
 
-    --network-sandbox string    proxy, claude, both, none (default "claude")
     --proxy-profile string      Rule profile name (default "default")
-    --proxy-port int            Dashboard port on host (default 8081)
+    --proxy-port int            Dashboard port on host (0 = auto-assign)
 
 ### Proxy reuse
 
@@ -463,13 +491,15 @@ is stopped only when the last session using it is removed.
 
 ## ENVIRONMENT
 
-    CLAUDE_CONTAINER_IMAGE_TARBALL    path to Nix-built OCI image tarball
-                                      (set by nix wrapper)
-    CLAUDE_CONTAINER_IMAGE_TAG        docker image tag (set by nix wrapper)
-    XDG_CONFIG_HOME                   base config directory
-    CLAUDE_PROXY_IMAGE_TARBALL    path to Nix-built proxy image tarball
-                                      (set by nix wrapper)
-    CLAUDE_PROXY_IMAGE_TAG        proxy docker image tag (set by nix wrapper)
+    CLAUDE_CONTAINER_IMAGE_TARBALL           path to Nix-built OCI image tarball
+                                             (set by nix wrapper)
+    CLAUDE_CONTAINER_IMAGE_TAG               docker image tag (set by nix wrapper)
+    CLAUDE_PROXY_IMAGE_TARBALL               path to Nix-built proxy image tarball
+                                             (set by nix wrapper)
+    CLAUDE_PROXY_IMAGE_TAG                   proxy docker image tag (set by nix wrapper)
+    CLAUDE_CONTAINER_EXTRA_ALLOW_COMMANDS    JSON array of command patterns to allow
+                                             (set by nix wrapper from extraPackages)
+    XDG_CONFIG_HOME                          base config directory
 
 ## INSTALL
 
@@ -506,12 +536,17 @@ let
     inherit pkgs;
     claude-code = pkgs.llm-agents.claude-code;
     extraPackages = with pkgs; [ ripgrep fd nodejs ];
+    extraAllowCommands = [ "docker *" "kubectl *" ];  # optional
     settings = { /* settings.json content */ };
   };
 in {
   home.packages = [ cc.cli ];
 }
 ```
+
+Commands from `extraPackages` are automatically derived (using `meta.mainProgram`
+or `pname`) and added to the sandbox allow list. Use `extraAllowCommands` for
+additional patterns that aren't covered by a package.
 
 ### Build from source
 
@@ -582,6 +617,19 @@ claude-container work
 # Worktree session from a specific branch
 claude-container work --from release-2.0
 
+# Run a one-shot task, pipe output
+claude-container task -p "fix the failing tests"
+
+# Task with model and max turns
+claude-container task -p "add input validation" --model sonnet --max-turns 10
+
+# Task output piped to a file
+claude-container task -p "explain the auth module" > explanation.md
+
+# Keep task session for inspection
+claude-container task -p "refactor auth" --keep
+claude-container attach myproject-calm-reef
+
 # Launch the TUI dashboard
 claude-container
 
@@ -603,6 +651,9 @@ claude-container run --profile=high --allow-domain=github.com
 
 # Low security (same as --yolo)
 claude-container run --profile=low
+
+# Allow extra commands in the sandbox
+claude-container run --allow-command='docker *' --allow-command='kubectl *'
 
 # List sessions
 claude-container ps
@@ -639,9 +690,9 @@ claude-container gc --all
 claude-container gc --auth
 
 # Run with proxy-based network control
-claude-container run --network-sandbox=proxy
+claude-container run --proxy-profile=work
 
 # Share proxy rules across sessions
-claude-container run --network-sandbox=proxy --proxy-profile=work
-claude-container run --network-sandbox=proxy --proxy-profile=work -p "another task"
+claude-container run --proxy-profile=work
+claude-container run --proxy-profile=work -p "another task"
 ```
