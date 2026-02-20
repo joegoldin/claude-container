@@ -24,6 +24,7 @@ claude-container rm <session>             # remove session
 claude-container logs [-f] <session>      # stream logs
 claude-container build                    # load docker image
 claude-container shell [workspace]        # debug shell
+claude-container workspace add|list|show|rm  # manage named workspaces
 claude-container auth                     # authenticate Claude Code
 claude-container doctor                   # check system health
 claude-container gc [--all] [--auth]      # garbage collect
@@ -79,6 +80,7 @@ Available Commands:
   shell       Drop into a bash shell in a container
   stop        Stop a session (keep worktree)
   work        Quick-start an isolated worktree session
+  workspace   Manage named workspace definitions
 ```
 
 ### run
@@ -93,11 +95,16 @@ Usage:
   claude-container run [flags]
 
 Flags:
-  -b, --background      Don't attach after creation
-      --name string     Session name (auto-generated if omitted)
-  -p, --prompt string   Initial prompt to send to Claude
-      --rm              Auto-remove session when it exits
-      --yolo            Skip permission prompts
+      --allow-domain stringArray   Add domain to sandbox allowlist
+  -b, --background                 Don't attach after creation
+  -w, --mount stringArray          Additional folders to mount (repeatable)
+      --name string                Session name (auto-generated if omitted)
+      --profile string             Sandbox profile: low, med, high (default "med")
+  -p, --prompt string              Initial prompt to send to Claude
+      --deny-path stringArray      Add path to sandbox deny list
+      --rm                         Auto-remove session when it exits
+  -W, --workspace string           Named workspace from workspaces.json
+      --yolo                       Skip permission prompts
 ```
 
 ### work
@@ -112,12 +119,17 @@ Usage:
   claude-container work [flags]
 
 Flags:
-  -b, --background      Don't attach after creation
-      --from string     Base branch for worktree (default: current HEAD)
-      --name string     Session name (auto-generated if omitted)
-  -p, --prompt string   Initial prompt to send to Claude
-      --rm              Auto-remove session when it exits
-      --yolo            Skip permission prompts
+      --allow-domain stringArray   Add domain to sandbox allowlist
+  -b, --background                 Don't attach after creation
+      --from string                Base branch for worktree (default: current HEAD)
+  -w, --mount stringArray          Additional folders to mount (repeatable)
+      --name string                Session name (auto-generated if omitted)
+      --profile string             Sandbox profile: low, med, high (default "med")
+  -p, --prompt string              Initial prompt to send to Claude
+      --deny-path stringArray      Add path to sandbox deny list
+      --rm                         Auto-remove session when it exits
+  -W, --workspace string           Named workspace from workspaces.json
+      --yolo                       Skip permission prompts
 ```
 
 ### new
@@ -132,15 +144,20 @@ Usage:
   claude-container new [flags]
 
 Flags:
-  -b, --background        Don't attach after creation
-  -c, --continue          Resume previous conversation
-      --from string       Base branch for worktree (default: current HEAD)
-      --name string       Session name
-      --no-worktree       Use current directory directly
-  -p, --prompt string     Initial prompt to send to Claude
-      --rm                Auto-remove session when it exits
-      --worktree string   Create worktree on new branch
-      --yolo              Skip permission prompts
+      --allow-domain stringArray   Add domain to sandbox allowlist
+  -b, --background                 Don't attach after creation
+  -c, --continue                   Resume previous conversation
+      --from string                Base branch for worktree (default: current HEAD)
+  -w, --mount stringArray          Additional folders to mount (repeatable)
+      --name string                Session name
+      --no-worktree                Use current directory directly
+      --profile string             Sandbox profile: low, med, high (default "med")
+  -p, --prompt string              Initial prompt to send to Claude
+      --deny-path stringArray      Add path to sandbox deny list
+      --rm                         Auto-remove session when it exits
+  -W, --workspace string           Named workspace from workspaces.json
+      --worktree string            Create worktree on new branch
+      --yolo                       Skip permission prompts
 ```
 
 The interactive wizard asks:
@@ -243,6 +260,21 @@ Drop into a bash shell inside an ephemeral container for debugging.
 ```
 Usage:
   claude-container shell [workspace] [flags]
+```
+
+### workspace
+
+Manage named workspace definitions (collections of folder paths).
+
+```
+Usage:
+  claude-container workspace [command]
+
+Available Commands:
+  add         Create or append paths to a named workspace
+  list        List all workspace names
+  show        Show paths in a workspace
+  rm          Remove a workspace definition
 ```
 
 ### auth
@@ -356,6 +388,23 @@ Key bindings:
 Session state and authentication are stored at `$XDG_CONFIG_HOME/claude-container/`
 (default `~/.config/claude-container/`).
 
+## SANDBOX PROFILES
+
+Three built-in profiles control sandbox security:
+
+    low        sandbox off, unrestricted network, full filesystem
+    med        sandbox on, allowlisted domains, deny sensitive paths (default)
+    high       sandbox on, Anthropic API only, /workspace only
+
+Use `--profile` to select, `--allow-domain` and `--deny-path` to customize:
+
+```sh
+claude-container run --profile=high --allow-domain=github.com
+claude-container work -w ~/code/a --profile=low
+```
+
+`--yolo` is equivalent to `--profile=low`.
+
 ## ENVIRONMENT
 
     CLAUDE_CONTAINER_IMAGE_TARBALL    path to Nix-built OCI image tarball
@@ -440,6 +489,7 @@ The nix package wraps the binary with `git` and `docker` on PATH and sets
 ## FILES
 
     ~/.config/claude-container/sessions.json        session metadata
+    ~/.config/claude-container/workspaces.json        named workspace definitions
     ~/.config/claude-container/worktrees/            git worktrees
     ~/.config/claude-container/claude-config/        shared Claude Code config
     ~/.config/claude-container/claude-config/.credentials.json   auth credentials
@@ -479,6 +529,19 @@ claude-container new
 
 # Create a session with flags (skip wizard)
 claude-container new --name auth --worktree feature-auth
+
+# Multi-folder workspace
+claude-container workspace add my-work ~/code/repo-a ~/code/repo-b
+claude-container run -W my-work
+
+# Ad-hoc multi-folder mount
+claude-container run -w ~/code/repo-a -w ~/code/repo-b
+
+# High security profile
+claude-container run --profile=high --allow-domain=github.com
+
+# Low security (same as --yolo)
+claude-container run --profile=low
 
 # List sessions
 claude-container ps
