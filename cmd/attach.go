@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
 	"github.com/joegoldin/claude-container/internal/proxy"
+	sandboxPkg "github.com/joegoldin/claude-container/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
@@ -73,22 +76,35 @@ func ensureRunning(store *config.Store, name string, sess *config.Session) error
 		}
 		return nil
 	default:
+		// Regenerate managed settings from stored profile.
+		profile := sess.Profile
+		if profile == "" {
+			profile = "med"
+		}
+		if prof, err := sandboxPkg.GetProfile(profile); err == nil {
+			settingsJSON, _ := json.MarshalIndent(
+				prof.ManagedSettings(sess.AllowDomains, sess.DenyPaths), "", "  ")
+			configDir := store.ClaudeConfigDir()
+			os.WriteFile(filepath.Join(configDir, "managed-settings.json"), settingsJSON, 0o644)
+		}
+
 		if sess.ResumeID != "" {
 			fmt.Printf("Recreating container with --resume %s...\n", sess.ResumeID)
 		} else {
 			fmt.Println("Recreating container with --continue...")
 		}
 		detachedArgs := docker.RunArgs(docker.RunOpts{
-			Name:           name,
-			Workspace:      sess.WorktreePath,
-			ConfigDir:      store.ClaudeConfigDir(),
-			HostClaudeDir:  config.HostClaudeDir(),
-			HostClaudeJSON: config.HostClaudeJSON(),
-			UID:            os.Getuid(),
-			GID:            os.Getgid(),
-			Yolo:           sess.Yolo,
-			Resume:         sess.ResumeID,
-			Continue:       sess.ResumeID == "",
+			Name:            name,
+			Workspace:       sess.WorktreePath,
+			ConfigDir:       store.ClaudeConfigDir(),
+			HostClaudeDir:   config.HostClaudeDir(),
+			HostClaudeJSON:  config.HostClaudeJSON(),
+			UID:             os.Getuid(),
+			GID:             os.Getgid(),
+			Yolo:            sess.Yolo,
+			Resume:          sess.ResumeID,
+			Continue:        sess.ResumeID == "",
+			ExtraWorkspaces: sess.ExtraWorkspaces,
 		}, true)
 		startCmd := exec.Command("docker", detachedArgs...)
 		startCmd.Stderr = os.Stderr
