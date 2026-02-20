@@ -98,6 +98,24 @@ Proxy profiles are named collections of allow/deny rules, stored as JSON at `~/.
 
 Multiple Claude sessions can share the same proxy profile. Rules added interactively in one session are immediately visible to other sessions using the same profile (the proxy reloads from disk or watches for changes).
 
+### Proxy Container Reuse
+
+Proxy containers are named by profile, not by session:
+- Container: `claude-proxy_<profile>`
+- Network: `claude-proxy-net_<profile>`
+
+When a session starts with proxy enabled:
+1. Check if `claude-proxy_<profile>` is already running → reuse it
+2. If not → create network, start proxy, wait for health
+3. Connect Claude container to the proxy's network
+
+When a session stops or is removed:
+1. Query session store for other sessions using the same proxy profile
+2. If none remain → stop proxy, remove network
+3. If others exist → leave proxy running
+
+This means multiple Claude instances with the same `--proxy-profile` share a single proxy process and see the same rules in real-time.
+
 ## CLI Integration
 
 ### New flags
