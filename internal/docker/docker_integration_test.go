@@ -10,8 +10,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/joegoldin/claude-container/internal/config"
+	"github.com/joegoldin/claude-container/internal/httpproxy"
 	"github.com/joegoldin/claude-container/internal/sandbox"
 )
 
@@ -65,6 +67,8 @@ type runContainerOpts struct {
 	UID             int
 	GID             int
 	Command         []string // command to run instead of "claude"
+	ProxyProfile    string   // connect to proxy network and set proxy env vars
+	ProxyCACertDir  string   // mount CA cert directory at /proxy-ca
 }
 
 // runContainer runs an ephemeral (--rm) container with diagnostic commands.
@@ -86,6 +90,24 @@ func runContainer(t *testing.T, opts runContainerOpts) containerResult {
 
 	if opts.ConfigDir != "" {
 		args = append(args, "-v", opts.ConfigDir+":/claude")
+	}
+
+	// Proxy network and env vars (mirrors RunArgs when ProxyProfile is set).
+	if opts.ProxyProfile != "" {
+		proxyContainer := "claude-proxy_" + opts.ProxyProfile
+		network := "claude-proxy-net_" + opts.ProxyProfile
+		args = append(args,
+			"--network", network,
+			"-e", fmt.Sprintf("HTTP_PROXY=http://%s:8080", proxyContainer),
+			"-e", fmt.Sprintf("HTTPS_PROXY=http://%s:8080", proxyContainer),
+		)
+		if opts.ProxyCACertDir != "" {
+			args = append(args,
+				"-v", opts.ProxyCACertDir+":/proxy-ca:ro",
+				"-e", "SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
+				"-e", "NIX_SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
+			)
+		}
 	}
 
 	args = append(args,
@@ -549,4 +571,200 @@ func TestIntegrationProfileYoloEquivalence(t *testing.T) {
 	if slices.Contains(argsNoYolo, "--dangerously-skip-permissions") {
 		t.Errorf("non-yolo RunArgs should not have --dangerously-skip-permissions in %v", argsNoYolo)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Proxy E2E tests — Claude container on proxy network
+// ---------------------------------------------------------------------------
+
+// skipIfProxyImageUnavailable skips the test when the proxy image is not loaded.
+func skipIfProxyImageUnavailable(t *testing.T) {
+	t.Helper()
+	if !httpproxy.ImageExists() {
+		t.Skipf("proxy image %q not loaded", httpproxy.ImageTag())
+	}
+}
+
+// waitForProxyDashboard polls the proxy dashboard health endpoint.
+func waitForProxyDashboard(t *testing.T, port int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	url := fmt.Sprintf("http://localhost:%d/api/health", port)
+	for time.Now().Before(deadline) {
+		cmd := exec.Command("curl", "-sf", "--max-time", "2", url)
+		if out, err := cmd.Output(); err == nil && strings.Contains(string(out), "ok") {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("proxy dashboard at port %d did not become healthy within %v", port, timeout)
+}
+
+// addProxyRule adds a rule to the proxy via the dashboard REST API.
+func addProxyRule(t *testing.T, port int, ruleType, pattern, label string) {
+	t.Helper()
+	url := fmt.Sprintf("http://localhost:%d/api/rules", port)
+	payload := fmt.Sprintf(`{"type":%q,"pattern":%q,"label":%q}`, ruleType, pattern, label)
+	cmd := exec.Command("curl", "-sf", "-X", "POST",
+		"-H", "Content-Type: application/json",
+		"-d", payload, url)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("addProxyRule: %v\noutput: %s", err, out)
+	}
+}
+
+// waitForCACert waits for the mitmproxy CA certificate to appear on the host.
+func waitForCACert(t *testing.T, configDir string, timeout time.Duration) string {
+	t.Helper()
+	certDir := httpproxy.CACertDir(configDir)
+	certPath := filepath.Join(certDir, "mitmproxy-ca-cert.pem")
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(certPath); err == nil {
+			return certDir
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("CA cert not generated within %v at %s", timeout, certPath)
+	return ""
+}
+
+// TestIntegrationProxyContainerSetup verifies that a Claude container started
+// with proxy settings has the correct environment, CA certs, and can route
+// traffic through the proxy sidecar.
+func TestIntegrationProxyContainerSetup(t *testing.T) {
+	// Use the Nix-built image which includes curl and all tools.
+	t.Setenv("CLAUDE_CONTAINER_IMAGE_TAG", "claude-code:nix")
+
+	skipIfDockerUnavailable(t)
+	skipIfProxyImageUnavailable(t)
+
+	profile := "docker-e2e"
+	configDir := makeConfigDir(t)
+	os.MkdirAll(filepath.Join(configDir, "proxy-profiles"), 0o755)
+
+	// Start the proxy sidecar.
+	started, port, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
+		Profile:       profile,
+		ConfigDir:     configDir,
+		DashboardPort: 0,
+	})
+	if err != nil {
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+	if !started {
+		t.Fatal("expected proxy to be freshly started")
+	}
+	t.Cleanup(func() { httpproxy.Stop(profile) })
+
+	waitForProxyDashboard(t, port, 30*time.Second)
+	caCertDir := waitForCACert(t, configDir, 30*time.Second)
+
+	proxyContainer := httpproxy.ContainerName(profile)
+
+	// Add allow rule for the proxy's own dashboard.
+	addProxyRule(t, port, "allow",
+		fmt.Sprintf(`^http://%s:8081(/.*)?$`, proxyContainer),
+		"proxy-dashboard")
+
+	uid := os.Getuid()
+	gid := os.Getgid()
+
+	t.Run("ProxyEnvVarsSet", func(t *testing.T) {
+		result := runContainer(t, runContainerOpts{
+			ConfigDir:    configDir,
+			UID:          uid,
+			GID:          gid,
+			ProxyProfile: profile,
+			Command:      []string{"sh", "-c", "env | sort"},
+		})
+		out := result.Stdout
+		wantHTTP := fmt.Sprintf("HTTP_PROXY=http://%s:8080", proxyContainer)
+		wantHTTPS := fmt.Sprintf("HTTPS_PROXY=http://%s:8080", proxyContainer)
+		if !strings.Contains(out, wantHTTP) {
+			t.Errorf("missing %s in env output:\n%s", wantHTTP, out)
+		}
+		if !strings.Contains(out, wantHTTPS) {
+			t.Errorf("missing %s in env output:\n%s", wantHTTPS, out)
+		}
+	})
+
+	t.Run("CACertMounted", func(t *testing.T) {
+		result := runContainer(t, runContainerOpts{
+			ConfigDir:      configDir,
+			UID:            uid,
+			GID:            gid,
+			ProxyProfile:   profile,
+			ProxyCACertDir: caCertDir,
+			Command:        []string{"ls", "/proxy-ca/mitmproxy-ca-cert.pem"},
+		})
+		if !strings.Contains(result.Stdout, "mitmproxy-ca-cert.pem") {
+			t.Errorf("CA cert not found at /proxy-ca/, got: %s", result.Stdout)
+		}
+	})
+
+	t.Run("SSLCertEnvOverridden", func(t *testing.T) {
+		result := runContainer(t, runContainerOpts{
+			ConfigDir:      configDir,
+			UID:            uid,
+			GID:            gid,
+			ProxyProfile:   profile,
+			ProxyCACertDir: caCertDir,
+			Command:        []string{"sh", "-c", "echo $SSL_CERT_FILE"},
+		})
+		got := strings.TrimSpace(result.Stdout)
+		want := "/proxy-ca/mitmproxy-ca-cert.pem"
+		if got != want {
+			t.Errorf("SSL_CERT_FILE = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("TrafficRoutedThroughProxy", func(t *testing.T) {
+		// Use --proxy flag (not env var) because curl requires lowercase http_proxy.
+		dashboardURL := fmt.Sprintf("http://%s:8081/api/health", proxyContainer)
+		proxyURL := fmt.Sprintf("http://%s:8080", proxyContainer)
+
+		result := runContainer(t, runContainerOpts{
+			ConfigDir:    configDir,
+			UID:          uid,
+			GID:          gid,
+			ProxyProfile: profile,
+			Command: []string{"curl", "-s", "--proxy", proxyURL,
+				"--max-time", "15", dashboardURL},
+		})
+		if !strings.Contains(result.Stdout, `"ok"`) {
+			t.Errorf("expected health response with 'ok', got: %s", result.Stdout)
+		}
+	})
+
+	t.Run("UnmatchedTrafficHeld", func(t *testing.T) {
+		proxyURL := fmt.Sprintf("http://%s:8080", proxyContainer)
+
+		// Curl should timeout because the proxy holds unmatched requests.
+		cmd := exec.Command("docker", "run", "--rm",
+			"--network", "claude-proxy-net_"+profile,
+			"-e", "CLAUDE_CONFIG_DIR=/claude",
+			"-e", fmt.Sprintf("USER_UID=%d", uid),
+			"-e", fmt.Sprintf("USER_GID=%d", gid),
+			"-v", configDir+":/claude",
+			ImageTag(),
+			"curl", "-s", "--proxy", proxyURL,
+			"--max-time", "5", "http://www.google.com/",
+		)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		start := time.Now()
+		err := cmd.Run()
+		elapsed := time.Since(start)
+
+		if err == nil {
+			t.Error("expected timeout for domain with no matching rule")
+		}
+		if elapsed < 4*time.Second {
+			t.Errorf("request finished in %v; expected proxy to hold until timeout (~5s)", elapsed)
+		}
+	})
 }
