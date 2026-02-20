@@ -23,15 +23,19 @@ const (
 
 // Session represents a single Claude Code container session.
 type Session struct {
-	Name          string    `json:"name"`
-	Branch        string    `json:"branch"`
-	WorktreePath  string    `json:"worktree_path"`
-	RepoPath      string    `json:"repo_path"`
-	ContainerName string    `json:"container_name"`
-	Yolo          bool      `json:"yolo"`
-	AutoRemove    bool      `json:"auto_remove,omitempty"`
-	ResumeID      string    `json:"resume_id,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	Name            string    `json:"name"`
+	Branch          string    `json:"branch"`
+	WorktreePath    string    `json:"worktree_path"`
+	RepoPath        string    `json:"repo_path"`
+	ContainerName   string    `json:"container_name"`
+	Yolo            bool      `json:"yolo"`
+	AutoRemove      bool      `json:"auto_remove,omitempty"`
+	ResumeID        string    `json:"resume_id,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	Profile         string    `json:"profile,omitempty"`
+	ExtraWorkspaces []string  `json:"extra_workspaces,omitempty"`
+	AllowDomains    []string  `json:"allow_domains,omitempty"`
+	DenyPaths       []string  `json:"deny_paths,omitempty"`
 }
 
 // Store provides thread-safe persistence of sessions to a JSON file.
