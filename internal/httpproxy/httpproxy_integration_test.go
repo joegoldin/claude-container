@@ -2,6 +2,7 @@ package httpproxy
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -227,4 +228,101 @@ func TestIntegrationE2EProxyTraffic(t *testing.T) {
 			t.Errorf("request finished in %v; expected proxy to hold until timeout (~5s)", elapsed)
 		}
 	})
+}
+
+// TestIntegrationE2EResolveWhileHeld verifies that a request blocked by the
+// proxy is released immediately when the dashboard resolve API is called.
+// This simulates clicking "Accept" in the dashboard while a request is pending.
+func TestIntegrationE2EResolveWhileHeld(t *testing.T) {
+	skipIfDockerUnavailable(t)
+
+	profile := "e2e-resolve"
+	configDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(configDir, "proxy-profiles"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := ProxyOpts{
+		Profile:       profile,
+		ConfigDir:     configDir,
+		DashboardPort: 0,
+	}
+
+	started, port, err := EnsureRunning(opts)
+	if err != nil {
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+	if !started {
+		t.Fatal("expected proxy to be freshly started")
+	}
+	t.Cleanup(func() { Stop(profile) })
+
+	waitForDashboard(t, port, 30*time.Second)
+
+	proxyContainer := ContainerName(profile)
+	network := NetworkName(profile)
+	proxyAddr := fmt.Sprintf("http://%s:8080", proxyContainer)
+	targetURL := fmt.Sprintf("http://%s:8081/api/health", proxyContainer)
+
+	// No rules — the request will be held by the proxy.
+
+	// Run curl in a background goroutine (it will block until resolved).
+	type curlResult struct {
+		output string
+		err    error
+	}
+	ch := make(chan curlResult, 1)
+	go func() {
+		out, err := curlViaProxyRaw(network, proxyAddr, targetURL, 30)
+		ch <- curlResult{out, err}
+	}()
+
+	// Poll the pending endpoint until our request appears.
+	var flowID string
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		cmd := exec.Command("curl", "-sf", "--max-time", "2",
+			fmt.Sprintf("http://localhost:%d/api/pending", port))
+		out, err := cmd.Output()
+		if err == nil {
+			var pending []map[string]any
+			if json.Unmarshal(out, &pending) == nil && len(pending) > 0 {
+				if id, ok := pending[0]["flow_id"].(string); ok {
+					flowID = id
+					break
+				}
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if flowID == "" {
+		t.Fatal("pending request did not appear within 15s")
+	}
+
+	// Resolve the pending request via the dashboard API (simulates "Accept").
+	allowPattern := fmt.Sprintf(`^http://%s:8081(/.*)?$`, proxyContainer)
+	resolvePayload := fmt.Sprintf(
+		`{"flow_id":%q,"action":"allow","pattern":%q,"label":"resolved-test"}`,
+		flowID, allowPattern)
+	resolveCmd := exec.Command("curl", "-sf", "-X", "POST",
+		"-H", "Content-Type: application/json",
+		"-d", resolvePayload,
+		fmt.Sprintf("http://localhost:%d/api/resolve", port))
+	resolveOut, err := resolveCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("resolve API call failed: %v\noutput: %s", err, resolveOut)
+	}
+
+	// The curl request should now complete successfully.
+	select {
+	case result := <-ch:
+		if result.err != nil {
+			t.Fatalf("curl failed after resolve: %v\noutput: %s", result.err, result.output)
+		}
+		if !strings.Contains(result.output, `"ok"`) {
+			t.Errorf("expected health response after resolve, got: %s", result.output)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("curl did not complete within 15s after resolve")
+	}
 }
