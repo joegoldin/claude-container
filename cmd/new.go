@@ -428,7 +428,12 @@ func createSession(opts createOpts) error {
 	proxyErr := proxy.Run(proxy.Opts{
 		DockerArgs:    []string{"attach", containerName},
 		ContainerName: containerName,
-		StatusBar:     proxy.StatusBarInfo{Name: name, Branch: branch, Yolo: profile == "low"},
+		StatusBar: proxy.StatusBarInfo{Name: name, Branch: branch, Yolo: profile == "low", ProxyPort: func() int {
+			if useProxy {
+				return opts.proxyPort
+			}
+			return 0
+		}()},
 		AutoRemove:    opts.autoRemove,
 		Cleanup:       func(_ string) { removeSession(store, name) },
 	})

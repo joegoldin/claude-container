@@ -55,7 +55,7 @@ var attachCmd = &cobra.Command{
 		proxyErr := proxy.Run(proxy.Opts{
 			DockerArgs:    []string{"attach", containerName},
 			ContainerName: containerName,
-			StatusBar:     proxy.StatusBarInfo{Name: name, Branch: sess.Branch, Yolo: sess.Yolo},
+			StatusBar:     proxy.StatusBarInfo{Name: name, Branch: sess.Branch, Yolo: sess.Yolo, ProxyPort: sess.ProxyPort},
 			AutoRemove:    sess.AutoRemove,
 			Cleanup:       func(_ string) { removeSession(store, name) },
 		})

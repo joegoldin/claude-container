@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/joegoldin/claude-container/internal/httpproxy"
 	"golang.org/x/term"
 )
 
@@ -31,9 +32,10 @@ func stripANSI(b []byte) []byte {
 
 // StatusBarInfo holds the data rendered in the status bar.
 type StatusBarInfo struct {
-	Name   string
-	Branch string
-	Yolo   bool
+	Name      string
+	Branch    string
+	Yolo      bool
+	ProxyPort int // if >0, poll proxy for pending count
 }
 
 // CleanupFunc is called after the container exits to perform resource cleanup
@@ -434,6 +436,15 @@ func renderStatusBar(w io.Writer, width, height int, info StatusBarInfo, prefixA
 	}
 	if info.Yolo {
 		parts = append(parts, "yolo")
+	}
+	if info.ProxyPort > 0 {
+		count := httpproxy.PendingCount(info.ProxyPort)
+		if count > 0 {
+			parts = append(parts, fmt.Sprintf("[!] proxy: %d pending", count))
+		} else if count == 0 {
+			parts = append(parts, "proxy")
+		}
+		// count == -1 means proxy unreachable, don't show anything
 	}
 
 	var hint string
