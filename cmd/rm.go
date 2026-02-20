@@ -7,6 +7,7 @@ import (
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
+	"github.com/joegoldin/claude-container/internal/httpproxy"
 	"github.com/spf13/cobra"
 )
 
@@ -42,6 +43,31 @@ func removeSession(store *config.Store, name string) {
 	if err := store.Delete(name); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: delete session: %v\n", err)
 	}
+
+	// Clean up proxy if this was the last session using it.
+	if sess != nil && sess.ProxyProfile != "" &&
+		(sess.NetworkSandbox == "proxy" || sess.NetworkSandbox == "both") {
+		proxyCleanupIfUnused(store, sess.ProxyProfile, name)
+	}
+}
+
+// proxyCleanupIfUnused stops the proxy for the given profile if no other
+// sessions are using it.
+func proxyCleanupIfUnused(store *config.Store, profile string, excludeSession string) {
+	if profile == "" {
+		return
+	}
+	for _, s := range store.List() {
+		if s.Name == excludeSession {
+			continue
+		}
+		if s.ProxyProfile == profile &&
+			(s.NetworkSandbox == "proxy" || s.NetworkSandbox == "both") {
+			return // another session uses this proxy
+		}
+	}
+	// No other sessions — stop proxy
+	httpproxy.Stop(profile)
 }
 
 // saveResumeID parses the container logs for a Claude resume session ID

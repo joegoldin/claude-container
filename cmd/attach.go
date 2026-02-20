@@ -9,6 +9,7 @@ import (
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
+	"github.com/joegoldin/claude-container/internal/httpproxy"
 	"github.com/joegoldin/claude-container/internal/proxy"
 	sandboxPkg "github.com/joegoldin/claude-container/internal/sandbox"
 	"github.com/spf13/cobra"
@@ -66,6 +67,18 @@ var attachCmd = &cobra.Command{
 // ensureRunning makes sure the container for the given session is running,
 // starting or recreating it as needed.
 func ensureRunning(store *config.Store, name string, sess *config.Session) error {
+	// Ensure proxy is running if session uses one.
+	if sess.NetworkSandbox == "proxy" || sess.NetworkSandbox == "both" {
+		_, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
+			Profile:       sess.ProxyProfile,
+			ConfigDir:     config.DefaultDir(),
+			DashboardPort: sess.ProxyPort,
+		})
+		if err != nil {
+			return fmt.Errorf("start proxy: %w", err)
+		}
+	}
+
 	switch {
 	case docker.IsRunning(name):
 		return nil
@@ -82,8 +95,15 @@ func ensureRunning(store *config.Store, name string, sess *config.Session) error
 			profile = "med"
 		}
 		if prof, err := sandboxPkg.GetProfile(profile); err == nil {
-			settingsJSON, _ := json.MarshalIndent(
-				prof.ManagedSettings(sess.AllowDomains, sess.DenyPaths), "", "  ")
+			var settingsJSON []byte
+			ns := sess.NetworkSandbox
+			if ns == "proxy" || ns == "none" {
+				settingsJSON, _ = json.MarshalIndent(
+					prof.ManagedSettingsUnrestricted(sess.DenyPaths), "", "  ")
+			} else {
+				settingsJSON, _ = json.MarshalIndent(
+					prof.ManagedSettings(sess.AllowDomains, sess.DenyPaths), "", "  ")
+			}
 			configDir := store.ClaudeConfigDir()
 			os.WriteFile(filepath.Join(configDir, "managed-settings.json"), settingsJSON, 0o644)
 		}
@@ -105,6 +125,18 @@ func ensureRunning(store *config.Store, name string, sess *config.Session) error
 			Resume:          sess.ResumeID,
 			Continue:        sess.ResumeID == "",
 			ExtraWorkspaces: sess.ExtraWorkspaces,
+			ProxyProfile: func() string {
+				if sess.NetworkSandbox == "proxy" || sess.NetworkSandbox == "both" {
+					return sess.ProxyProfile
+				}
+				return ""
+			}(),
+			ProxyCACertDir: func() string {
+				if sess.NetworkSandbox == "proxy" || sess.NetworkSandbox == "both" {
+					return httpproxy.CACertDir(config.DefaultDir())
+				}
+				return ""
+			}(),
 		}, true)
 		startCmd := exec.Command("docker", detachedArgs...)
 		startCmd.Stderr = os.Stderr

@@ -17,7 +17,8 @@ var stopCmd = &cobra.Command{
 		name := args[0]
 
 		store := config.NewStore(config.DefaultDir())
-		if _, err := store.Get(name); err != nil {
+		sess, err := store.Get(name)
+		if err != nil {
 			return fmt.Errorf("session %q not found", name)
 		}
 
@@ -25,6 +26,12 @@ var stopCmd = &cobra.Command{
 			if err := docker.Stop(name); err != nil {
 				return fmt.Errorf("stop container: %w", err)
 			}
+		}
+
+		// Clean up proxy if this was the last session using it.
+		if sess.ProxyProfile != "" &&
+			(sess.NetworkSandbox == "proxy" || sess.NetworkSandbox == "both") {
+			proxyCleanupIfUnused(store, sess.ProxyProfile, name)
 		}
 
 		fmt.Println("Session stopped. Worktree preserved.")
