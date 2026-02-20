@@ -18,7 +18,7 @@ import (
 )
 
 // skipIfDockerUnavailable skips the test when Docker is not available or the
-// claude-code:nix image has not been loaded.
+// claude-code image has not been loaded.
 func skipIfDockerUnavailable(t *testing.T) {
 	t.Helper()
 
@@ -634,9 +634,6 @@ func waitForCACert(t *testing.T, configDir string, timeout time.Duration) string
 // with proxy settings has the correct environment, CA certs, and can route
 // traffic through the proxy sidecar.
 func TestIntegrationProxyContainerSetup(t *testing.T) {
-	// Use the Nix-built image which includes curl and all tools.
-	t.Setenv("CLAUDE_CONTAINER_IMAGE_TAG", "claude-code:nix")
-
 	skipIfDockerUnavailable(t)
 	skipIfProxyImageUnavailable(t)
 

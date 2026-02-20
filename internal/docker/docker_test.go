@@ -293,9 +293,9 @@ func TestImageTag(t *testing.T) {
 	}
 
 	// With env var set.
-	t.Setenv("CLAUDE_CONTAINER_IMAGE_TAG", "claude-code:nix")
-	if got := ImageTag(); got != "claude-code:nix" {
-		t.Errorf("ImageTag() = %q, want %q", got, "claude-code:nix")
+	t.Setenv("CLAUDE_CONTAINER_IMAGE_TAG", "claude-code:latest")
+	if got := ImageTag(); got != "claude-code:latest" {
+		t.Errorf("ImageTag() = %q, want %q", got, "claude-code:latest")
 	}
 }
 

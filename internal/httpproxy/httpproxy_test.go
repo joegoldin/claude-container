@@ -147,7 +147,7 @@ func TestImageTagDefault(t *testing.T) {
 	os.Unsetenv("CLAUDE_PROXY_IMAGE_TAG")
 
 	got := ImageTag()
-	want := "claude-proxy:nix"
+	want := "claude-proxy:latest"
 	if got != want {
 		t.Errorf("ImageTag() = %q, want %q (default)", got, want)
 	}

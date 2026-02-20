@@ -32,12 +32,12 @@ func NetworkName(profile string) string {
 }
 
 // ImageTag returns the proxy Docker image tag.
-// Reads from CLAUDE_PROXY_IMAGE_TAG env var, defaulting to "claude-proxy:nix".
+// Reads from CLAUDE_PROXY_IMAGE_TAG env var, defaulting to "claude-proxy:latest".
 func ImageTag() string {
 	if tag := os.Getenv("CLAUDE_PROXY_IMAGE_TAG"); tag != "" {
 		return tag
 	}
-	return "claude-proxy:nix"
+	return "claude-proxy:latest"
 }
 
 // ImageExists returns true if the proxy Docker image is available locally.

@@ -56,9 +56,9 @@
                   )
                 } \
                 --set CLAUDE_CONTAINER_IMAGE_TARBALL "${image}" \
-                --set CLAUDE_CONTAINER_IMAGE_TAG "claude-code:nix" \
+                --set CLAUDE_CONTAINER_IMAGE_TAG "claude-code:latest" \
                 --set CLAUDE_PROXY_IMAGE_TARBALL "${proxyImage}" \
-                --set CLAUDE_PROXY_IMAGE_TAG "claude-proxy:nix"
+                --set CLAUDE_PROXY_IMAGE_TAG "claude-proxy:latest"
 
               # Create yacc alias pointing to wrapped binary
               ln -sf $out/bin/claude-container $out/bin/yacc

@@ -24,7 +24,7 @@ let
 in
 pkgs.dockerTools.buildLayeredImage {
   name = "claude-proxy";
-  tag = "nix";
+  tag = "latest";
 
   contents = [
     python

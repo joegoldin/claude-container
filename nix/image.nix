@@ -148,7 +148,7 @@ let
 in
 pkgs.dockerTools.buildLayeredImage {
   name = "claude-code";
-  tag = "nix";
+  tag = "latest";
 
   contents = pathPackages;
 
