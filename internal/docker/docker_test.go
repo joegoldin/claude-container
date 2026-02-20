@@ -376,6 +376,9 @@ func TestRunArgsProxyNetwork(t *testing.T) {
 	if !strings.Contains(joined, "SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem") {
 		t.Errorf("missing SSL_CERT_FILE in %v", args)
 	}
+	if !strings.Contains(joined, "NODE_EXTRA_CA_CERTS=/proxy-ca/mitmproxy-ca-cert.pem") {
+		t.Errorf("missing NODE_EXTRA_CA_CERTS in %v", args)
+	}
 }
 
 func TestRunArgsNoProxy(t *testing.T) {

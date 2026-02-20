@@ -45,8 +45,7 @@ func removeSession(store *config.Store, name string) {
 	}
 
 	// Clean up proxy if this was the last session using it.
-	if sess != nil && sess.ProxyProfile != "" &&
-		(sess.NetworkSandbox == "proxy" || sess.NetworkSandbox == "both") {
+	if sess != nil && sess.ProxyProfile != "" {
 		proxyCleanupIfUnused(store, sess.ProxyProfile, name)
 	}
 }
@@ -61,8 +60,7 @@ func proxyCleanupIfUnused(store *config.Store, profile string, excludeSession st
 		if s.Name == excludeSession {
 			continue
 		}
-		if s.ProxyProfile == profile &&
-			(s.NetworkSandbox == "proxy" || s.NetworkSandbox == "both") {
+		if s.ProxyProfile == profile {
 			return // another session uses this proxy
 		}
 	}

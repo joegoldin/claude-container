@@ -86,7 +86,6 @@ type RunOpts struct {
 	Continue        bool
 	Resume          string   // claude --resume <id>
 	ExtraWorkspaces []string // additional folders mounted as /workspace/<basename>
-	NetworkSandbox  string   // proxy|claude|both|none
 	ProxyProfile    string   // proxy profile name (for network/env args)
 	ProxyCACertDir  string   // path to mitmproxy CA cert directory
 }
@@ -133,6 +132,7 @@ func RunArgs(opts RunOpts, detached bool) []string {
 				"-v", opts.ProxyCACertDir+":/proxy-ca:ro",
 				"-e", "SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
 				"-e", "NIX_SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
+				"-e", "NODE_EXTRA_CA_CERTS=/proxy-ca/mitmproxy-ca-cert.pem",
 			)
 		}
 	}

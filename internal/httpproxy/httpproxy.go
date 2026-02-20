@@ -114,6 +114,7 @@ func ClaudeNetworkArgs(profile string, caCertDir string) []string {
 			"-v", caCertDir+":/proxy-ca:ro",
 			"-e", "SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
 			"-e", "NIX_SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
+			"-e", "NODE_EXTRA_CA_CERTS=/proxy-ca/mitmproxy-ca-cert.pem",
 		)
 	}
 
@@ -282,6 +283,12 @@ func PendingCount(port int) int {
 		return 0
 	}
 	return strings.Count(buf.String(), "flow_id")
+}
+
+// ProfileRulesPath returns the path to the proxy rules JSON file for the
+// given profile name within the config directory.
+func ProfileRulesPath(configDir, profile string) string {
+	return filepath.Join(configDir, "proxy-profiles", "profiles", profile+".json")
 }
 
 // CACertDir returns the path to the CA certificate directory within the

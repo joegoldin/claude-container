@@ -103,6 +103,7 @@ func TestClaudeNetworkArgs(t *testing.T) {
 		{"CA cert volume", "-v " + caCertDir + ":/proxy-ca:ro"},
 		{"SSL_CERT_FILE", "-e SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem"},
 		{"NIX_SSL_CERT_FILE", "-e NIX_SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem"},
+		{"NODE_EXTRA_CA_CERTS", "-e NODE_EXTRA_CA_CERTS=/proxy-ca/mitmproxy-ca-cert.pem"},
 	}
 
 	for _, c := range checks {
@@ -139,6 +140,9 @@ func TestClaudeNetworkArgsNoCACert(t *testing.T) {
 	}
 	if strings.Contains(joined, "NIX_SSL_CERT_FILE") {
 		t.Error("ClaudeNetworkArgs (no cert): should not contain NIX_SSL_CERT_FILE when caCertDir is empty")
+	}
+	if strings.Contains(joined, "NODE_EXTRA_CA_CERTS") {
+		t.Error("ClaudeNetworkArgs (no cert): should not contain NODE_EXTRA_CA_CERTS when caCertDir is empty")
 	}
 }
 

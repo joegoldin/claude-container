@@ -29,8 +29,7 @@ var stopCmd = &cobra.Command{
 		}
 
 		// Clean up proxy if this was the last session using it.
-		if sess.ProxyProfile != "" &&
-			(sess.NetworkSandbox == "proxy" || sess.NetworkSandbox == "both") {
+		if sess.ProxyProfile != "" {
 			proxyCleanupIfUnused(store, sess.ProxyProfile, name)
 		}
 
