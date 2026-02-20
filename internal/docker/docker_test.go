@@ -347,3 +347,51 @@ func TestEnsureImageMarker(t *testing.T) {
 		t.Error("EnsureImage should error when no tarball and image missing")
 	}
 }
+
+func TestRunArgsProxyNetwork(t *testing.T) {
+	args := RunArgs(RunOpts{
+		Name:           "test-session",
+		Workspace:      "/tmp/ws",
+		ConfigDir:      "/tmp/config",
+		UID:            1000,
+		GID:            1000,
+		ProxyProfile:   "myprofile",
+		ProxyCACertDir: "/tmp/ca",
+	}, false)
+
+	joined := strings.Join(args, " ")
+
+	if !strings.Contains(joined, "--network claude-proxy-net_myprofile") {
+		t.Errorf("missing network flag in %v", args)
+	}
+	if !strings.Contains(joined, "HTTP_PROXY=http://claude-proxy_myprofile:8080") {
+		t.Errorf("missing HTTP_PROXY in %v", args)
+	}
+	if !strings.Contains(joined, "HTTPS_PROXY=http://claude-proxy_myprofile:8080") {
+		t.Errorf("missing HTTPS_PROXY in %v", args)
+	}
+	if !strings.Contains(joined, "/tmp/ca:/proxy-ca:ro") {
+		t.Errorf("missing CA cert volume in %v", args)
+	}
+	if !strings.Contains(joined, "SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem") {
+		t.Errorf("missing SSL_CERT_FILE in %v", args)
+	}
+}
+
+func TestRunArgsNoProxy(t *testing.T) {
+	args := RunArgs(RunOpts{
+		Name:      "test-session",
+		Workspace: "/tmp/ws",
+		ConfigDir: "/tmp/config",
+		UID:       1000,
+		GID:       1000,
+	}, false)
+
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "HTTP_PROXY") {
+		t.Errorf("unexpected HTTP_PROXY in non-proxy args: %v", args)
+	}
+	if strings.Contains(joined, "--network") {
+		t.Errorf("unexpected --network in non-proxy args: %v", args)
+	}
+}

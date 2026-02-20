@@ -36,6 +36,9 @@ type Session struct {
 	ExtraWorkspaces []string  `json:"extra_workspaces,omitempty"`
 	AllowDomains    []string  `json:"allow_domains,omitempty"`
 	DenyPaths       []string  `json:"deny_paths,omitempty"`
+	NetworkSandbox  string    `json:"network_sandbox,omitempty"` // proxy|claude|both|none
+	ProxyProfile    string    `json:"proxy_profile,omitempty"`
+	ProxyPort       int       `json:"proxy_port,omitempty"`
 }
 
 // Store provides thread-safe persistence of sessions to a JSON file.

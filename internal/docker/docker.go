@@ -86,6 +86,9 @@ type RunOpts struct {
 	Continue        bool
 	Resume          string   // claude --resume <id>
 	ExtraWorkspaces []string // additional folders mounted as /workspace/<basename>
+	NetworkSandbox  string   // proxy|claude|both|none
+	ProxyProfile    string   // proxy profile name (for network/env args)
+	ProxyCACertDir  string   // path to mitmproxy CA cert directory
 }
 
 // RunArgs returns the docker run command arguments for a persistent
@@ -114,6 +117,24 @@ func RunArgs(opts RunOpts, detached bool) []string {
 	for _, ws := range opts.ExtraWorkspaces {
 		base := filepath.Base(ws)
 		args = append(args, "-v", ws+":/workspace/"+base)
+	}
+
+	// When proxy is enabled, add network and proxy env vars.
+	if opts.ProxyProfile != "" {
+		proxyContainer := "claude-proxy_" + opts.ProxyProfile
+		network := "claude-proxy-net_" + opts.ProxyProfile
+		args = append(args,
+			"--network", network,
+			"-e", fmt.Sprintf("HTTP_PROXY=http://%s:8080", proxyContainer),
+			"-e", fmt.Sprintf("HTTPS_PROXY=http://%s:8080", proxyContainer),
+		)
+		if opts.ProxyCACertDir != "" {
+			args = append(args,
+				"-v", opts.ProxyCACertDir+":/proxy-ca:ro",
+				"-e", "SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
+				"-e", "NIX_SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
+			)
+		}
 	}
 
 	args = append(args,
