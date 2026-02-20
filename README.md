@@ -105,6 +105,9 @@ Flags:
       --rm                         Auto-remove session when it exits
   -W, --workspace string           Named workspace from workspaces.json
       --yolo                       Skip permission prompts
+      --network-sandbox string   Network enforcement: proxy, claude, both, none (default "claude")
+      --proxy-profile string     Proxy rule profile name (default "default")
+      --proxy-port int           Dashboard port on host (default 8081)
 ```
 
 ### work
@@ -130,6 +133,9 @@ Flags:
       --rm                         Auto-remove session when it exits
   -W, --workspace string           Named workspace from workspaces.json
       --yolo                       Skip permission prompts
+      --network-sandbox string   Network enforcement: proxy, claude, both, none (default "claude")
+      --proxy-profile string     Proxy rule profile name (default "default")
+      --proxy-port int           Dashboard port on host (default 8081)
 ```
 
 ### new
@@ -158,6 +164,9 @@ Flags:
   -W, --workspace string           Named workspace from workspaces.json
       --worktree string            Create worktree on new branch
       --yolo                       Skip permission prompts
+      --network-sandbox string   Network enforcement: proxy, claude, both, none (default "claude")
+      --proxy-profile string     Proxy rule profile name (default "default")
+      --proxy-port int           Dashboard port on host (default 8081)
 ```
 
 The interactive wizard asks:
@@ -405,12 +414,62 @@ claude-container work -w ~/code/a --profile=low
 
 `--yolo` is equivalent to `--profile=low`.
 
+## NETWORK PROXY
+
+An HTTP/HTTPS proxy sidecar can sit between Claude and the internet, providing
+interactive network access control with a web dashboard.
+
+### Modes
+
+The `--network-sandbox` flag controls network enforcement:
+
+    proxy     proxy handles network, Claude sandbox allows all traffic
+    claude    Claude sandbox handles network (default)
+    both      both proxy and Claude sandbox enforce rules
+    none      no network restrictions
+
+### Usage
+
+```sh
+# Start with proxy-based network control
+claude-container run --network-sandbox=proxy
+
+# Open dashboard at http://localhost:8081
+# Pending requests appear as cards — allow or deny with pattern presets
+
+# Custom profile name (share rules across sessions)
+claude-container run --network-sandbox=proxy --proxy-profile=work
+
+# Custom dashboard port
+claude-container run --network-sandbox=proxy --proxy-port=9090
+```
+
+When unknown domains are accessed, the proxy holds the connection and notifies
+you via the web dashboard (and browser notifications). You can allow or deny
+with pattern-based rules that persist across sessions.
+
+### Flags
+
+    --network-sandbox string    proxy, claude, both, none (default "claude")
+    --proxy-profile string      Rule profile name (default "default")
+    --proxy-port int            Dashboard port on host (default 8081)
+
+### Proxy reuse
+
+Proxy containers are named by profile, not by session. Multiple sessions with
+the same `--proxy-profile` share a single proxy process. Rules added in one
+session are immediately visible to all sessions sharing that profile. The proxy
+is stopped only when the last session using it is removed.
+
 ## ENVIRONMENT
 
     CLAUDE_CONTAINER_IMAGE_TARBALL    path to Nix-built OCI image tarball
                                       (set by nix wrapper)
     CLAUDE_CONTAINER_IMAGE_TAG        docker image tag (set by nix wrapper)
     XDG_CONFIG_HOME                   base config directory
+    CLAUDE_PROXY_IMAGE_TARBALL    path to Nix-built proxy image tarball
+                                      (set by nix wrapper)
+    CLAUDE_PROXY_IMAGE_TAG        proxy docker image tag (set by nix wrapper)
 
 ## INSTALL
 
@@ -494,6 +553,8 @@ The nix package wraps the binary with `git` and `docker` on PATH and sets
     ~/.config/claude-container/claude-config/        shared Claude Code config
     ~/.config/claude-container/claude-config/.credentials.json   auth credentials
     ~/.config/claude-container/loaded-image          image load marker
+    ~/.config/claude-container/proxy-profiles/         proxy rule profiles
+    ~/.config/claude-container/proxy-profiles/ca/      mitmproxy CA certificates
 
 ## EXAMPLES
 
@@ -576,4 +637,11 @@ claude-container gc --all
 
 # Log out (remove credentials)
 claude-container gc --auth
+
+# Run with proxy-based network control
+claude-container run --network-sandbox=proxy
+
+# Share proxy rules across sessions
+claude-container run --network-sandbox=proxy --proxy-profile=work
+claude-container run --network-sandbox=proxy --proxy-profile=work -p "another task"
 ```
