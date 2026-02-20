@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"github.com/joegoldin/claude-container/internal/docker"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
 	"github.com/joegoldin/claude-container/internal/proxy"
+	sandboxPkg "github.com/joegoldin/claude-container/internal/sandbox"
 	"github.com/joegoldin/claude-container/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -127,6 +129,47 @@ func init() {
 	rootCmd.AddCommand(newCmd)
 }
 
+// resolveWorkspaces merges named workspace paths with ad-hoc mount paths,
+// validates all paths exist, and checks for basename collisions.
+func resolveWorkspaces(workspaceName string, mounts []string) ([]string, error) {
+	var paths []string
+
+	if workspaceName != "" {
+		ws := config.NewWorkspaceStore(config.DefaultDir())
+		wsPaths, err := ws.Get(workspaceName)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, wsPaths...)
+	}
+
+	for _, m := range mounts {
+		abs, err := filepath.Abs(m)
+		if err != nil {
+			return nil, fmt.Errorf("resolve path %q: %w", m, err)
+		}
+		paths = append(paths, abs)
+	}
+
+	if len(paths) == 0 {
+		return nil, nil
+	}
+
+	seen := make(map[string]string)
+	for _, p := range paths {
+		if _, err := os.Stat(p); err != nil {
+			return nil, fmt.Errorf("workspace path %q does not exist", p)
+		}
+		base := filepath.Base(p)
+		if existing, ok := seen[base]; ok {
+			return nil, fmt.Errorf("basename collision: %q and %q both have basename %q", existing, p, base)
+		}
+		seen[base] = p
+	}
+
+	return paths, nil
+}
+
 func createSession(opts createOpts) error {
 	// a. Get cwd and resolve repo root.
 	cwd, err := os.Getwd()
@@ -137,6 +180,24 @@ func createSession(opts createOpts) error {
 	repoRoot, repoErr := gitpkg.RepoRoot(cwd)
 	if repoErr != nil && !opts.noWorktree {
 		return fmt.Errorf("not inside a git repository (use --no-worktree to skip worktree creation): %w", repoErr)
+	}
+
+	// Resolve extra workspaces from -W and -w flags.
+	extraWorkspaces, err := resolveWorkspaces(opts.workspace, opts.mounts)
+	if err != nil {
+		return err
+	}
+
+	// Resolve sandbox profile.
+	profile := opts.profile
+	if opts.yolo && profile != "" && profile != "low" {
+		return fmt.Errorf("--yolo and --profile=%s conflict; --yolo is equivalent to --profile=low", profile)
+	}
+	if opts.yolo {
+		profile = "low"
+	}
+	if profile == "" {
+		profile = "med"
 	}
 
 	// b. Determine session name.
@@ -186,6 +247,11 @@ func createSession(opts createOpts) error {
 		}
 	}
 
+	// When extra workspaces are provided, don't mount cwd as primary workspace.
+	if len(extraWorkspaces) > 0 {
+		workspace = ""
+	}
+
 	// f. Ensure shared Claude config dir exists.
 	claudeConfigDir := store.ClaudeConfigDir()
 	if err := os.MkdirAll(claudeConfigDir, 0o755); err != nil {
@@ -196,30 +262,50 @@ func createSession(opts createOpts) error {
 		return err
 	}
 
+	// Generate managed settings from profile.
+	prof, err := sandboxPkg.GetProfile(profile)
+	if err != nil {
+		return err
+	}
+	settingsJSON, err := json.MarshalIndent(
+		prof.ManagedSettings(opts.allowDomains, opts.denyPaths), "", "  ")
+	if err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(claudeConfigDir, "managed-settings.json")
+	if err := os.WriteFile(settingsPath, settingsJSON, 0o644); err != nil {
+		return fmt.Errorf("write managed settings: %w", err)
+	}
+
 	runOpts := docker.RunOpts{
-		Name:           name,
-		Workspace:      workspace,
-		ConfigDir:      claudeConfigDir,
-		HostClaudeDir:  config.HostClaudeDir(),
-		HostClaudeJSON: config.HostClaudeJSON(),
-		UID:            os.Getuid(),
-		GID:            os.Getgid(),
-		Yolo:           opts.yolo,
-		Prompt:         opts.prompt,
-		Continue:       opts.cont,
+		Name:            name,
+		Workspace:       workspace,
+		ConfigDir:       claudeConfigDir,
+		HostClaudeDir:   config.HostClaudeDir(),
+		HostClaudeJSON:  config.HostClaudeJSON(),
+		UID:             os.Getuid(),
+		GID:             os.Getgid(),
+		Yolo:            profile == "low",
+		Prompt:          opts.prompt,
+		Continue:        opts.cont,
+		ExtraWorkspaces: extraWorkspaces,
 	}
 
 	// g. Save session to store before running so it's tracked even if
 	// the user detaches quickly.
 	sess := &config.Session{
-		Name:          name,
-		Branch:        branch,
-		WorktreePath:  workspace,
-		RepoPath:      repoRoot,
-		ContainerName: docker.ContainerName(name),
-		Yolo:          opts.yolo,
-		AutoRemove:    opts.autoRemove,
-		CreatedAt:     time.Now(),
+		Name:            name,
+		Branch:          branch,
+		WorktreePath:    workspace,
+		RepoPath:        repoRoot,
+		ContainerName:   docker.ContainerName(name),
+		Yolo:            profile == "low",
+		AutoRemove:      opts.autoRemove,
+		CreatedAt:       time.Now(),
+		Profile:         profile,
+		ExtraWorkspaces: extraWorkspaces,
+		AllowDomains:    opts.allowDomains,
+		DenyPaths:       opts.denyPaths,
 	}
 	if err := store.Save(sess); err != nil {
 		return fmt.Errorf("save session: %w", err)
@@ -249,7 +335,7 @@ func createSession(opts createOpts) error {
 	proxyErr := proxy.Run(proxy.Opts{
 		DockerArgs:    []string{"attach", containerName},
 		ContainerName: containerName,
-		StatusBar:     proxy.StatusBarInfo{Name: name, Branch: branch, Yolo: opts.yolo},
+		StatusBar:     proxy.StatusBarInfo{Name: name, Branch: branch, Yolo: profile == "low"},
 		AutoRemove:    opts.autoRemove,
 		Cleanup:       func(_ string) { removeSession(store, name) },
 	})
