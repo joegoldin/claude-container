@@ -9,11 +9,16 @@ import (
 )
 
 var (
-	runYolo       bool
-	runPrompt     string
-	runName       string
-	runBackground bool
-	runAutoRemove bool
+	runYolo         bool
+	runPrompt       string
+	runName         string
+	runBackground   bool
+	runAutoRemove   bool
+	runMounts       []string
+	runWorkspace    string
+	runProfile      string
+	runAllowDomains []string
+	runDenyPaths    []string
 )
 
 var runCmd = &cobra.Command{
@@ -31,12 +36,17 @@ var runCmd = &cobra.Command{
 		}
 
 		return createSession(createOpts{
-			name:       name,
-			noWorktree: true,
-			yolo:       runYolo,
-			prompt:     runPrompt,
-			background: runBackground,
-			autoRemove: runAutoRemove,
+			name:         name,
+			noWorktree:   true,
+			yolo:         runYolo,
+			prompt:       runPrompt,
+			background:   runBackground,
+			autoRemove:   runAutoRemove,
+			mounts:       runMounts,
+			workspace:    runWorkspace,
+			profile:      runProfile,
+			allowDomains: runAllowDomains,
+			denyPaths:    runDenyPaths,
 		})
 	},
 }
@@ -47,5 +57,10 @@ func init() {
 	runCmd.Flags().StringVar(&runName, "name", "", "Session name (auto-generated if omitted)")
 	runCmd.Flags().BoolVarP(&runBackground, "background", "b", false, "Don't attach after creation")
 	runCmd.Flags().BoolVar(&runAutoRemove, "rm", false, "Auto-remove session when it exits")
+	runCmd.Flags().StringArrayVarP(&runMounts, "mount", "w", nil, "Additional folders to mount (repeatable)")
+	runCmd.Flags().StringVarP(&runWorkspace, "workspace", "W", "", "Named workspace from workspaces.json")
+	runCmd.Flags().StringVar(&runProfile, "profile", "", "Sandbox profile: low, med, high (default \"med\")")
+	runCmd.Flags().StringArrayVar(&runAllowDomains, "allow-domain", nil, "Add domain to sandbox allowlist")
+	runCmd.Flags().StringArrayVar(&runDenyPaths, "deny-path", nil, "Add path to sandbox deny list")
 	rootCmd.AddCommand(runCmd)
 }

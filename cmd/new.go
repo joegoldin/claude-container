@@ -17,28 +17,38 @@ import (
 )
 
 var (
-	newName       string
-	newWorktree   string
-	newFrom       string
-	newNoWorktree bool
-	newYolo       bool
-	newPrompt     string
-	newContinue   bool
-	newBackground  bool
-	newAutoRemove  bool
+	newName          string
+	newWorktree      string
+	newFrom          string
+	newNoWorktree    bool
+	newYolo          bool
+	newPrompt        string
+	newContinue      bool
+	newBackground    bool
+	newAutoRemove    bool
+	newMounts        []string
+	newWorkspaceName string
+	newProfile       string
+	newAllowDomains  []string
+	newDenyPaths     []string
 )
 
 // createOpts holds the resolved options for creating a new session.
 type createOpts struct {
-	name       string
-	worktree   string
-	from       string
-	noWorktree bool
-	yolo       bool
-	prompt     string
-	cont       bool // "continue" is a keyword
-	background bool // don't auto-attach after creation
-	autoRemove bool // clean up session when it stops
+	name         string
+	worktree     string
+	from         string
+	noWorktree   bool
+	yolo         bool
+	prompt       string
+	cont         bool // "continue" is a keyword
+	background   bool // don't auto-attach after creation
+	autoRemove   bool // clean up session when it stops
+	mounts       []string // -w flag: ad-hoc folder paths
+	workspace    string   // -W flag: named workspace
+	profile      string   // --profile flag
+	allowDomains []string // --allow-domain flag
+	denyPaths    []string // --deny-path flag
 }
 
 var newCmd = &cobra.Command{
@@ -65,26 +75,36 @@ var newCmd = &cobra.Command{
 				return nil
 			}
 			return createSession(createOpts{
-				name:       res.Name,
-				worktree:   res.Worktree,
-				from:       res.From,
-				noWorktree: res.NoWorktree,
-				yolo:       res.Yolo,
-				prompt:     res.Prompt,
-				background: res.Background,
+				name:         res.Name,
+				worktree:     res.Worktree,
+				from:         res.From,
+				noWorktree:   res.NoWorktree,
+				yolo:         res.Yolo,
+				prompt:       res.Prompt,
+				background:   res.Background,
+				mounts:       newMounts,
+				workspace:    newWorkspaceName,
+				profile:      newProfile,
+				allowDomains: newAllowDomains,
+				denyPaths:    newDenyPaths,
 			})
 		}
 
 		return createSession(createOpts{
-			name:       newName,
-			worktree:   newWorktree,
-			from:       newFrom,
-			noWorktree: newNoWorktree,
-			yolo:       newYolo,
-			prompt:     newPrompt,
-			cont:       newContinue,
-			background: newBackground,
-			autoRemove: newAutoRemove,
+			name:         newName,
+			worktree:     newWorktree,
+			from:         newFrom,
+			noWorktree:   newNoWorktree,
+			yolo:         newYolo,
+			prompt:       newPrompt,
+			cont:         newContinue,
+			background:   newBackground,
+			autoRemove:   newAutoRemove,
+			mounts:       newMounts,
+			workspace:    newWorkspaceName,
+			profile:      newProfile,
+			allowDomains: newAllowDomains,
+			denyPaths:    newDenyPaths,
 		})
 	},
 }
@@ -99,6 +119,11 @@ func init() {
 	newCmd.Flags().BoolVarP(&newContinue, "continue", "c", false, "Resume previous conversation")
 	newCmd.Flags().BoolVarP(&newBackground, "background", "b", false, "Don't attach after creation")
 	newCmd.Flags().BoolVar(&newAutoRemove, "rm", false, "Auto-remove session when it exits")
+	newCmd.Flags().StringArrayVarP(&newMounts, "mount", "w", nil, "Additional folders to mount (repeatable)")
+	newCmd.Flags().StringVarP(&newWorkspaceName, "workspace", "W", "", "Named workspace from workspaces.json")
+	newCmd.Flags().StringVar(&newProfile, "profile", "", "Sandbox profile: low, med, high (default \"med\")")
+	newCmd.Flags().StringArrayVar(&newAllowDomains, "allow-domain", nil, "Add domain to sandbox allowlist")
+	newCmd.Flags().StringArrayVar(&newDenyPaths, "deny-path", nil, "Add path to sandbox deny list")
 	rootCmd.AddCommand(newCmd)
 }
 

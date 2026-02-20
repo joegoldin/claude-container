@@ -9,12 +9,17 @@ import (
 )
 
 var (
-	workYolo       bool
-	workPrompt     string
-	workName       string
-	workFrom       string
-	workBackground bool
-	workAutoRemove bool
+	workYolo         bool
+	workPrompt       string
+	workName         string
+	workFrom         string
+	workBackground   bool
+	workAutoRemove   bool
+	workMounts       []string
+	workWorkspace    string
+	workProfile      string
+	workAllowDomains []string
+	workDenyPaths    []string
 )
 
 var workCmd = &cobra.Command{
@@ -32,13 +37,18 @@ var workCmd = &cobra.Command{
 		}
 
 		return createSession(createOpts{
-			name:       name,
-			worktree:   name,
-			from:       workFrom,
-			yolo:       workYolo,
-			prompt:     workPrompt,
-			background: workBackground,
-			autoRemove: workAutoRemove,
+			name:         name,
+			worktree:     name,
+			from:         workFrom,
+			yolo:         workYolo,
+			prompt:       workPrompt,
+			background:   workBackground,
+			autoRemove:   workAutoRemove,
+			mounts:       workMounts,
+			workspace:    workWorkspace,
+			profile:      workProfile,
+			allowDomains: workAllowDomains,
+			denyPaths:    workDenyPaths,
 		})
 	},
 }
@@ -50,5 +60,10 @@ func init() {
 	workCmd.Flags().StringVar(&workFrom, "from", "", "Base branch for worktree (default: current HEAD)")
 	workCmd.Flags().BoolVarP(&workBackground, "background", "b", false, "Don't attach after creation")
 	workCmd.Flags().BoolVar(&workAutoRemove, "rm", false, "Auto-remove session when it exits")
+	workCmd.Flags().StringArrayVarP(&workMounts, "mount", "w", nil, "Additional folders to mount (repeatable)")
+	workCmd.Flags().StringVarP(&workWorkspace, "workspace", "W", "", "Named workspace from workspaces.json")
+	workCmd.Flags().StringVar(&workProfile, "profile", "", "Sandbox profile: low, med, high (default \"med\")")
+	workCmd.Flags().StringArrayVar(&workAllowDomains, "allow-domain", nil, "Add domain to sandbox allowlist")
+	workCmd.Flags().StringArrayVar(&workDenyPaths, "deny-path", nil, "Add path to sandbox deny list")
 	rootCmd.AddCommand(workCmd)
 }
