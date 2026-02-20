@@ -74,17 +74,18 @@ func EnsureImage(configDir string) error {
 
 // RunOpts holds options for running a Claude Code container.
 type RunOpts struct {
-	Name           string
-	Workspace      string
-	ConfigDir      string
-	HostClaudeDir  string // host ~/.claude/ dir, mounted read-only for credential copying
-	HostClaudeJSON string // host ~/.claude.json file, mounted read-only for onboarding/auth state
-	UID            int
-	GID            int
-	Yolo           bool
-	Prompt         string
-	Continue       bool
-	Resume         string // claude --resume <id>
+	Name            string
+	Workspace       string
+	ConfigDir       string
+	HostClaudeDir   string   // host ~/.claude/ dir, mounted read-only for credential copying
+	HostClaudeJSON  string   // host ~/.claude.json file, mounted read-only for onboarding/auth state
+	UID             int
+	GID             int
+	Yolo            bool
+	Prompt          string
+	Continue        bool
+	Resume          string   // claude --resume <id>
+	ExtraWorkspaces []string // additional folders mounted as /workspace/<basename>
 }
 
 // RunArgs returns the docker run command arguments for a persistent
@@ -102,12 +103,25 @@ func RunArgs(opts RunOpts, detached bool) []string {
 		"run",
 		"--name", name,
 		flag,
-		"-v", opts.Workspace + ":/workspace",
-		"-v", opts.ConfigDir + ":/claude",
+	}
+
+	// Mount primary workspace (if set).
+	if opts.Workspace != "" {
+		args = append(args, "-v", opts.Workspace+":/workspace")
+	}
+
+	// Mount extra workspaces as subdirectories of /workspace.
+	for _, ws := range opts.ExtraWorkspaces {
+		base := filepath.Base(ws)
+		args = append(args, "-v", ws+":/workspace/"+base)
+	}
+
+	args = append(args,
+		"-v", opts.ConfigDir+":/claude",
 		"-e", "CLAUDE_CONFIG_DIR=/claude",
 		"-e", fmt.Sprintf("USER_UID=%d", opts.UID),
 		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
-	}
+	)
 
 	// Mount host Claude credentials read-only for entrypoint to copy.
 	if opts.HostClaudeDir != "" {

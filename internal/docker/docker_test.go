@@ -299,6 +299,45 @@ func TestImageTag(t *testing.T) {
 	}
 }
 
+func TestRunArgsExtraWorkspaces(t *testing.T) {
+	opts := RunOpts{
+		Name:            "multi-test",
+		Workspace:       "/home/user/main-project",
+		ConfigDir:       "/tmp/config",
+		UID:             1000,
+		GID:             1000,
+		ExtraWorkspaces: []string{"/home/user/code/repo-a", "/home/user/code/repo-b"},
+	}
+	args := RunArgs(opts, false)
+	joined := strings.Join(args, " ")
+
+	if !strings.Contains(joined, "/home/user/main-project:/workspace") {
+		t.Errorf("RunArgs missing primary workspace mount in %v", args)
+	}
+	if !strings.Contains(joined, "/home/user/code/repo-a:/workspace/repo-a") {
+		t.Errorf("RunArgs missing extra workspace repo-a in %v", args)
+	}
+	if !strings.Contains(joined, "/home/user/code/repo-b:/workspace/repo-b") {
+		t.Errorf("RunArgs missing extra workspace repo-b in %v", args)
+	}
+}
+
+func TestRunArgsExtraWorkspacesOnly(t *testing.T) {
+	opts := RunOpts{
+		Name:            "extra-only",
+		ConfigDir:       "/tmp/config",
+		UID:             1000,
+		GID:             1000,
+		ExtraWorkspaces: []string{"/home/user/code/repo-a"},
+	}
+	args := RunArgs(opts, false)
+	joined := strings.Join(args, " ")
+
+	if !strings.Contains(joined, "/home/user/code/repo-a:/workspace/repo-a") {
+		t.Errorf("RunArgs missing extra workspace in %v", args)
+	}
+}
+
 func TestEnsureImageMarker(t *testing.T) {
 	// When no tarball env and image doesn't exist, should error.
 	t.Setenv("CLAUDE_CONTAINER_IMAGE_TARBALL", "")
