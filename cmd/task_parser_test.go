@@ -3,6 +3,7 @@ package cmd
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseStreamEvents(t *testing.T) {
@@ -67,5 +68,43 @@ func TestParseStreamEventsResultTokensNested(t *testing.T) {
 	}
 	if result.OutputTokens != 200 {
 		t.Errorf("OutputTokens = %d, want 200", result.OutputTokens)
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{5 * time.Second, "5s"},
+		{45 * time.Second, "45s"},
+		{90 * time.Second, "1m 30s"},
+		{125 * time.Second, "2m 5s"},
+	}
+	for _, tc := range tests {
+		got := formatDuration(tc.d)
+		if got != tc.want {
+			t.Errorf("formatDuration(%v) = %q, want %q", tc.d, got, tc.want)
+		}
+	}
+}
+
+func TestFormatNumber(t *testing.T) {
+	tests := []struct {
+		n    int
+		want string
+	}{
+		{0, "0"},
+		{42, "42"},
+		{999, "999"},
+		{1000, "1,000"},
+		{12450, "12,450"},
+		{1234567, "1,234,567"},
+	}
+	for _, tc := range tests {
+		got := formatNumber(tc.n)
+		if got != tc.want {
+			t.Errorf("formatNumber(%d) = %q, want %q", tc.n, got, tc.want)
+		}
 	}
 }
