@@ -384,3 +384,23 @@ func LogsTail(session string, n int) (string, error) {
 	}
 	return StripANSI(buf.String()), nil
 }
+
+// ExecGitDiff returns a prepared *exec.Cmd that runs git diff --name-status HEAD
+// inside the container. The caller runs it and reads stdout for changed files.
+func ExecGitDiff(session string) *exec.Cmd {
+	name := ContainerName(session)
+	return exec.Command("docker", "exec", name, "git", "diff", "--name-status", "HEAD")
+}
+
+// WaitExitCode runs docker wait and returns the container exit code.
+func WaitExitCode(session string) (int, error) {
+	name := ContainerName(session)
+	cmd := exec.Command("docker", "wait", name)
+	out, err := cmd.Output()
+	if err != nil {
+		return 1, err
+	}
+	code := 0
+	fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &code)
+	return code, nil
+}

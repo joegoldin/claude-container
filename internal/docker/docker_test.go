@@ -456,6 +456,25 @@ func TestTaskRunArgsModel(t *testing.T) {
 	}
 }
 
+func TestExecGitDiffArgs(t *testing.T) {
+	cmd := ExecGitDiff("test-session")
+	args := cmd.Args
+
+	if args[0] != "docker" {
+		t.Errorf("first arg = %q, want docker", args[0])
+	}
+	if args[1] != "exec" {
+		t.Errorf("second arg = %q, want exec", args[1])
+	}
+	if args[2] != ContainerName("test-session") {
+		t.Errorf("third arg = %q, want container name", args[2])
+	}
+	joined := strings.Join(args[3:], " ")
+	if joined != "git diff --name-status HEAD" {
+		t.Errorf("git command = %q, want 'git diff --name-status HEAD'", joined)
+	}
+}
+
 func TestTaskRunArgsMaxTurns(t *testing.T) {
 	opts := RunOpts{
 		Name:      "turns-test",
