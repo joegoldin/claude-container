@@ -9,17 +9,20 @@ import (
 )
 
 var (
-	workYolo         bool
-	workPrompt       string
-	workName         string
-	workFrom         string
-	workBackground   bool
-	workAutoRemove   bool
-	workMounts       []string
-	workWorkspace    string
-	workProfile      string
-	workAllowDomains []string
-	workDenyPaths    []string
+	workYolo            bool
+	workPrompt          string
+	workName            string
+	workFrom            string
+	workBackground      bool
+	workAutoRemove      bool
+	workMounts          []string
+	workWorkspace       string
+	workProfile         string
+	workAllowDomains    []string
+	workDenyPaths       []string
+	workNetworkSandbox  string
+	workProxyProfile    string
+	workProxyPort       int
 )
 
 var workCmd = &cobra.Command{
@@ -37,18 +40,21 @@ var workCmd = &cobra.Command{
 		}
 
 		return createSession(createOpts{
-			name:         name,
-			worktree:     name,
-			from:         workFrom,
-			yolo:         workYolo,
-			prompt:       workPrompt,
-			background:   workBackground,
-			autoRemove:   workAutoRemove,
-			mounts:       workMounts,
-			workspace:    workWorkspace,
-			profile:      workProfile,
-			allowDomains: workAllowDomains,
-			denyPaths:    workDenyPaths,
+			name:           name,
+			worktree:       name,
+			from:           workFrom,
+			yolo:           workYolo,
+			prompt:         workPrompt,
+			background:     workBackground,
+			autoRemove:     workAutoRemove,
+			mounts:         workMounts,
+			workspace:      workWorkspace,
+			profile:        workProfile,
+			allowDomains:   workAllowDomains,
+			denyPaths:      workDenyPaths,
+			networkSandbox: workNetworkSandbox,
+			proxyProfile:   workProxyProfile,
+			proxyPort:      workProxyPort,
 		})
 	},
 }
@@ -65,5 +71,11 @@ func init() {
 	workCmd.Flags().StringVar(&workProfile, "profile", "", "Sandbox profile: low, med, high (default \"med\")")
 	workCmd.Flags().StringArrayVar(&workAllowDomains, "allow-domain", nil, "Add domain to sandbox allowlist")
 	workCmd.Flags().StringArrayVar(&workDenyPaths, "deny-path", nil, "Add path to sandbox deny list")
+	workCmd.Flags().StringVar(&workNetworkSandbox, "network-sandbox", "claude",
+		"Network enforcement: proxy, claude, both, none")
+	workCmd.Flags().StringVar(&workProxyProfile, "proxy-profile", "default",
+		"Proxy rule profile name")
+	workCmd.Flags().IntVar(&workProxyPort, "proxy-port", 8081,
+		"Dashboard port on host")
 	rootCmd.AddCommand(workCmd)
 }

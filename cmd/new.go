@@ -12,6 +12,7 @@ import (
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
+	"github.com/joegoldin/claude-container/internal/httpproxy"
 	"github.com/joegoldin/claude-container/internal/proxy"
 	sandboxPkg "github.com/joegoldin/claude-container/internal/sandbox"
 	"github.com/joegoldin/claude-container/internal/tui"
@@ -19,38 +20,44 @@ import (
 )
 
 var (
-	newName          string
-	newWorktree      string
-	newFrom          string
-	newNoWorktree    bool
-	newYolo          bool
-	newPrompt        string
-	newContinue      bool
-	newBackground    bool
-	newAutoRemove    bool
-	newMounts        []string
-	newWorkspaceName string
-	newProfile       string
-	newAllowDomains  []string
-	newDenyPaths     []string
+	newName            string
+	newWorktree        string
+	newFrom            string
+	newNoWorktree      bool
+	newYolo            bool
+	newPrompt          string
+	newContinue        bool
+	newBackground      bool
+	newAutoRemove      bool
+	newMounts          []string
+	newWorkspaceName   string
+	newProfile         string
+	newAllowDomains    []string
+	newDenyPaths       []string
+	newNetworkSandbox  string
+	newProxyProfile    string
+	newProxyPort       int
 )
 
 // createOpts holds the resolved options for creating a new session.
 type createOpts struct {
-	name         string
-	worktree     string
-	from         string
-	noWorktree   bool
-	yolo         bool
-	prompt       string
-	cont         bool // "continue" is a keyword
-	background   bool // don't auto-attach after creation
-	autoRemove   bool // clean up session when it stops
-	mounts       []string // -w flag: ad-hoc folder paths
-	workspace    string   // -W flag: named workspace
-	profile      string   // --profile flag
-	allowDomains []string // --allow-domain flag
-	denyPaths    []string // --deny-path flag
+	name           string
+	worktree       string
+	from           string
+	noWorktree     bool
+	yolo           bool
+	prompt         string
+	cont           bool // "continue" is a keyword
+	background     bool // don't auto-attach after creation
+	autoRemove     bool // clean up session when it stops
+	mounts         []string // -w flag: ad-hoc folder paths
+	workspace      string   // -W flag: named workspace
+	profile        string   // --profile flag
+	allowDomains   []string // --allow-domain flag
+	denyPaths      []string // --deny-path flag
+	networkSandbox string
+	proxyProfile   string
+	proxyPort      int
 }
 
 var newCmd = &cobra.Command{
@@ -77,36 +84,42 @@ var newCmd = &cobra.Command{
 				return nil
 			}
 			return createSession(createOpts{
-				name:         res.Name,
-				worktree:     res.Worktree,
-				from:         res.From,
-				noWorktree:   res.NoWorktree,
-				yolo:         res.Yolo,
-				prompt:       res.Prompt,
-				background:   res.Background,
-				mounts:       newMounts,
-				workspace:    newWorkspaceName,
-				profile:      newProfile,
-				allowDomains: newAllowDomains,
-				denyPaths:    newDenyPaths,
+				name:           res.Name,
+				worktree:       res.Worktree,
+				from:           res.From,
+				noWorktree:     res.NoWorktree,
+				yolo:           res.Yolo,
+				prompt:         res.Prompt,
+				background:     res.Background,
+				mounts:         newMounts,
+				workspace:      newWorkspaceName,
+				profile:        newProfile,
+				allowDomains:   newAllowDomains,
+				denyPaths:      newDenyPaths,
+				networkSandbox: newNetworkSandbox,
+				proxyProfile:   newProxyProfile,
+				proxyPort:      newProxyPort,
 			})
 		}
 
 		return createSession(createOpts{
-			name:         newName,
-			worktree:     newWorktree,
-			from:         newFrom,
-			noWorktree:   newNoWorktree,
-			yolo:         newYolo,
-			prompt:       newPrompt,
-			cont:         newContinue,
-			background:   newBackground,
-			autoRemove:   newAutoRemove,
-			mounts:       newMounts,
-			workspace:    newWorkspaceName,
-			profile:      newProfile,
-			allowDomains: newAllowDomains,
-			denyPaths:    newDenyPaths,
+			name:           newName,
+			worktree:       newWorktree,
+			from:           newFrom,
+			noWorktree:     newNoWorktree,
+			yolo:           newYolo,
+			prompt:         newPrompt,
+			cont:           newContinue,
+			background:     newBackground,
+			autoRemove:     newAutoRemove,
+			mounts:         newMounts,
+			workspace:      newWorkspaceName,
+			profile:        newProfile,
+			allowDomains:   newAllowDomains,
+			denyPaths:      newDenyPaths,
+			networkSandbox: newNetworkSandbox,
+			proxyProfile:   newProxyProfile,
+			proxyPort:      newProxyPort,
 		})
 	},
 }
@@ -126,6 +139,12 @@ func init() {
 	newCmd.Flags().StringVar(&newProfile, "profile", "", "Sandbox profile: low, med, high (default \"med\")")
 	newCmd.Flags().StringArrayVar(&newAllowDomains, "allow-domain", nil, "Add domain to sandbox allowlist")
 	newCmd.Flags().StringArrayVar(&newDenyPaths, "deny-path", nil, "Add path to sandbox deny list")
+	newCmd.Flags().StringVar(&newNetworkSandbox, "network-sandbox", "claude",
+		"Network enforcement: proxy, claude, both, none")
+	newCmd.Flags().StringVar(&newProxyProfile, "proxy-profile", "default",
+		"Proxy rule profile name")
+	newCmd.Flags().IntVar(&newProxyPort, "proxy-port", 8081,
+		"Dashboard port on host")
 	rootCmd.AddCommand(newCmd)
 }
 
@@ -200,6 +219,12 @@ func createSession(opts createOpts) error {
 		profile = "med"
 	}
 
+	// Resolve network sandbox mode.
+	networkSandbox := opts.networkSandbox
+	if networkSandbox == "" {
+		networkSandbox = "claude"
+	}
+
 	// b. Determine session name.
 	name := opts.name
 	if name == "" && opts.worktree != "" {
@@ -218,6 +243,48 @@ func createSession(opts createOpts) error {
 	// d. Ensure docker image is loaded.
 	if err := docker.EnsureImage(config.DefaultDir()); err != nil {
 		return err
+	}
+
+	// Start proxy sidecar if needed.
+	proxyProfile := opts.proxyProfile
+	if proxyProfile == "" {
+		proxyProfile = "default"
+	}
+	useProxy := networkSandbox == "proxy" || networkSandbox == "both"
+	if useProxy {
+		if !httpproxy.ImageExists() {
+			// Try loading from tarball
+			tarball := os.Getenv("CLAUDE_PROXY_IMAGE_TARBALL")
+			if tarball != "" {
+				loadCmd := exec.Command("docker", "load", "-i", tarball)
+				loadCmd.Stdout = os.Stdout
+				loadCmd.Stderr = os.Stderr
+				if err := loadCmd.Run(); err != nil {
+					return fmt.Errorf("load proxy image: %w", err)
+				}
+			} else {
+				return fmt.Errorf("proxy image %q not found; set CLAUDE_PROXY_IMAGE_TARBALL", httpproxy.ImageTag())
+			}
+		}
+		started, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
+			Profile:       proxyProfile,
+			ConfigDir:     config.DefaultDir(),
+			DashboardPort: opts.proxyPort,
+		})
+		if err != nil {
+			return fmt.Errorf("start proxy: %w", err)
+		}
+		if started {
+			fmt.Printf("Proxy started for profile %q — dashboard at %s\n",
+				proxyProfile, httpproxy.DashboardURL(opts.proxyPort))
+		} else {
+			fmt.Printf("Reusing proxy for profile %q — dashboard at %s\n",
+				proxyProfile, httpproxy.DashboardURL(opts.proxyPort))
+		}
+		// Wait for CA cert
+		if err := httpproxy.WaitForCACert(config.DefaultDir()); err != nil {
+			return err
+		}
 	}
 
 	// e. Resolve workspace directory.
@@ -267,8 +334,19 @@ func createSession(opts createOpts) error {
 	if err != nil {
 		return err
 	}
-	settingsJSON, err := json.MarshalIndent(
-		prof.ManagedSettings(opts.allowDomains, opts.denyPaths), "", "  ")
+	var settingsJSON []byte
+	switch networkSandbox {
+	case "proxy", "none":
+		// Unrestrict Claude's network — proxy (or nothing) handles it.
+		settingsJSON, err = json.MarshalIndent(
+			prof.ManagedSettingsUnrestricted(opts.denyPaths), "", "  ")
+	case "claude", "both":
+		// Claude sandbox manages network.
+		settingsJSON, err = json.MarshalIndent(
+			prof.ManagedSettings(opts.allowDomains, opts.denyPaths), "", "  ")
+	default:
+		return fmt.Errorf("invalid --network-sandbox value %q (valid: proxy, claude, both, none)", networkSandbox)
+	}
 	if err != nil {
 		return err
 	}
@@ -289,6 +367,18 @@ func createSession(opts createOpts) error {
 		Prompt:          opts.prompt,
 		Continue:        opts.cont,
 		ExtraWorkspaces: extraWorkspaces,
+		ProxyProfile: func() string {
+			if useProxy {
+				return proxyProfile
+			}
+			return ""
+		}(),
+		ProxyCACertDir: func() string {
+			if useProxy {
+				return httpproxy.CACertDir(config.DefaultDir())
+			}
+			return ""
+		}(),
 	}
 
 	// g. Save session to store before running so it's tracked even if
@@ -306,6 +396,9 @@ func createSession(opts createOpts) error {
 		ExtraWorkspaces: extraWorkspaces,
 		AllowDomains:    opts.allowDomains,
 		DenyPaths:       opts.denyPaths,
+		NetworkSandbox:  networkSandbox,
+		ProxyProfile:    proxyProfile,
+		ProxyPort:       opts.proxyPort,
 	}
 	if err := store.Save(sess); err != nil {
 		return fmt.Errorf("save session: %w", err)

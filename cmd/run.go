@@ -9,16 +9,19 @@ import (
 )
 
 var (
-	runYolo         bool
-	runPrompt       string
-	runName         string
-	runBackground   bool
-	runAutoRemove   bool
-	runMounts       []string
-	runWorkspace    string
-	runProfile      string
-	runAllowDomains []string
-	runDenyPaths    []string
+	runYolo            bool
+	runPrompt          string
+	runName            string
+	runBackground      bool
+	runAutoRemove      bool
+	runMounts          []string
+	runWorkspace       string
+	runProfile         string
+	runAllowDomains    []string
+	runDenyPaths       []string
+	runNetworkSandbox  string
+	runProxyProfile    string
+	runProxyPort       int
 )
 
 var runCmd = &cobra.Command{
@@ -36,17 +39,20 @@ var runCmd = &cobra.Command{
 		}
 
 		return createSession(createOpts{
-			name:         name,
-			noWorktree:   true,
-			yolo:         runYolo,
-			prompt:       runPrompt,
-			background:   runBackground,
-			autoRemove:   runAutoRemove,
-			mounts:       runMounts,
-			workspace:    runWorkspace,
-			profile:      runProfile,
-			allowDomains: runAllowDomains,
-			denyPaths:    runDenyPaths,
+			name:           name,
+			noWorktree:     true,
+			yolo:           runYolo,
+			prompt:         runPrompt,
+			background:     runBackground,
+			autoRemove:     runAutoRemove,
+			mounts:         runMounts,
+			workspace:      runWorkspace,
+			profile:        runProfile,
+			allowDomains:   runAllowDomains,
+			denyPaths:      runDenyPaths,
+			networkSandbox: runNetworkSandbox,
+			proxyProfile:   runProxyProfile,
+			proxyPort:      runProxyPort,
 		})
 	},
 }
@@ -62,5 +68,11 @@ func init() {
 	runCmd.Flags().StringVar(&runProfile, "profile", "", "Sandbox profile: low, med, high (default \"med\")")
 	runCmd.Flags().StringArrayVar(&runAllowDomains, "allow-domain", nil, "Add domain to sandbox allowlist")
 	runCmd.Flags().StringArrayVar(&runDenyPaths, "deny-path", nil, "Add path to sandbox deny list")
+	runCmd.Flags().StringVar(&runNetworkSandbox, "network-sandbox", "claude",
+		"Network enforcement: proxy, claude, both, none")
+	runCmd.Flags().StringVar(&runProxyProfile, "proxy-profile", "default",
+		"Proxy rule profile name")
+	runCmd.Flags().IntVar(&runProxyPort, "proxy-port", 8081,
+		"Dashboard port on host")
 	rootCmd.AddCommand(runCmd)
 }
