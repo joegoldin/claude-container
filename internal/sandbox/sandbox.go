@@ -108,3 +108,40 @@ func (p Profile) ManagedSettings(extraDomains []string, extraDenyPaths []string)
 
 	return settings
 }
+
+// ManagedSettingsUnrestricted generates settings with network access unrestricted.
+// Used when proxy handles network sandboxing instead of Claude's built-in sandbox.
+// Non-network sandbox features (deny paths, permissions) remain active.
+func (p Profile) ManagedSettingsUnrestricted(extraDenyPaths []string) map[string]any {
+	deny := make([]string, len(p.DenyPaths))
+	copy(deny, p.DenyPaths)
+	for _, path := range extraDenyPaths {
+		deny = append(deny, fmt.Sprintf("Read(%s)", path))
+	}
+
+	settings := map[string]any{
+		"env": map[string]any{
+			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+			"DISABLE_AUTOUPDATER":                      "1",
+		},
+		"cleanupPeriodDays":     14,
+		"alwaysThinkingEnabled": true,
+		"showTurnDuration":      true,
+		"spinnerTipsEnabled":    false,
+		"sandbox": map[string]any{
+			"enabled":                   p.SandboxEnabled,
+			"autoAllowBashIfSandboxed":  true,
+			"enableWeakerNestedSandbox": true,
+			"allowUnsandboxedCommands":  false,
+			"excludedCommands":          []string{"git"},
+		},
+	}
+
+	if len(deny) > 0 {
+		settings["permissions"] = map[string]any{
+			"deny": deny,
+		}
+	}
+
+	return settings
+}

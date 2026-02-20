@@ -96,3 +96,87 @@ func TestManagedSettingsJSON(t *testing.T) {
 		t.Fatal("empty JSON output")
 	}
 }
+
+func TestManagedSettingsUnrestrictedNoNetwork(t *testing.T) {
+	p, _ := GetProfile("med")
+	settings := p.ManagedSettingsUnrestricted(nil)
+	sandbox := settings["sandbox"].(map[string]any)
+
+	// Should NOT have a "network" key
+	if _, hasNetwork := sandbox["network"]; hasNetwork {
+		t.Error("unrestricted settings should not have network key")
+	}
+
+	// Sandbox should still be enabled
+	if enabled, _ := sandbox["enabled"].(bool); !enabled {
+		t.Error("sandbox should still be enabled in unrestricted mode")
+	}
+}
+
+func TestManagedSettingsUnrestrictedKeepsDenyPaths(t *testing.T) {
+	p, _ := GetProfile("med")
+	settings := p.ManagedSettingsUnrestricted([]string{"/extra/secret"})
+	perms := settings["permissions"].(map[string]any)
+	deny := perms["deny"].([]string)
+
+	// Should have original deny paths + extra
+	foundOriginal := false
+	foundExtra := false
+	for _, d := range deny {
+		if d == "Read(/etc/shadow)" {
+			foundOriginal = true
+		}
+		if d == "Read(/extra/secret)" {
+			foundExtra = true
+		}
+	}
+	if !foundOriginal {
+		t.Errorf("missing original deny path in %v", deny)
+	}
+	if !foundExtra {
+		t.Errorf("missing extra deny path in %v", deny)
+	}
+}
+
+func TestManagedSettingsUnrestrictedLowProfile(t *testing.T) {
+	p, _ := GetProfile("low")
+	settings := p.ManagedSettingsUnrestricted(nil)
+	sandbox := settings["sandbox"].(map[string]any)
+
+	// Low profile has sandbox disabled
+	if enabled, _ := sandbox["enabled"].(bool); enabled {
+		t.Error("low profile sandbox should be disabled even in unrestricted mode")
+	}
+
+	// Should not have network key
+	if _, hasNetwork := sandbox["network"]; hasNetwork {
+		t.Error("unrestricted settings should not have network key")
+	}
+
+	// Low profile has no deny paths, so no permissions key
+	if _, hasPerms := settings["permissions"]; hasPerms {
+		t.Error("low profile with no extra deny paths should not have permissions key")
+	}
+}
+
+func TestManagedSettingsVsUnrestrictedComparison(t *testing.T) {
+	p, _ := GetProfile("med")
+	restricted := p.ManagedSettings(nil, nil)
+	unrestricted := p.ManagedSettingsUnrestricted(nil)
+
+	// Both should have sandbox enabled
+	rSandbox := restricted["sandbox"].(map[string]any)
+	uSandbox := unrestricted["sandbox"].(map[string]any)
+
+	if rSandbox["enabled"] != uSandbox["enabled"] {
+		t.Error("sandbox.enabled should match between restricted and unrestricted")
+	}
+
+	// Restricted should have network key, unrestricted should not
+	if _, has := rSandbox["network"]; !has {
+		t.Error("restricted should have network key")
+	}
+	if _, has := uSandbox["network"]; has {
+		t.Error("unrestricted should NOT have network key")
+	}
+}
