@@ -189,3 +189,36 @@ func TestCACertDir(t *testing.T) {
 		t.Errorf("CACertDir(%q) = %q, want %q", configDir, got, want)
 	}
 }
+
+func TestFindAvailablePort(t *testing.T) {
+	port, err := FindAvailablePort()
+	if err != nil {
+		t.Fatalf("FindAvailablePort: %v", err)
+	}
+	if port < 1024 || port > 65535 {
+		t.Errorf("port %d out of expected range", port)
+	}
+}
+
+func TestFindAvailablePortUnique(t *testing.T) {
+	ports := make(map[int]bool)
+	for i := 0; i < 10; i++ {
+		port, err := FindAvailablePort()
+		if err != nil {
+			t.Fatalf("FindAvailablePort: %v", err)
+		}
+		ports[port] = true
+	}
+	// At least 5 unique ports out of 10 calls (ports could be recycled)
+	if len(ports) < 5 {
+		t.Errorf("expected at least 5 unique ports, got %d", len(ports))
+	}
+}
+
+func TestGetDashboardPortNoContainer(t *testing.T) {
+	// Container doesn't exist — should return 0.
+	port := GetDashboardPort("nonexistent-profile")
+	if port != 0 {
+		t.Errorf("expected 0 for nonexistent container, got %d", port)
+	}
+}

@@ -72,7 +72,7 @@ func init() {
 		"Network enforcement: proxy, claude, both, none")
 	runCmd.Flags().StringVar(&runProxyProfile, "proxy-profile", "default",
 		"Proxy rule profile name")
-	runCmd.Flags().IntVar(&runProxyPort, "proxy-port", 8081,
-		"Dashboard port on host")
+	runCmd.Flags().IntVar(&runProxyPort, "proxy-port", 0,
+		"Dashboard port on host (0 = auto-assign)")
 	rootCmd.AddCommand(runCmd)
 }

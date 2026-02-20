@@ -69,13 +69,16 @@ var attachCmd = &cobra.Command{
 func ensureRunning(store *config.Store, name string, sess *config.Session) error {
 	// Ensure proxy is running if session uses one.
 	if sess.NetworkSandbox == "proxy" || sess.NetworkSandbox == "both" {
-		_, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
+		_, resolvedPort, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
 			Profile:       sess.ProxyProfile,
 			ConfigDir:     config.DefaultDir(),
 			DashboardPort: sess.ProxyPort,
 		})
 		if err != nil {
 			return fmt.Errorf("start proxy: %w", err)
+		}
+		if resolvedPort > 0 {
+			sess.ProxyPort = resolvedPort
 		}
 	}
 

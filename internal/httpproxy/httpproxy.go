@@ -6,6 +6,7 @@ package httpproxy
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -155,38 +156,55 @@ func RemoveNetwork(profile string) error {
 }
 
 // EnsureRunning starts the proxy sidecar if it is not already running.
-// Returns true if a new container was started, false if one was already running.
-func EnsureRunning(opts ProxyOpts) (started bool, err error) {
+// Returns true if a new container was started, the resolved dashboard port,
+// and any error.
+func EnsureRunning(opts ProxyOpts) (started bool, port int, err error) {
 	if IsRunning(opts.Profile) {
-		return false, nil
+		// Proxy already running — discover its port.
+		existingPort := GetDashboardPort(opts.Profile)
+		if existingPort == 0 {
+			return false, 0, fmt.Errorf("httpproxy: proxy running but can't determine port")
+		}
+		return false, existingPort, nil
 	}
 
-	// If a stopped container exists, remove it first (--rm only triggers on
-	// stop, so a crashed container might linger).
+	// If a stopped container exists, remove it first.
 	if Exists(opts.Profile) {
 		name := ContainerName(opts.Profile)
 		rm := exec.Command("docker", "rm", "-f", name)
 		rm.Stdout = nil
 		rm.Stderr = nil
-		rm.Run() // best-effort
+		rm.Run()
 	}
 
-	// Ensure the network exists.
+	// Resolve dashboard port: pick a random one if 0.
+	dashboardPort := opts.DashboardPort
+	if dashboardPort == 0 {
+		dashboardPort, err = FindAvailablePort()
+		if err != nil {
+			return false, 0, err
+		}
+	}
+
 	if err := EnsureNetwork(opts.Profile); err != nil {
-		return false, err
+		return false, 0, err
 	}
 
-	// Start the proxy container.
-	args := RunArgs(opts)
+	resolvedOpts := ProxyOpts{
+		Profile:       opts.Profile,
+		ConfigDir:     opts.ConfigDir,
+		DashboardPort: dashboardPort,
+	}
+	args := RunArgs(resolvedOpts)
 	cmd := exec.Command("docker", args...)
 	var stderr bytes.Buffer
 	cmd.Stdout = nil
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return false, fmt.Errorf("httpproxy: failed to start proxy: %s: %w", stderr.String(), err)
+		return false, 0, fmt.Errorf("httpproxy: failed to start proxy: %s: %w", stderr.String(), err)
 	}
 
-	return true, nil
+	return true, dashboardPort, nil
 }
 
 // Stop stops the proxy container for the given profile and removes the network.
@@ -212,6 +230,44 @@ func Stop(profile string) error {
 // DashboardURL returns the proxy dashboard URL for the given port.
 func DashboardURL(port int) string {
 	return fmt.Sprintf("http://localhost:%d", port)
+}
+
+// FindAvailablePort finds a random available TCP port by binding to :0.
+func FindAvailablePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("httpproxy: find available port: %w", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port, nil
+}
+
+// GetDashboardPort returns the host port mapped to container port 8081 for
+// the proxy with the given profile. Returns 0 if the container is not
+// running or the port can't be determined.
+func GetDashboardPort(profile string) int {
+	name := ContainerName(profile)
+	cmd := exec.Command("docker", "port", name, "8081")
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
+		return 0
+	}
+	// Output is like "0.0.0.0:18081\n" — extract port after last colon.
+	output := strings.TrimSpace(buf.String())
+	// May have multiple lines (IPv4 and IPv6). Take the first.
+	if idx := strings.Index(output, "\n"); idx >= 0 {
+		output = output[:idx]
+	}
+	if idx := strings.LastIndex(output, ":"); idx >= 0 {
+		var port int
+		if _, err := fmt.Sscanf(output[idx+1:], "%d", &port); err == nil {
+			return port
+		}
+	}
+	return 0
 }
 
 // PendingCount queries the proxy dashboard API and returns the number of

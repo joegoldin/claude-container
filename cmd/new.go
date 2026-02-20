@@ -143,8 +143,8 @@ func init() {
 		"Network enforcement: proxy, claude, both, none")
 	newCmd.Flags().StringVar(&newProxyProfile, "proxy-profile", "default",
 		"Proxy rule profile name")
-	newCmd.Flags().IntVar(&newProxyPort, "proxy-port", 8081,
-		"Dashboard port on host")
+	newCmd.Flags().IntVar(&newProxyPort, "proxy-port", 0,
+		"Dashboard port on host (0 = auto-assign)")
 	rootCmd.AddCommand(newCmd)
 }
 
@@ -251,6 +251,7 @@ func createSession(opts createOpts) error {
 		proxyProfile = "default"
 	}
 	useProxy := networkSandbox == "proxy" || networkSandbox == "both"
+	var resolvedPort int
 	if useProxy {
 		if !httpproxy.ImageExists() {
 			// Try loading from tarball
@@ -266,7 +267,8 @@ func createSession(opts createOpts) error {
 				return fmt.Errorf("proxy image %q not found; set CLAUDE_PROXY_IMAGE_TARBALL", httpproxy.ImageTag())
 			}
 		}
-		started, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
+		var started bool
+		started, resolvedPort, err = httpproxy.EnsureRunning(httpproxy.ProxyOpts{
 			Profile:       proxyProfile,
 			ConfigDir:     config.DefaultDir(),
 			DashboardPort: opts.proxyPort,
@@ -276,10 +278,10 @@ func createSession(opts createOpts) error {
 		}
 		if started {
 			fmt.Printf("Proxy started for profile %q — dashboard at %s\n",
-				proxyProfile, httpproxy.DashboardURL(opts.proxyPort))
+				proxyProfile, httpproxy.DashboardURL(resolvedPort))
 		} else {
 			fmt.Printf("Reusing proxy for profile %q — dashboard at %s\n",
-				proxyProfile, httpproxy.DashboardURL(opts.proxyPort))
+				proxyProfile, httpproxy.DashboardURL(resolvedPort))
 		}
 		// Wait for CA cert
 		if err := httpproxy.WaitForCACert(config.DefaultDir()); err != nil {
@@ -398,7 +400,7 @@ func createSession(opts createOpts) error {
 		DenyPaths:       opts.denyPaths,
 		NetworkSandbox:  networkSandbox,
 		ProxyProfile:    proxyProfile,
-		ProxyPort:       opts.proxyPort,
+		ProxyPort:       resolvedPort,
 	}
 	if err := store.Save(sess); err != nil {
 		return fmt.Errorf("save session: %w", err)
@@ -428,12 +430,7 @@ func createSession(opts createOpts) error {
 	proxyErr := proxy.Run(proxy.Opts{
 		DockerArgs:    []string{"attach", containerName},
 		ContainerName: containerName,
-		StatusBar: proxy.StatusBarInfo{Name: name, Branch: branch, Yolo: profile == "low", ProxyPort: func() int {
-			if useProxy {
-				return opts.proxyPort
-			}
-			return 0
-		}()},
+		StatusBar: proxy.StatusBarInfo{Name: name, Branch: branch, Yolo: profile == "low", ProxyPort: resolvedPort},
 		AutoRemove:    opts.autoRemove,
 		Cleanup:       func(_ string) { removeSession(store, name) },
 	})
