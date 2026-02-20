@@ -36,7 +36,9 @@ type Session struct {
 	ExtraWorkspaces []string  `json:"extra_workspaces,omitempty"`
 	AllowDomains    []string  `json:"allow_domains,omitempty"`
 	DenyPaths       []string  `json:"deny_paths,omitempty"`
-	NetworkSandbox  string    `json:"network_sandbox,omitempty"` // proxy|claude|both|none
+	AllowCommands   []string  `json:"allow_commands,omitempty"`
+	DenyCommands    []string  `json:"deny_commands,omitempty"`
+	NetworkSandbox  string    `json:"network_sandbox,omitempty"` // deprecated: always "proxy"
 	ProxyProfile    string    `json:"proxy_profile,omitempty"`
 	ProxyPort       int       `json:"proxy_port,omitempty"`
 }

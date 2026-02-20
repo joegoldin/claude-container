@@ -9,19 +9,20 @@ import (
 )
 
 var (
-	runYolo            bool
-	runPrompt          string
-	runName            string
-	runBackground      bool
-	runAutoRemove      bool
-	runMounts          []string
-	runWorkspace       string
-	runProfile         string
-	runAllowDomains    []string
-	runDenyPaths       []string
-	runNetworkSandbox  string
-	runProxyProfile    string
-	runProxyPort       int
+	runYolo         bool
+	runPrompt       string
+	runName         string
+	runBackground   bool
+	runAutoRemove   bool
+	runMounts       []string
+	runWorkspace    string
+	runProfile      string
+	runAllowDomains []string
+	runDenyPaths    []string
+	runProxyProfile   string
+	runProxyPort      int
+	runAllowCommands  []string
+	runDenyCommands   []string
 )
 
 var runCmd = &cobra.Command{
@@ -39,20 +40,21 @@ var runCmd = &cobra.Command{
 		}
 
 		return createSession(createOpts{
-			name:           name,
-			noWorktree:     true,
-			yolo:           runYolo,
-			prompt:         runPrompt,
-			background:     runBackground,
-			autoRemove:     runAutoRemove,
-			mounts:         runMounts,
-			workspace:      runWorkspace,
-			profile:        runProfile,
-			allowDomains:   runAllowDomains,
-			denyPaths:      runDenyPaths,
-			networkSandbox: runNetworkSandbox,
-			proxyProfile:   runProxyProfile,
-			proxyPort:      runProxyPort,
+			name:          name,
+			noWorktree:    true,
+			yolo:          runYolo,
+			prompt:        runPrompt,
+			background:    runBackground,
+			autoRemove:    runAutoRemove,
+			mounts:        runMounts,
+			workspace:     runWorkspace,
+			profile:       runProfile,
+			allowDomains:  runAllowDomains,
+			denyPaths:     runDenyPaths,
+			allowCommands: runAllowCommands,
+			denyCommands:  runDenyCommands,
+			proxyProfile:  runProxyProfile,
+			proxyPort:     runProxyPort,
 		})
 	},
 }
@@ -65,11 +67,11 @@ func init() {
 	runCmd.Flags().BoolVar(&runAutoRemove, "rm", false, "Auto-remove session when it exits")
 	runCmd.Flags().StringArrayVarP(&runMounts, "mount", "w", nil, "Additional folders to mount (repeatable)")
 	runCmd.Flags().StringVarP(&runWorkspace, "workspace", "W", "", "Named workspace from workspaces.json")
-	runCmd.Flags().StringVar(&runProfile, "profile", "", "Sandbox profile: low, med, high (default \"med\")")
-	runCmd.Flags().StringArrayVar(&runAllowDomains, "allow-domain", nil, "Add domain to sandbox allowlist")
-	runCmd.Flags().StringArrayVar(&runDenyPaths, "deny-path", nil, "Add path to sandbox deny list")
-	runCmd.Flags().StringVar(&runNetworkSandbox, "network-sandbox", "claude",
-		"Network enforcement: proxy, claude, both, none")
+	runCmd.Flags().StringVar(&runProfile, "profile", "", "Sandbox profile: low, default, med, high (default \"default\")")
+	runCmd.Flags().StringArrayVar(&runAllowDomains, "allow-domain", nil, "Add domain to proxy allowlist")
+	runCmd.Flags().StringArrayVar(&runDenyPaths, "deny-path", nil, "Add path to permissions deny list")
+	runCmd.Flags().StringArrayVar(&runAllowCommands, "allow-command", nil, "Add command pattern to allow list (e.g., 'docker *')")
+	runCmd.Flags().StringArrayVar(&runDenyCommands, "deny-command", nil, "Add command pattern to deny list (e.g., 'rm -rf *')")
 	runCmd.Flags().StringVar(&runProxyProfile, "proxy-profile", "default",
 		"Proxy rule profile name")
 	runCmd.Flags().IntVar(&runProxyPort, "proxy-port", 0,

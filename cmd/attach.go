@@ -67,19 +67,21 @@ var attachCmd = &cobra.Command{
 // ensureRunning makes sure the container for the given session is running,
 // starting or recreating it as needed.
 func ensureRunning(store *config.Store, name string, sess *config.Session) error {
-	// Ensure proxy is running if session uses one.
-	if sess.NetworkSandbox == "proxy" || sess.NetworkSandbox == "both" {
-		_, resolvedPort, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
-			Profile:       sess.ProxyProfile,
-			ConfigDir:     config.DefaultDir(),
-			DashboardPort: sess.ProxyPort,
-		})
-		if err != nil {
-			return fmt.Errorf("start proxy: %w", err)
-		}
-		if resolvedPort > 0 {
-			sess.ProxyPort = resolvedPort
-		}
+	// Always ensure proxy is running.
+	proxyProfile := sess.ProxyProfile
+	if proxyProfile == "" {
+		proxyProfile = "default"
+	}
+	_, resolvedPort, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
+		Profile:       proxyProfile,
+		ConfigDir:     config.DefaultDir(),
+		DashboardPort: sess.ProxyPort,
+	})
+	if err != nil {
+		return fmt.Errorf("start proxy: %w", err)
+	}
+	if resolvedPort > 0 {
+		sess.ProxyPort = resolvedPort
 	}
 
 	switch {
@@ -95,18 +97,23 @@ func ensureRunning(store *config.Store, name string, sess *config.Session) error
 		// Regenerate managed settings from stored profile.
 		profile := sess.Profile
 		if profile == "" {
-			profile = "med"
+			profile = "default"
 		}
 		if prof, err := sandboxPkg.GetProfile(profile); err == nil {
-			var settingsJSON []byte
-			ns := sess.NetworkSandbox
-			if ns == "proxy" || ns == "none" {
-				settingsJSON, _ = json.MarshalIndent(
-					prof.ManagedSettingsUnrestricted(sess.DenyPaths), "", "  ")
-			} else {
-				settingsJSON, _ = json.MarshalIndent(
-					prof.ManagedSettings(sess.AllowDomains, sess.DenyPaths), "", "  ")
+			var extraAllowPerms []string
+			if profile != "high" {
+				extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(envExtraAllowCommands())...)
 			}
+			extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(sess.AllowCommands)...)
+
+			var extraDenyPerms []string
+			for _, p := range sess.DenyPaths {
+				extraDenyPerms = append(extraDenyPerms, fmt.Sprintf("Read(%s)", p))
+			}
+			extraDenyPerms = append(extraDenyPerms, wrapCommandPerms(sess.DenyCommands)...)
+
+			settingsJSON, _ := json.MarshalIndent(
+				prof.ManagedSettingsForProxy(8080, extraAllowPerms, extraDenyPerms), "", "  ")
 			configDir := store.ClaudeConfigDir()
 			os.WriteFile(filepath.Join(configDir, "managed-settings.json"), settingsJSON, 0o644)
 		}
@@ -128,18 +135,8 @@ func ensureRunning(store *config.Store, name string, sess *config.Session) error
 			Resume:          sess.ResumeID,
 			Continue:        sess.ResumeID == "",
 			ExtraWorkspaces: sess.ExtraWorkspaces,
-			ProxyProfile: func() string {
-				if sess.NetworkSandbox == "proxy" || sess.NetworkSandbox == "both" {
-					return sess.ProxyProfile
-				}
-				return ""
-			}(),
-			ProxyCACertDir: func() string {
-				if sess.NetworkSandbox == "proxy" || sess.NetworkSandbox == "both" {
-					return httpproxy.CACertDir(config.DefaultDir())
-				}
-				return ""
-			}(),
+			ProxyProfile:    proxyProfile,
+			ProxyCACertDir:  httpproxy.CACertDir(config.DefaultDir()),
 		}, true)
 		startCmd := exec.Command("docker", detachedArgs...)
 		startCmd.Stderr = os.Stderr

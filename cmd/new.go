@@ -20,44 +20,46 @@ import (
 )
 
 var (
-	newName            string
-	newWorktree        string
-	newFrom            string
-	newNoWorktree      bool
-	newYolo            bool
-	newPrompt          string
-	newContinue        bool
-	newBackground      bool
-	newAutoRemove      bool
-	newMounts          []string
-	newWorkspaceName   string
-	newProfile         string
-	newAllowDomains    []string
-	newDenyPaths       []string
-	newNetworkSandbox  string
-	newProxyProfile    string
-	newProxyPort       int
+	newName          string
+	newWorktree      string
+	newFrom          string
+	newNoWorktree    bool
+	newYolo          bool
+	newPrompt        string
+	newContinue      bool
+	newBackground    bool
+	newAutoRemove    bool
+	newMounts        []string
+	newWorkspaceName string
+	newProfile       string
+	newAllowDomains  []string
+	newDenyPaths     []string
+	newProxyProfile   string
+	newProxyPort      int
+	newAllowCommands  []string
+	newDenyCommands   []string
 )
 
 // createOpts holds the resolved options for creating a new session.
 type createOpts struct {
-	name           string
-	worktree       string
-	from           string
-	noWorktree     bool
-	yolo           bool
-	prompt         string
-	cont           bool // "continue" is a keyword
-	background     bool // don't auto-attach after creation
-	autoRemove     bool // clean up session when it stops
-	mounts         []string // -w flag: ad-hoc folder paths
-	workspace      string   // -W flag: named workspace
-	profile        string   // --profile flag
-	allowDomains   []string // --allow-domain flag
-	denyPaths      []string // --deny-path flag
-	networkSandbox string
-	proxyProfile   string
-	proxyPort      int
+	name         string
+	worktree     string
+	from         string
+	noWorktree   bool
+	yolo         bool
+	prompt       string
+	cont         bool     // "continue" is a keyword
+	background   bool     // don't auto-attach after creation
+	autoRemove   bool     // clean up session when it stops
+	mounts       []string // -w flag: ad-hoc folder paths
+	workspace    string   // -W flag: named workspace
+	profile      string   // --profile flag
+	allowDomains  []string // --allow-domain flag
+	denyPaths     []string // --deny-path flag
+	allowCommands []string // --allow-command flag
+	denyCommands  []string // --deny-command flag
+	proxyProfile  string
+	proxyPort     int
 }
 
 var newCmd = &cobra.Command{
@@ -84,42 +86,44 @@ var newCmd = &cobra.Command{
 				return nil
 			}
 			return createSession(createOpts{
-				name:           res.Name,
-				worktree:       res.Worktree,
-				from:           res.From,
-				noWorktree:     res.NoWorktree,
-				yolo:           res.Yolo,
-				prompt:         res.Prompt,
-				background:     res.Background,
-				mounts:         newMounts,
-				workspace:      newWorkspaceName,
-				profile:        newProfile,
-				allowDomains:   newAllowDomains,
-				denyPaths:      newDenyPaths,
-				networkSandbox: newNetworkSandbox,
-				proxyProfile:   newProxyProfile,
-				proxyPort:      newProxyPort,
+				name:          res.Name,
+				worktree:      res.Worktree,
+				from:          res.From,
+				noWorktree:    res.NoWorktree,
+				yolo:          res.Yolo,
+				prompt:        res.Prompt,
+				background:    res.Background,
+				mounts:        newMounts,
+				workspace:     newWorkspaceName,
+				profile:       newProfile,
+				allowDomains:  newAllowDomains,
+				denyPaths:     newDenyPaths,
+				allowCommands: newAllowCommands,
+				denyCommands:  newDenyCommands,
+				proxyProfile:  newProxyProfile,
+				proxyPort:     newProxyPort,
 			})
 		}
 
 		return createSession(createOpts{
-			name:           newName,
-			worktree:       newWorktree,
-			from:           newFrom,
-			noWorktree:     newNoWorktree,
-			yolo:           newYolo,
-			prompt:         newPrompt,
-			cont:           newContinue,
-			background:     newBackground,
-			autoRemove:     newAutoRemove,
-			mounts:         newMounts,
-			workspace:      newWorkspaceName,
-			profile:        newProfile,
-			allowDomains:   newAllowDomains,
-			denyPaths:      newDenyPaths,
-			networkSandbox: newNetworkSandbox,
-			proxyProfile:   newProxyProfile,
-			proxyPort:      newProxyPort,
+			name:          newName,
+			worktree:      newWorktree,
+			from:          newFrom,
+			noWorktree:    newNoWorktree,
+			yolo:          newYolo,
+			prompt:        newPrompt,
+			cont:          newContinue,
+			background:    newBackground,
+			autoRemove:    newAutoRemove,
+			mounts:        newMounts,
+			workspace:     newWorkspaceName,
+			profile:       newProfile,
+			allowDomains:  newAllowDomains,
+			denyPaths:     newDenyPaths,
+			allowCommands: newAllowCommands,
+			denyCommands:  newDenyCommands,
+			proxyProfile:  newProxyProfile,
+			proxyPort:     newProxyPort,
 		})
 	},
 }
@@ -136,11 +140,11 @@ func init() {
 	newCmd.Flags().BoolVar(&newAutoRemove, "rm", false, "Auto-remove session when it exits")
 	newCmd.Flags().StringArrayVarP(&newMounts, "mount", "w", nil, "Additional folders to mount (repeatable)")
 	newCmd.Flags().StringVarP(&newWorkspaceName, "workspace", "W", "", "Named workspace from workspaces.json")
-	newCmd.Flags().StringVar(&newProfile, "profile", "", "Sandbox profile: low, med, high (default \"med\")")
-	newCmd.Flags().StringArrayVar(&newAllowDomains, "allow-domain", nil, "Add domain to sandbox allowlist")
-	newCmd.Flags().StringArrayVar(&newDenyPaths, "deny-path", nil, "Add path to sandbox deny list")
-	newCmd.Flags().StringVar(&newNetworkSandbox, "network-sandbox", "claude",
-		"Network enforcement: proxy, claude, both, none")
+	newCmd.Flags().StringVar(&newProfile, "profile", "", "Sandbox profile: low, default, med, high (default \"default\")")
+	newCmd.Flags().StringArrayVar(&newAllowDomains, "allow-domain", nil, "Add domain to proxy allowlist")
+	newCmd.Flags().StringArrayVar(&newDenyPaths, "deny-path", nil, "Add path to permissions deny list")
+	newCmd.Flags().StringArrayVar(&newAllowCommands, "allow-command", nil, "Add command pattern to allow list (e.g., 'docker *')")
+	newCmd.Flags().StringArrayVar(&newDenyCommands, "deny-command", nil, "Add command pattern to deny list (e.g., 'rm -rf *')")
 	newCmd.Flags().StringVar(&newProxyProfile, "proxy-profile", "default",
 		"Proxy rule profile name")
 	newCmd.Flags().IntVar(&newProxyPort, "proxy-port", 0,
@@ -209,20 +213,14 @@ func createSession(opts createOpts) error {
 
 	// Resolve sandbox profile.
 	profile := opts.profile
-	if opts.yolo && profile != "" && profile != "low" {
-		return fmt.Errorf("--yolo and --profile=%s conflict; --yolo is equivalent to --profile=low", profile)
+	if opts.yolo && profile != "" && profile != "low" && profile != "default" {
+		return fmt.Errorf("--yolo and --profile=%s conflict; --yolo implies a yolo profile (low or default)", profile)
 	}
-	if opts.yolo {
-		profile = "low"
+	if opts.yolo && profile == "" {
+		profile = "default"
 	}
 	if profile == "" {
-		profile = "med"
-	}
-
-	// Resolve network sandbox mode.
-	networkSandbox := opts.networkSandbox
-	if networkSandbox == "" {
-		networkSandbox = "claude"
+		profile = "default"
 	}
 
 	// b. Determine session name.
@@ -245,48 +243,62 @@ func createSession(opts createOpts) error {
 		return err
 	}
 
-	// Start proxy sidecar if needed.
+	// Start proxy sidecar (always).
 	proxyProfile := opts.proxyProfile
 	if proxyProfile == "" {
 		proxyProfile = "default"
 	}
-	useProxy := networkSandbox == "proxy" || networkSandbox == "both"
-	var resolvedPort int
-	if useProxy {
-		if !httpproxy.ImageExists() {
-			// Try loading from tarball
-			tarball := os.Getenv("CLAUDE_PROXY_IMAGE_TARBALL")
-			if tarball != "" {
-				loadCmd := exec.Command("docker", "load", "-i", tarball)
-				loadCmd.Stdout = os.Stdout
-				loadCmd.Stderr = os.Stderr
-				if err := loadCmd.Run(); err != nil {
-					return fmt.Errorf("load proxy image: %w", err)
-				}
-			} else {
-				return fmt.Errorf("proxy image %q not found; set CLAUDE_PROXY_IMAGE_TARBALL", httpproxy.ImageTag())
+	if !httpproxy.ImageExists() {
+		tarball := os.Getenv("CLAUDE_PROXY_IMAGE_TARBALL")
+		if tarball != "" {
+			loadCmd := exec.Command("docker", "load", "-i", tarball)
+			loadCmd.Stdout = os.Stdout
+			loadCmd.Stderr = os.Stderr
+			if err := loadCmd.Run(); err != nil {
+				return fmt.Errorf("load proxy image: %w", err)
 			}
-		}
-		var started bool
-		started, resolvedPort, err = httpproxy.EnsureRunning(httpproxy.ProxyOpts{
-			Profile:       proxyProfile,
-			ConfigDir:     config.DefaultDir(),
-			DashboardPort: opts.proxyPort,
-		})
-		if err != nil {
-			return fmt.Errorf("start proxy: %w", err)
-		}
-		if started {
-			fmt.Printf("Proxy started for profile %q — dashboard at %s\n",
-				proxyProfile, httpproxy.DashboardURL(resolvedPort))
 		} else {
-			fmt.Printf("Reusing proxy for profile %q — dashboard at %s\n",
-				proxyProfile, httpproxy.DashboardURL(resolvedPort))
+			return fmt.Errorf("proxy image %q not found; set CLAUDE_PROXY_IMAGE_TARBALL", httpproxy.ImageTag())
 		}
-		// Wait for CA cert
-		if err := httpproxy.WaitForCACert(config.DefaultDir()); err != nil {
-			return err
-		}
+	}
+
+	// Write proxy rules from profile before starting proxy.
+	prof, err := sandboxPkg.GetProfile(profile)
+	if err != nil {
+		return err
+	}
+	proxyRules := prof.ProxyRules(opts.allowDomains)
+	rulesPath := httpproxy.ProfileRulesPath(config.DefaultDir(), proxyProfile)
+	if err := os.MkdirAll(filepath.Dir(rulesPath), 0o755); err != nil {
+		return fmt.Errorf("create proxy rules dir: %w", err)
+	}
+	rulesJSON, err := json.MarshalIndent(proxyRules, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal proxy rules: %w", err)
+	}
+	if err := os.WriteFile(rulesPath, rulesJSON, 0o644); err != nil {
+		return fmt.Errorf("write proxy rules: %w", err)
+	}
+
+	var resolvedPort int
+	var started bool
+	started, resolvedPort, err = httpproxy.EnsureRunning(httpproxy.ProxyOpts{
+		Profile:       proxyProfile,
+		ConfigDir:     config.DefaultDir(),
+		DashboardPort: opts.proxyPort,
+	})
+	if err != nil {
+		return fmt.Errorf("start proxy: %w", err)
+	}
+	if started {
+		fmt.Printf("Proxy started for profile %q — dashboard at %s\n",
+			proxyProfile, httpproxy.DashboardURL(resolvedPort))
+	} else {
+		fmt.Printf("Reusing proxy for profile %q — dashboard at %s\n",
+			proxyProfile, httpproxy.DashboardURL(resolvedPort))
+	}
+	if err := httpproxy.WaitForCACert(config.DefaultDir()); err != nil {
+		return err
 	}
 
 	// e. Resolve workspace directory.
@@ -331,24 +343,22 @@ func createSession(opts createOpts) error {
 		return err
 	}
 
-	// Generate managed settings from profile.
-	prof, err := sandboxPkg.GetProfile(profile)
-	if err != nil {
-		return err
+	// Build extra allow perms: env var commands (skip for high profile) + CLI flags.
+	var extraAllowPerms []string
+	if profile != "high" {
+		extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(envExtraAllowCommands())...)
 	}
-	var settingsJSON []byte
-	switch networkSandbox {
-	case "proxy", "none":
-		// Unrestrict Claude's network — proxy (or nothing) handles it.
-		settingsJSON, err = json.MarshalIndent(
-			prof.ManagedSettingsUnrestricted(opts.denyPaths), "", "  ")
-	case "claude", "both":
-		// Claude sandbox manages network.
-		settingsJSON, err = json.MarshalIndent(
-			prof.ManagedSettings(opts.allowDomains, opts.denyPaths), "", "  ")
-	default:
-		return fmt.Errorf("invalid --network-sandbox value %q (valid: proxy, claude, both, none)", networkSandbox)
+	extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(opts.allowCommands)...)
+
+	// Build extra deny perms: --deny-path as Read() rules + --deny-command as Bash() rules.
+	var extraDenyPerms []string
+	for _, p := range opts.denyPaths {
+		extraDenyPerms = append(extraDenyPerms, fmt.Sprintf("Read(%s)", p))
 	}
+	extraDenyPerms = append(extraDenyPerms, wrapCommandPerms(opts.denyCommands)...)
+
+	settingsJSON, err := json.MarshalIndent(
+		prof.ManagedSettingsForProxy(8080, extraAllowPerms, extraDenyPerms), "", "  ")
 	if err != nil {
 		return err
 	}
@@ -365,22 +375,12 @@ func createSession(opts createOpts) error {
 		HostClaudeJSON:  config.HostClaudeJSON(),
 		UID:             os.Getuid(),
 		GID:             os.Getgid(),
-		Yolo:            profile == "low",
+		Yolo:            prof.Yolo,
 		Prompt:          opts.prompt,
 		Continue:        opts.cont,
 		ExtraWorkspaces: extraWorkspaces,
-		ProxyProfile: func() string {
-			if useProxy {
-				return proxyProfile
-			}
-			return ""
-		}(),
-		ProxyCACertDir: func() string {
-			if useProxy {
-				return httpproxy.CACertDir(config.DefaultDir())
-			}
-			return ""
-		}(),
+		ProxyProfile:    proxyProfile,
+		ProxyCACertDir:  httpproxy.CACertDir(config.DefaultDir()),
 	}
 
 	// g. Save session to store before running so it's tracked even if
@@ -391,14 +391,15 @@ func createSession(opts createOpts) error {
 		WorktreePath:    workspace,
 		RepoPath:        repoRoot,
 		ContainerName:   docker.ContainerName(name),
-		Yolo:            profile == "low",
+		Yolo:            prof.Yolo,
 		AutoRemove:      opts.autoRemove,
 		CreatedAt:       time.Now(),
 		Profile:         profile,
 		ExtraWorkspaces: extraWorkspaces,
 		AllowDomains:    opts.allowDomains,
 		DenyPaths:       opts.denyPaths,
-		NetworkSandbox:  networkSandbox,
+		AllowCommands:   opts.allowCommands,
+		DenyCommands:    opts.denyCommands,
 		ProxyProfile:    proxyProfile,
 		ProxyPort:       resolvedPort,
 	}
@@ -430,11 +431,39 @@ func createSession(opts createOpts) error {
 	proxyErr := proxy.Run(proxy.Opts{
 		DockerArgs:    []string{"attach", containerName},
 		ContainerName: containerName,
-		StatusBar: proxy.StatusBarInfo{Name: name, Branch: branch, Yolo: profile == "low", ProxyPort: resolvedPort},
+		StatusBar:     proxy.StatusBarInfo{Name: name, Branch: branch, Yolo: prof.Yolo, ProxyPort: resolvedPort},
 		AutoRemove:    opts.autoRemove,
 		Cleanup:       func(_ string) { removeSession(store, name) },
 	})
 	// Save resume ID from container logs so future reattach uses --resume.
 	saveResumeID(store, name)
 	return proxyErr
+}
+
+// envExtraAllowCommands reads command patterns from the
+// CLAUDE_CONTAINER_EXTRA_ALLOW_COMMANDS environment variable (JSON string array).
+// Returns nil when the variable is unset or empty.
+func envExtraAllowCommands() []string {
+	raw := os.Getenv("CLAUDE_CONTAINER_EXTRA_ALLOW_COMMANDS")
+	if raw == "" {
+		return nil
+	}
+	var cmds []string
+	if err := json.Unmarshal([]byte(raw), &cmds); err != nil {
+		return nil
+	}
+	return cmds
+}
+
+// wrapCommandPerms wraps bare command patterns as Bash() permission rules.
+// Example: "docker *" → "Bash(docker *)".
+func wrapCommandPerms(commands []string) []string {
+	if len(commands) == 0 {
+		return nil
+	}
+	perms := make([]string, len(commands))
+	for i, cmd := range commands {
+		perms[i] = fmt.Sprintf("Bash(%s)", cmd)
+	}
+	return perms
 }

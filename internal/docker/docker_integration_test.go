@@ -2,6 +2,7 @@ package docker
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -106,6 +107,7 @@ func runContainer(t *testing.T, opts runContainerOpts) containerResult {
 				"-v", opts.ProxyCACertDir+":/proxy-ca:ro",
 				"-e", "SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
 				"-e", "NIX_SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
+				"-e", "NODE_EXTRA_CA_CERTS=/proxy-ca/mitmproxy-ca-cert.pem",
 			)
 		}
 	}
@@ -377,7 +379,7 @@ func writeManagedSettings(t *testing.T, configDir, profileName string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := p.ManagedSettings(nil, nil)
+	settings := p.ManagedSettingsForProxy(8080, nil, nil)
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -410,8 +412,20 @@ func TestIntegrationManagedSettingsReadable(t *testing.T) {
 		t.Fatal("missing sandbox key in managed-settings.json")
 	}
 	enabled, _ := sb["enabled"].(bool)
-	if !enabled {
-		t.Error("med profile: sandbox.enabled should be true")
+	if enabled {
+		t.Error("med profile: sandbox.enabled should be false (proxy mode)")
+	}
+
+	// Verify permissions are present.
+	perms, ok := settings["permissions"].(map[string]any)
+	if !ok {
+		t.Fatal("med profile: missing permissions key")
+	}
+	if _, hasAllow := perms["allow"]; !hasAllow {
+		t.Error("med profile: missing permissions.allow")
+	}
+	if _, hasDeny := perms["deny"]; !hasDeny {
+		t.Error("med profile: missing permissions.deny")
 	}
 }
 
@@ -459,16 +473,9 @@ func TestIntegrationProfileSettingsHigh(t *testing.T) {
 	}
 
 	sb := settings["sandbox"].(map[string]any)
-	network := sb["network"].(map[string]any)
-	domainsRaw := network["allowedDomains"].([]any)
-
-	domains := make([]string, len(domainsRaw))
-	for i, d := range domainsRaw {
-		domains[i] = d.(string)
-	}
-
-	if len(domains) != 1 || domains[0] != "api.anthropic.com" {
-		t.Errorf("high profile allowedDomains = %v, want [api.anthropic.com]", domains)
+	enabled, _ := sb["enabled"].(bool)
+	if enabled {
+		t.Error("high profile: sandbox.enabled should be false (proxy mode)")
 	}
 
 	perms, ok := settings["permissions"].(map[string]any)
@@ -477,7 +484,32 @@ func TestIntegrationProfileSettingsHigh(t *testing.T) {
 	}
 	denyRaw, ok := perms["deny"].([]any)
 	if !ok || len(denyRaw) == 0 {
-		t.Error("high profile: deny paths should be non-empty")
+		t.Error("high profile: deny rules should be non-empty")
+	}
+
+	// Verify deny rules include Bash(curl *) and Bash(wget *)
+	denyStrings := make([]string, len(denyRaw))
+	for i, d := range denyRaw {
+		denyStrings[i] = d.(string)
+	}
+	wantDeny := []string{"Bash(curl *)", "Bash(wget *)"}
+	for _, want := range wantDeny {
+		found := false
+		for _, d := range denyStrings {
+			if d == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("high profile: missing %q in deny rules: %v", want, denyStrings)
+		}
+	}
+
+	// Verify allow rules present
+	allowRaw, ok := perms["allow"].([]any)
+	if !ok || len(allowRaw) == 0 {
+		t.Error("high profile: allow rules should be non-empty")
 	}
 }
 
@@ -540,10 +572,17 @@ func TestIntegrationProfileYoloEquivalence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	settings := p.ManagedSettings(nil, nil)
-	sb := settings["sandbox"].(map[string]any)
-	if enabled, _ := sb["enabled"].(bool); enabled {
-		t.Error("low profile sandbox.enabled should be false")
+	if !p.Yolo {
+		t.Error("low profile should have Yolo=true")
+	}
+
+	// Default profile should also be yolo.
+	dp, err := sandbox.GetProfile("default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dp.Yolo {
+		t.Error("default profile should have Yolo=true")
 	}
 
 	args := RunArgs(RunOpts{
@@ -764,4 +803,268 @@ func TestIntegrationProxyContainerSetup(t *testing.T) {
 			t.Errorf("request finished in %v; expected proxy to hold until timeout (~5s)", elapsed)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// E2E Claude Code + Proxy tests — real Claude session through proxy
+// ---------------------------------------------------------------------------
+
+// skipIfNoHostCredentials skips the test when host Claude credentials are not
+// available (required for real Claude Code execution).
+func skipIfNoHostCredentials(t *testing.T) {
+	t.Helper()
+	if config.HostClaudeDir() == "" {
+		t.Skip("no ~/.claude directory found; need authenticated Claude Code")
+	}
+}
+
+// claudeProxyE2EResult holds the outcome of a Claude proxy E2E test run.
+type claudeProxyE2EResult struct {
+	Workspace     string
+	HNIntercepted bool
+}
+
+// runClaudeProxyE2E is a shared helper for the allow/deny E2E tests.
+// It starts a proxy, runs Claude Code with a prompt, monitors pending requests,
+// and resolves the Hacker News request with the given action ("allow" or "deny").
+func runClaudeProxyE2E(t *testing.T, profile string, hnAction string) claudeProxyE2EResult {
+	t.Helper()
+
+	configDir := makeConfigDir(t)
+	os.MkdirAll(filepath.Join(configDir, "proxy-profiles"), 0o755)
+	workspace := t.TempDir()
+
+	// Write managed settings: sandbox disabled (bubblewrap can't run in Docker)
+	// with wildcard domains and httpProxyPort. Network access control is handled
+	// by the proxy sidecar instead of Claude's sandbox.
+	medProfile, err := sandbox.GetProfile("med")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settingsJSON, err := json.MarshalIndent(medProfile.ManagedSettingsForProxy(8080, nil, nil), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "managed-settings.json"), settingsJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Start proxy sidecar.
+	started, dashPort, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
+		Profile:       profile,
+		ConfigDir:     configDir,
+		DashboardPort: 0,
+	})
+	if err != nil {
+		t.Fatalf("EnsureRunning: %v", err)
+	}
+	if !started {
+		t.Fatal("expected proxy to be freshly started")
+	}
+	t.Cleanup(func() { httpproxy.Stop(profile) })
+
+	waitForProxyDashboard(t, dashPort, 30*time.Second)
+	caCertDir := waitForCACert(t, configDir, 30*time.Second)
+
+	// Pre-allow Anthropic API and common infrastructure so Claude can function.
+	addProxyRule(t, dashPort, "allow", `^https://.*anthropic\.com(/.*)?$`, "anthropic-api")
+	addProxyRule(t, dashPort, "allow", `^https://.*sentry.*(/.*)?$`, "sentry")
+	addProxyRule(t, dashPort, "allow", `^https://.*statsig.*(/.*)?$`, "statsig")
+
+	// Build docker run args for Claude container.
+	containerName := "claude-e2e-" + profile
+	proxyContainer := httpproxy.ContainerName(profile)
+	network := httpproxy.NetworkName(profile)
+	uid, gid := os.Getuid(), os.Getgid()
+
+	prompt := `Download https://hacker-news.firebaseio.com/v0/topstories.json using curl and save the raw content to /workspace/topstories.json. If the download fails for any reason (connection reset, timeout, HTTP error, etc), instead write a file /workspace/topstories-error.txt whose first line is FAILED and whose second line describes the error.`
+
+	args := []string{
+		"run", "-d",
+		"--name", containerName,
+		"--network", network,
+		"-e", fmt.Sprintf("HTTP_PROXY=http://%s:8080", proxyContainer),
+		"-e", fmt.Sprintf("HTTPS_PROXY=http://%s:8080", proxyContainer),
+		"-v", caCertDir + ":/proxy-ca:ro",
+		"-e", "SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
+		"-e", "NIX_SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
+		"-e", "NODE_EXTRA_CA_CERTS=/proxy-ca/mitmproxy-ca-cert.pem",
+		"-v", workspace + ":/workspace",
+		"-v", configDir + ":/claude",
+		"-e", "CLAUDE_CONFIG_DIR=/claude",
+		"-e", fmt.Sprintf("USER_UID=%d", uid),
+		"-e", fmt.Sprintf("USER_GID=%d", gid),
+	}
+	if dir := config.HostClaudeDir(); dir != "" {
+		args = append(args, "-v", dir+":/mnt/claude-host:ro")
+	}
+	if p := config.HostClaudeJSON(); p != "" {
+		args = append(args, "-v", p+":/mnt/claude-host-json:ro")
+	}
+	args = append(args, ImageTag(),
+		"claude", "-p", "--dangerously-skip-permissions", prompt)
+
+	cmd := exec.Command("docker", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("docker run: %v\n%s", err, out)
+	}
+	t.Cleanup(func() {
+		exec.Command("docker", "rm", "-f", containerName).Run()
+	})
+
+	// Poll pending requests. Auto-resolve anything that isn't the Hacker News
+	// URL. When the HN request appears, resolve it with the specified action.
+	hnIntercepted := false
+	deadline := time.Now().Add(180 * time.Second)
+
+	for time.Now().Before(deadline) {
+		// Check if container is still running.
+		inspectCmd := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", containerName)
+		inspectOut, _ := inspectCmd.Output()
+		running := strings.TrimSpace(string(inspectOut)) == "true"
+
+		// Poll pending requests.
+		curlCmd := exec.Command("curl", "-sf", "--max-time", "2",
+			fmt.Sprintf("http://localhost:%d/api/pending", dashPort))
+		pendingOut, curlErr := curlCmd.Output()
+		if curlErr == nil {
+			var pending []map[string]any
+			if json.Unmarshal(pendingOut, &pending) == nil {
+				for _, p := range pending {
+					flowID, _ := p["flow_id"].(string)
+					url, _ := p["url"].(string)
+					if flowID == "" {
+						continue
+					}
+
+					isHN := strings.Contains(url, "hacker-news.firebaseio")
+
+					var action, pattern, label string
+					if isHN {
+						action = hnAction
+						pattern = `^https://hacker-news\.firebaseio\.com(/.*)?$`
+						label = "hacker-news"
+						hnIntercepted = true
+						t.Logf("Hacker News request intercepted (flow %s): %s → %s", flowID, url, hnAction)
+					} else {
+						action = "allow"
+						pattern = ".*"
+						label = "auto-allow"
+						t.Logf("Auto-resolving (flow %s): %s", flowID, url)
+					}
+
+					resolvePayload := fmt.Sprintf(
+						`{"flow_id":%q,"action":%q,"pattern":%q,"label":%q}`,
+						flowID, action, pattern, label)
+					exec.Command("curl", "-sf", "-X", "POST",
+						"-H", "Content-Type: application/json",
+						"-d", resolvePayload,
+						fmt.Sprintf("http://localhost:%d/api/resolve", dashPort)).Run()
+				}
+			}
+		}
+
+		if !running {
+			break
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
+	// If the container is still running, wait for it to finish (with timeout).
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	exec.CommandContext(ctx, "docker", "wait", containerName).Run()
+
+	if !hnIntercepted {
+		logsCmd := exec.Command("docker", "logs", "--tail", "100", containerName)
+		logs, _ := logsCmd.CombinedOutput()
+		t.Fatalf("hacker-news request never appeared in proxy pending\nContainer logs:\n%s", StripANSI(string(logs)))
+	}
+
+	return claudeProxyE2EResult{
+		Workspace:     workspace,
+		HNIntercepted: hnIntercepted,
+	}
+}
+
+// TestIntegrationE2EClaudeProxyAllow runs a real Claude Code session through
+// the proxy, intercepts the Hacker News API request, allows it, and verifies
+// Claude successfully writes the downloaded JSON to disk.
+func TestIntegrationE2EClaudeProxyAllow(t *testing.T) {
+	skipIfDockerUnavailable(t)
+	skipIfProxyImageUnavailable(t)
+	skipIfNoHostCredentials(t)
+
+	result := runClaudeProxyE2E(t, "e2e-claude-allow", "allow")
+
+	// Verify the success file was written.
+	filePath := filepath.Join(result.Workspace, "topstories.json")
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		logsCmd := exec.Command("docker", "logs", "--tail", "100", "claude-e2e-e2e-claude-allow")
+		logs, _ := logsCmd.CombinedOutput()
+		t.Fatalf("topstories.json not found: %v\nContainer logs:\n%s", err, StripANSI(string(logs)))
+	}
+
+	// Verify valid JSON array.
+	var stories []any
+	if err := json.Unmarshal(data, &stories); err != nil {
+		t.Fatalf("invalid JSON in topstories.json: %v\ncontent (first 500 chars): %s",
+			err, string(data[:min(len(data), 500)]))
+	}
+	if len(stories) == 0 {
+		t.Error("topstories.json contains empty array")
+	}
+	t.Logf("topstories.json: valid JSON array with %d items", len(stories))
+
+	// Verify no error file was written.
+	errPath := filepath.Join(result.Workspace, "topstories-error.txt")
+	if _, err := os.Stat(errPath); err == nil {
+		content, _ := os.ReadFile(errPath)
+		t.Errorf("unexpected error file written: %s", string(content))
+	}
+}
+
+// TestIntegrationE2EClaudeProxyDeny runs a real Claude Code session through
+// the proxy, intercepts the Hacker News API request, denies it, and verifies
+// Claude writes a failure indicator to disk.
+func TestIntegrationE2EClaudeProxyDeny(t *testing.T) {
+	skipIfDockerUnavailable(t)
+	skipIfProxyImageUnavailable(t)
+	skipIfNoHostCredentials(t)
+
+	result := runClaudeProxyE2E(t, "e2e-claude-deny", "deny")
+
+	// Verify the error file was written.
+	errPath := filepath.Join(result.Workspace, "topstories-error.txt")
+	errData, err := os.ReadFile(errPath)
+	if err != nil {
+		// Claude might not have written the error file. Check if it wrote
+		// the success file instead (which would be a test failure).
+		successPath := filepath.Join(result.Workspace, "topstories.json")
+		if data, readErr := os.ReadFile(successPath); readErr == nil {
+			t.Fatalf("expected error file, but topstories.json was written (deny didn't work): %s",
+				string(data[:min(len(data), 200)]))
+		}
+
+		logsCmd := exec.Command("docker", "logs", "--tail", "100", "claude-e2e-e2e-claude-deny")
+		logs, _ := logsCmd.CombinedOutput()
+		t.Fatalf("topstories-error.txt not found: %v\nContainer logs:\n%s", err, StripANSI(string(logs)))
+	}
+
+	content := string(errData)
+	if !strings.Contains(strings.ToUpper(content), "FAIL") {
+		t.Errorf("error file should contain FAIL, got: %s", content)
+	}
+	t.Logf("Error file content: %s", strings.TrimSpace(content))
+
+	// topstories.json should not exist (or should be empty/invalid).
+	successPath := filepath.Join(result.Workspace, "topstories.json")
+	if data, err := os.ReadFile(successPath); err == nil && len(data) > 0 {
+		var stories []any
+		if json.Unmarshal(data, &stories) == nil && len(stories) > 0 {
+			t.Errorf("topstories.json should not contain valid data when connection was denied, got %d items", len(stories))
+		}
+	}
 }

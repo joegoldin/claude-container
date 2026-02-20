@@ -25,6 +25,7 @@
           settings ? { },
           managedSettings ? import ./nix/managed-settings.nix,
           extraPackages ? [ ],
+          extraAllowCommands ? [ ],
         }:
         let
           system = pkgs.stdenv.hostPlatform.system;
@@ -39,6 +40,20 @@
           };
 
           proxyImage = pkgs.callPackage ./nix/proxy-image.nix { };
+
+          # Auto-derive command names from extraPackages so they get allowed
+          # in default/med security profiles. Uses meta.mainProgram when
+          # available, falling back to pname or the name portion of the
+          # derivation name.
+          derivedCommands = map (
+            pkg:
+            let
+              name = pkg.meta.mainProgram or pkg.pname or (builtins.parseDrvName pkg.name).name;
+            in
+            "${name} *"
+          ) extraPackages;
+
+          allExtraAllowCommands = derivedCommands ++ extraAllowCommands;
 
           cli = pkgs.symlinkJoin {
             name = "claude-container";
@@ -58,7 +73,8 @@
                 --set CLAUDE_CONTAINER_IMAGE_TARBALL "${image}" \
                 --set CLAUDE_CONTAINER_IMAGE_TAG "claude-code:latest" \
                 --set CLAUDE_PROXY_IMAGE_TARBALL "${proxyImage}" \
-                --set CLAUDE_PROXY_IMAGE_TAG "claude-proxy:latest"
+                --set CLAUDE_PROXY_IMAGE_TAG "claude-proxy:latest" \
+                --set CLAUDE_CONTAINER_EXTRA_ALLOW_COMMANDS '${builtins.toJSON allExtraAllowCommands}'
 
               # Create yacc alias pointing to wrapped binary
               ln -sf $out/bin/claude-container $out/bin/yacc
