@@ -462,54 +462,102 @@ Session state and authentication are stored at `$XDG_CONFIG_HOME/claude-containe
 
 ## SANDBOX PROFILES
 
-Four built-in profiles control Claude's permission rules:
+Sandbox profiles (`--profile`) control Claude Code's internal permission rules.
+Actual sandboxing is handled by rootless Docker (OS-level isolation) and the
+network proxy (HTTP/HTTPS control), not by Claude's built-in sandbox.
+
+Four built-in profiles:
 
     low        no permission prompts, unrestricted commands and filesystem
-    default    same as low (sandbox enforced by Docker + proxy, not Claude)
-    med        allow/deny lists, no interactive prompts (dontAsk mode)
+    default    same as low (yolo mode -- Docker + proxy enforce security)
+    med        allow/deny lists enforced without prompts (dontAsk mode)
     high       restricted to /workspace, denies curl/wget, Anthropic API only
-
-Use `--profile` to select, `--allow-domain`, `--deny-path`, `--allow-command`,
-and `--deny-command` to customize:
-
-```sh
-claude-container run --profile=high --allow-domain=github.com
-claude-container work -w ~/code/a --profile=low
-claude-container run --allow-command='docker *' --deny-command='rm -rf *'
-```
 
 `--yolo` is equivalent to `--profile=low`.
 
-## NETWORK PROXY
+Each profile also determines which domains are pre-allowed in the network
+proxy (see **NETWORK PROXY** below).
 
-An HTTP/HTTPS proxy sidecar can sit between Claude and the internet, providing
-interactive network access control with a web dashboard.
-
-### Usage
+### Customizing profiles
 
 ```sh
-# Start with proxy — dashboard at http://localhost:<auto-port>
-claude-container run --proxy-profile=work
+# Add allowed commands
+claude-container run --allow-command='docker *' --allow-command='kubectl *'
 
-# Custom dashboard port
-claude-container run --proxy-profile=work --proxy-port=9090
+# Deny specific commands
+claude-container run --deny-command='rm -rf *'
+
+# Deny read access to specific paths
+claude-container run --deny-path='/etc/passwd'
+
+# Add allowed domains to the proxy
+claude-container run --profile=high --allow-domain=github.com
 ```
 
-When unknown domains are accessed, the proxy holds the connection and notifies
-you via the web dashboard (and browser notifications). You can allow or deny
-with pattern-based rules that persist across sessions.
+## NETWORK PROXY
 
-### Flags
+Every session runs behind an HTTP/HTTPS proxy sidecar (mitmproxy). The proxy
+intercepts all outbound traffic and enforces domain-based allow/deny rules.
+Requests to unknown domains are held until you approve or deny them via a web
+dashboard.
+
+### How it works
+
+1. A proxy container starts on a dedicated Docker network
+2. The Claude container joins that network with `HTTP_PROXY`/`HTTPS_PROXY` set
+3. The proxy's mitmproxy CA certificate is mounted for HTTPS interception
+4. Outbound requests are matched against rules; unknown requests are held
+5. The web dashboard shows held requests with browser notifications
+6. Approved/denied patterns are saved as rules for future requests
+
+### Default allowed domains by profile
+
+The sandbox profile (`--profile`) determines which domains are pre-allowed
+in the proxy when a session starts:
+
+**low / default** -- all traffic allowed (proxy rule: `.*`)
+
+**med** -- common development infrastructure:
+
+    api.anthropic.com         statsig.anthropic.com     sentry.io
+    github.com                *.github.com              *.npmjs.org
+    registry.npmjs.org        registry.yarnpkg.com      pypi.org
+    *.pypi.org                files.pythonhosted.org
+
+**high** -- Anthropic API only:
+
+    api.anthropic.com
+
+Any domain not in the list is held by the proxy until you approve it.
+Use `--allow-domain` to pre-allow additional domains:
+
+```sh
+claude-container run --profile=high --allow-domain=github.com --allow-domain=npmjs.org
+```
+
+### Proxy profiles
+
+The proxy profile (`--proxy-profile`) determines which rule set and proxy
+container to use. This is separate from the sandbox profile.
+
+```sh
+# Different proxy profiles for different contexts
+claude-container run --proxy-profile=work
+claude-container run --proxy-profile=personal --proxy-port=9090
+```
 
     --proxy-profile string      Rule profile name (default "default")
     --proxy-port int            Dashboard port on host (0 = auto-assign)
 
-### Proxy reuse
+Proxy containers are named by profile, not by session. Multiple sessions
+with the same `--proxy-profile` share a single proxy process and rule set.
+Rules added in one session are immediately visible to all sessions sharing
+that profile. The proxy is stopped only when the last session using it is
+removed.
 
-Proxy containers are named by profile, not by session. Multiple sessions with
-the same `--proxy-profile` share a single proxy process. Rules added in one
-session are immediately visible to all sessions sharing that profile. The proxy
-is stopped only when the last session using it is removed.
+Rules persist across sessions in:
+
+    ~/.config/claude-container/proxy-profiles/profiles/<profile>.json
 
 ## ENVIRONMENT
 
