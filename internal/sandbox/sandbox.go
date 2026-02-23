@@ -66,7 +66,7 @@ var profiles = map[string]Profile{
 			"Bash(pip *)", "Bash(python *)", "Bash(node *)",
 			"Bash(cargo *)", "Bash(go *)", "Bash(make *)",
 			"Bash(ls *)", "Bash(cat *)", "Bash(grep *)",
-			"Bash(find *)", "Bash(curl *)", "Bash(wget *)",
+			"Bash(find *)", "Bash(touch *)", "Bash(curl *)", "Bash(wget *)",
 			"Write(**)", "Edit(**)",
 		},
 		DenyPerms: []string{
