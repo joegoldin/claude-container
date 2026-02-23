@@ -97,6 +97,23 @@ var rootCmd = &cobra.Command{
 				if dir == "" {
 					dir, _ = os.Getwd()
 				}
+
+				// Create the directory if it doesn't exist.
+				if _, err := os.Stat(dir); os.IsNotExist(err) {
+					if err := os.MkdirAll(dir, 0o755); err != nil {
+						fmt.Fprintln(os.Stderr, "error creating directory:", err)
+						continue
+					}
+				}
+
+				// Switch to the chosen directory so createSession uses it
+				// as the workspace.
+				origDir, _ := os.Getwd()
+				if err := os.Chdir(dir); err != nil {
+					fmt.Fprintln(os.Stderr, "error:", err)
+					continue
+				}
+
 				repoPath, _ := gitpkg.RepoRoot(dir)
 
 				wiz := tui.NewWizard(repoPath, dir)
@@ -104,16 +121,18 @@ var rootCmd = &cobra.Command{
 				wResult, err := wp.Run()
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "wizard error:", err)
+					os.Chdir(origDir)
 					continue
 				}
 				res := wResult.(tui.WizardModel).Result()
 				if res.Cancelled {
+					os.Chdir(origDir)
 					continue
 				}
 				// From dashboard, always create in background mode so we
-			// return to the dashboard loop. Then auto-attach unless
-			// the user pressed ctrl+b in the wizard.
-			if err := createSession(createOpts{
+				// return to the dashboard loop. Then auto-attach unless
+				// the user pressed ctrl+b in the wizard.
+				if err := createSession(createOpts{
 					name:       res.Name,
 					worktree:   res.Worktree,
 					from:       res.From,
@@ -125,6 +144,7 @@ var rootCmd = &cobra.Command{
 					workspace:  res.Workspace,
 				}); err != nil {
 					fmt.Fprintln(os.Stderr, "error:", err)
+					os.Chdir(origDir)
 					continue
 				}
 				if !res.Background {
@@ -137,6 +157,7 @@ var rootCmd = &cobra.Command{
 					})
 					saveResumeID(store, res.Name)
 				}
+				os.Chdir(origDir)
 				continue
 			}
 
