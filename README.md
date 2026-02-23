@@ -10,6 +10,24 @@
 
 claude-container - run multiple Claude Code instances in isolated containers
 
+## QUICK START
+
+```sh
+# Fix a bug on an isolated branch, hands-free
+claude-container work --yolo -p "fix the race condition in src/worker.go"
+
+# Run three agents in parallel on separate features
+claude-container work -b -p "add input validation to the signup form" &
+claude-container work -b -p "write unit tests for the payment module" &
+claude-container work -b -p "migrate the config from YAML to TOML" &
+
+# One-shot task piped to a file
+claude-container task -p "explain the authentication flow" > auth-docs.md
+
+# Interactive session with network proxy for approval-based internet access
+claude-container run --proxy-profile=work --profile=med
+```
+
 ## SYNOPSIS
 
 ```
@@ -37,10 +55,14 @@ claude-container fix-perms <session>      # fix workspace ownership
 A CLI tool for running multiple Claude Code instances in isolated, sandboxed
 Docker containers with git worktree separation and a TUI dashboard.
 
-Two isolation layers prevent agents from interfering with each other:
+Three isolation layers prevent agents from interfering with each other and
+with the host:
 
+- **Docker containers** -- rootless Docker provides OS-level sandboxing
+  without requiring root privileges or changing file ownership
 - **Git worktrees** -- each session gets its own branch and working directory
-- **Docker containers** -- sandboxed execution with controlled permissions
+- **Network proxy** -- optional HTTP/HTTPS proxy sidecar with per-domain
+  allow/deny rules and a web dashboard for interactive approval
 
 All sessions share a single Claude config directory for authentication. Run
 `claude-container auth` once and all sessions use those credentials.
@@ -440,12 +462,12 @@ Session state and authentication are stored at `$XDG_CONFIG_HOME/claude-containe
 
 ## SANDBOX PROFILES
 
-Four built-in profiles control sandbox security:
+Four built-in profiles control Claude's permission rules:
 
-    low        sandbox off, unrestricted network, full filesystem
-    default    sandbox on, allowlisted domains, deny sensitive paths (default)
-    med        same as default
-    high       sandbox on, Anthropic API only, /workspace only
+    low        no permission prompts, unrestricted commands and filesystem
+    default    same as low (sandbox enforced by Docker + proxy, not Claude)
+    med        allow/deny lists, no interactive prompts (dontAsk mode)
+    high       restricted to /workspace, denies curl/wget, Anthropic API only
 
 Use `--profile` to select, `--allow-domain`, `--deny-path`, `--allow-command`,
 and `--deny-command` to customize:
@@ -570,8 +592,10 @@ Default tools included in the image:
 Additional packages can be added via the `extraPackages` option in
 `lib.mkClaudeContainer`.
 
-The entrypoint handles UID/GID mapping via shadow utilities and su-exec,
-matching the host user inside the container.
+The entrypoint handles UID/GID mapping via shadow utilities and su-exec.
+In rootless Docker, the container runs as root (which maps to the host
+user's UID) so mounted volumes keep their original ownership. In standard
+Docker, a non-root user matching the host UID is created at startup.
 
 ## DEPENDENCIES
 

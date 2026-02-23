@@ -63,6 +63,7 @@ var profiles = map[string]Profile{
 			"Bash(cargo *)", "Bash(go *)", "Bash(make *)",
 			"Bash(ls *)", "Bash(cat *)", "Bash(grep *)",
 			"Bash(find *)", "Bash(curl *)", "Bash(wget *)",
+			"Write(**)", "Edit(**)",
 		},
 		DenyPerms: []string{
 			"Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.gnupg/**)",
@@ -76,6 +77,7 @@ var profiles = map[string]Profile{
 		AllowPerms: []string{
 			"Bash(git status *)", "Bash(git diff *)", "Bash(git log *)",
 			"Bash(ls *)", "Bash(cat *)",
+			"Write(/workspace/**)", "Edit(/workspace/**)",
 		},
 		DenyPerms: []string{
 			"Bash(curl *)", "Bash(wget *)",
@@ -150,8 +152,10 @@ func (p Profile) ProxyRules(extraDomains []string) []map[string]any {
 }
 
 // ManagedSettingsForProxy generates settings for use with an external HTTP proxy.
-// The sandbox is disabled because bubblewrap cannot create user namespaces inside
-// Docker. Network access control is handled by the proxy sidecar instead.
+// The sandbox is enabled with enableWeakerNestedSandbox for Docker environments
+// where full bubblewrap sandboxing is unavailable. allowUnsandboxedCommands is
+// true so commands still run if the weaker sandbox also fails. Network access
+// control is handled by the proxy sidecar (allowedDomains: * with httpProxyPort).
 // Permission allow/deny rules from the profile are merged with extraAllowPerms
 // and extraDenyPerms. Non-yolo profiles get defaultMode "dontAsk" so permissions
 // are enforced via the allow/deny lists without interactive prompts.
@@ -166,10 +170,10 @@ func (p Profile) ManagedSettingsForProxy(httpProxyPort int, extraAllowPerms []st
 		"showTurnDuration":      true,
 		"spinnerTipsEnabled":    false,
 		"sandbox": map[string]any{
-			"enabled":                   false,
+			"enabled":                   true,
 			"autoAllowBashIfSandboxed":  true,
 			"enableWeakerNestedSandbox": true,
-			"allowUnsandboxedCommands":  false,
+			"allowUnsandboxedCommands":  true,
 			"excludedCommands":          []string{"git"},
 			"network": map[string]any{
 				"allowedDomains": []string{"*"},

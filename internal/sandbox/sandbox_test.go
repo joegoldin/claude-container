@@ -112,8 +112,8 @@ func TestManagedSettingsForProxyWildcardDomains(t *testing.T) {
 		t.Errorf("proxy settings httpProxyPort = %v, want 8080", network["httpProxyPort"])
 	}
 
-	if enabled, _ := sandbox["enabled"].(bool); enabled {
-		t.Error("sandbox should be disabled in proxy mode")
+	if enabled, _ := sandbox["enabled"].(bool); !enabled {
+		t.Error("sandbox should be enabled (weaker nested sandbox for Docker)")
 	}
 }
 
@@ -146,8 +146,8 @@ func TestManagedSettingsForProxyLowProfile(t *testing.T) {
 	settings := p.ManagedSettingsForProxy(8080, nil, nil)
 	sandbox := settings["sandbox"].(map[string]any)
 
-	if enabled, _ := sandbox["enabled"].(bool); enabled {
-		t.Error("low profile sandbox should be disabled")
+	if enabled, _ := sandbox["enabled"].(bool); !enabled {
+		t.Error("low profile sandbox should be enabled")
 	}
 
 	network := sandbox["network"].(map[string]any)
@@ -165,8 +165,8 @@ func TestManagedSettingsForProxyDefaultProfile(t *testing.T) {
 	settings := p.ManagedSettingsForProxy(8080, nil, nil)
 	sandbox := settings["sandbox"].(map[string]any)
 
-	if enabled, _ := sandbox["enabled"].(bool); enabled {
-		t.Error("default profile sandbox should be disabled")
+	if enabled, _ := sandbox["enabled"].(bool); !enabled {
+		t.Error("default profile sandbox should be enabled")
 	}
 
 	// Default profile is yolo — no permissions key.
@@ -335,7 +335,7 @@ func TestMedPermissionsAllow(t *testing.T) {
 		t.Fatal("med profile should have permissions.allow")
 	}
 
-	wantRules := []string{"Bash(git *)", "Bash(npm *)", "Bash(curl *)"}
+	wantRules := []string{"Bash(git *)", "Bash(npm *)", "Bash(curl *)", "Write(**)", "Edit(**)"}
 	for _, want := range wantRules {
 		found := false
 		for _, a := range allow {
@@ -385,7 +385,10 @@ func TestHighPermissionsAllow(t *testing.T) {
 		t.Fatal("high profile should have permissions.allow")
 	}
 
-	wantRules := []string{"Bash(git status *)", "Bash(ls *)", "Bash(cat *)"}
+	wantRules := []string{
+		"Bash(git status *)", "Bash(ls *)", "Bash(cat *)",
+		"Write(/workspace/**)", "Edit(/workspace/**)",
+	}
 	for _, want := range wantRules {
 		found := false
 		for _, a := range allow {

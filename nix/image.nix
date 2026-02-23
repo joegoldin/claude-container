@@ -36,41 +36,48 @@ let
     USER_UID=''${USER_UID:-1000}
     USER_GID=''${USER_GID:-1000}
 
-    # If running as root, exec directly
+    # --- User setup ---
+    # When UID=0 (rootless Docker or actual root), run as container root.
+    # In rootless Docker, container UID 0 maps to the host user's UID, so
+    # mounted volumes are accessible without any chown. We do NOT remap to
+    # a non-root user because that would change ownership of mounted dirs
+    # to a subordinate UID on the host.
+
     if [ "$USER_UID" -eq 0 ]; then
-      exec "$@"
-    fi
-
-    # Create group if it doesn't exist
-    if ! ${getent} group "$USER_GID" >/dev/null 2>&1; then
-      ${groupadd} -g "$USER_GID" claude 2>/dev/null || true
-      GROUP_NAME="claude"
+      USER_NAME="root"
+      USER_HOME="/root"
+      ${mkdir} -p /root
     else
-      GROUP_NAME=$(${getent} group "$USER_GID" | ${cut} -d: -f1)
+      # Non-rootless Docker: create user matching the host UID.
+      if ! ${getent} group "$USER_GID" >/dev/null 2>&1; then
+        ${groupadd} -g "$USER_GID" claude 2>/dev/null || true
+        GROUP_NAME="claude"
+      else
+        GROUP_NAME=$(${getent} group "$USER_GID" | ${cut} -d: -f1)
+      fi
+
+      if ! ${getent} passwd "$USER_UID" >/dev/null 2>&1; then
+        ${useradd} -u "$USER_UID" -g "$GROUP_NAME" -d /home/claude -s ${bash}/bin/bash -M claude 2>/dev/null || true
+        ${mkdir} -p /home/claude
+        ${chown} "$USER_UID:$USER_GID" /home/claude
+        USER_NAME="claude"
+      else
+        USER_NAME=$(${getent} passwd "$USER_UID" | ${cut} -d: -f1)
+      fi
+
+      USER_HOME=$(${getent} passwd "$USER_UID" | ${cut} -d: -f6)
+      USER_HOME=''${USER_HOME:-/home/claude}
     fi
 
-    # Create user if it doesn't exist
-    if ! ${getent} passwd "$USER_UID" >/dev/null 2>&1; then
-      ${useradd} -u "$USER_UID" -g "$GROUP_NAME" -d /home/claude -s ${bash}/bin/bash -M claude 2>/dev/null || true
-      ${mkdir} -p /home/claude
-      ${chown} "$USER_UID:$USER_GID" /home/claude
-      USER_NAME="claude"
-    else
-      USER_NAME=$(${getent} passwd "$USER_UID" | ${cut} -d: -f1)
-    fi
+    export HOME="$USER_HOME"
 
-    # Fix config dir permissions
-    if [ -d /claude ]; then
-      ${chown} -R "$USER_UID:$USER_GID" /claude 2>/dev/null || true
-      ${chmod} 755 /claude 2>/dev/null || true
-    fi
+    # --- Config setup ---
 
     # Copy host credentials if mounted read-only
     if [ -d /mnt/claude-host ]; then
       for f in .credentials.json settings.json .claude.json; do
         if [ -f "/mnt/claude-host/$f" ]; then
           ${cp} -L "/mnt/claude-host/$f" "/claude/$f"
-          ${chown} "$USER_UID:$USER_GID" "/claude/$f"
           ${chmod} 600 "/claude/$f"
         fi
       done
@@ -78,14 +85,8 @@ let
 
     if [ -f /mnt/claude-host-json ]; then
       ${cp} -L /mnt/claude-host-json /claude/.claude.json
-      ${chown} "$USER_UID:$USER_GID" /claude/.claude.json
       ${chmod} 600 /claude/.claude.json
     fi
-
-    # Set HOME
-    USER_HOME=$(${getent} passwd "$USER_UID" | ${cut} -d: -f6)
-    USER_HOME=''${USER_HOME:-/home/claude}
-    export HOME="$USER_HOME"
 
     # Symlink so Claude finds config at both paths
     ${ln} -sfn /claude "$HOME/.claude" 2>/dev/null || true
@@ -97,22 +98,38 @@ let
     else
       echo '{"bypassPermissionsModeAccepted":true}' > /claude/.claude.json
     fi
-    ${chown} "$USER_UID:$USER_GID" /claude/.claude.json 2>/dev/null || true
 
     # Copy to HOME root level
     if [ -f /claude/.claude.json ]; then
       ${cp} /claude/.claude.json "$HOME/.claude.json" 2>/dev/null || true
-      ${chown} "$USER_UID:$USER_GID" "$HOME/.claude.json" 2>/dev/null || true
     fi
 
     # Copy baked-in settings if no settings exist in config dir
     if [ ! -f /claude/settings.json ] && [ -f /etc/claude-code/settings.json ]; then
       ${cp} /etc/claude-code/settings.json /claude/settings.json
-      ${chown} "$USER_UID:$USER_GID" /claude/settings.json 2>/dev/null || true
+    fi
+
+    # If managed settings were provided via config dir (by the Go binary),
+    # copy them to the enterprise path so they take priority over baked-in defaults.
+    if [ -f /claude/managed-settings.json ]; then
+      ${cp} /claude/managed-settings.json /etc/claude-code/managed-settings.json
+    fi
+
+    # For non-root user: fix ownership of config files created above by root.
+    # Do NOT chown /workspace — Docker handles mount ownership via UID mapping.
+    if [ "$USER_UID" -ne 0 ]; then
+      ${chown} -R "$USER_UID:$USER_GID" /claude 2>/dev/null || true
+      ${chmod} 755 /claude 2>/dev/null || true
+      ${chown} "$USER_UID:$USER_GID" "$HOME/.claude.json" 2>/dev/null || true
     fi
 
     export SHELL=${bash}/bin/bash
-    exec ${suExec} "$USER_NAME" "$@"
+
+    if [ "$USER_UID" -eq 0 ]; then
+      exec "$@"
+    else
+      exec ${suExec} "$USER_NAME" "$@"
+    fi
   '';
 
   # Packages available on PATH inside the container
@@ -152,28 +169,24 @@ pkgs.dockerTools.buildLayeredImage {
 
   contents = pathPackages;
 
+  enableFakechroot = true;
+
+  fakeRootCommands = ''
+    ${pkgs.dockerTools.shadowSetup}
+    groupadd -g 1000 claude
+    useradd -u 1000 -g claude -d /home/claude -s ${bash}/bin/bash -m claude
+  '';
+
   extraCommands = ''
     # Create required directories
-    mkdir -p workspace claude etc/claude-code tmp home root
-
-    # Minimal /etc files for shadow/NSS to work at runtime
-    echo "root:x:0:0:root:/root:${bash}/bin/bash" > etc/passwd
-    echo "root:x:0:" > etc/group
-    echo "root:!:1::::::" > etc/shadow
+    mkdir -p workspace claude etc/claude-code tmp
+    chmod 1777 tmp
 
     # NSS configuration so getent reads /etc/passwd and /etc/group
     cat > etc/nsswitch.conf << 'EOF'
     passwd: files
     group: files
     shadow: files
-    EOF
-
-    # login.defs for useradd defaults
-    cat > etc/login.defs << 'EOF'
-    UID_MIN 1000
-    UID_MAX 60000
-    GID_MIN 1000
-    GID_MAX 60000
     EOF
 
     # Baked-in managed settings

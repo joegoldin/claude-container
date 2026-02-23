@@ -35,10 +35,20 @@ func skipIfDockerUnavailable(t *testing.T) {
 	}
 }
 
+// fixContainerPerms runs a container to chmod files that may be owned by
+// subordinate UIDs in rootless Docker. The host user cannot chmod/delete
+// these files directly, but container root can.
+func fixContainerPerms(dir string) {
+	exec.Command("docker", "run", "--rm",
+		"--entrypoint", "chmod",
+		"-v", dir+":/cleanup",
+		ImageTag(),
+		"-R", "a+rwX", "/cleanup").Run()
+}
+
 // makeConfigDir creates a temporary config directory and registers a cleanup
-// that fixes permissions before removal. The entrypoint runs as root and may
-// create files (e.g. .claude.json) that the test user cannot delete without
-// first widening permissions.
+// that fixes permissions before removal. In rootless Docker, the entrypoint
+// creates files owned by a subordinate UID that the host user cannot delete.
 func makeConfigDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "claude-integration-*")
@@ -46,9 +56,23 @@ func makeConfigDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		// The entrypoint may have created root-owned files. Use chmod to
-		// make them deletable, then remove the tree.
-		exec.Command("chmod", "-R", "u+rwX", dir).Run()
+		fixContainerPerms(dir)
+		os.RemoveAll(dir)
+	})
+	return dir
+}
+
+// makeTempDir creates a temporary directory with container-aware cleanup.
+// Use this instead of t.TempDir() for directories mounted into containers,
+// since rootless Docker UID mapping can make host-side cleanup fail.
+func makeTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "claude-integration-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		fixContainerPerms(dir)
 		os.RemoveAll(dir)
 	})
 	return dir
@@ -144,12 +168,11 @@ func runContainer(t *testing.T, opts runContainerOpts) containerResult {
 func TestIntegrationEntrypointUIDGID(t *testing.T) {
 	skipIfDockerUnavailable(t)
 
-	uid := os.Getuid()
-	gid := os.Getgid()
+	uid := ContainerUID()
+	gid := ContainerGID()
 
-	// When running as root the entrypoint short-circuits (exec "$@" directly).
 	if uid == 0 {
-		t.Log("running as root – entrypoint skips user mapping")
+		t.Log("rootless Docker – container runs as root (maps to host user)")
 	}
 
 	configDir := makeConfigDir(t)
@@ -178,8 +201,8 @@ func TestIntegrationEntrypointWorkingDir(t *testing.T) {
 	configDir := makeConfigDir(t)
 	result := runContainer(t, runContainerOpts{
 		ConfigDir: configDir,
-		UID:       os.Getuid(),
-		GID:       os.Getgid(),
+		UID:       ContainerUID(),
+		GID:       ContainerGID(),
 		Command:   []string{"pwd"},
 	})
 
@@ -192,13 +215,8 @@ func TestIntegrationEntrypointWorkingDir(t *testing.T) {
 func TestIntegrationEntrypointHomeSymlink(t *testing.T) {
 	skipIfDockerUnavailable(t)
 
-	uid := os.Getuid()
-	gid := os.Getgid()
-
-	// UID 0 causes the entrypoint to exec directly, skipping symlink setup.
-	if uid == 0 {
-		t.Skip("running as root – entrypoint skips symlink setup")
-	}
+	uid := ContainerUID()
+	gid := ContainerGID()
 
 	configDir := makeConfigDir(t)
 	// Use sh -c so that $HOME is resolved inside the container after the
@@ -222,8 +240,8 @@ func TestIntegrationBypassPermissionsAccepted(t *testing.T) {
 	configDir := makeConfigDir(t)
 	result := runContainer(t, runContainerOpts{
 		ConfigDir: configDir,
-		UID:       os.Getuid(),
-		GID:       os.Getgid(),
+		UID:       ContainerUID(),
+		GID:       ContainerGID(),
 		Command:   []string{"cat", "/claude/.claude.json"},
 	})
 
@@ -241,8 +259,8 @@ func TestIntegrationBypassPermissionsAccepted(t *testing.T) {
 func TestIntegrationConfigDirPermissions(t *testing.T) {
 	skipIfDockerUnavailable(t)
 
-	uid := os.Getuid()
-	gid := os.Getgid()
+	uid := ContainerUID()
+	gid := ContainerGID()
 	configDir := makeConfigDir(t)
 
 	result := runContainer(t, runContainerOpts{
@@ -266,7 +284,7 @@ func TestIntegrationConfigDirPermissions(t *testing.T) {
 func TestIntegrationWorkspaceMount(t *testing.T) {
 	skipIfDockerUnavailable(t)
 
-	workspace := t.TempDir()
+	workspace := makeTempDir(t)
 	configDir := makeConfigDir(t)
 
 	if err := os.WriteFile(filepath.Join(workspace, "sentinel.txt"), []byte("hello"), 0o644); err != nil {
@@ -276,8 +294,8 @@ func TestIntegrationWorkspaceMount(t *testing.T) {
 	result := runContainer(t, runContainerOpts{
 		Workspace: workspace,
 		ConfigDir: configDir,
-		UID:       os.Getuid(),
-		GID:       os.Getgid(),
+		UID:       ContainerUID(),
+		GID:       ContainerGID(),
 		Command:   []string{"ls", "/workspace"},
 	})
 
@@ -291,7 +309,7 @@ func TestIntegrationExtraWorkspaces(t *testing.T) {
 
 	// Create predictable-named directories under a parent temp dir
 	// since t.TempDir() names are unpredictable.
-	parent := t.TempDir()
+	parent := makeTempDir(t)
 	repoA := filepath.Join(parent, "repo-a")
 	repoB := filepath.Join(parent, "repo-b")
 	os.MkdirAll(repoA, 0o755)
@@ -305,8 +323,8 @@ func TestIntegrationExtraWorkspaces(t *testing.T) {
 	resultA := runContainer(t, runContainerOpts{
 		ExtraWorkspaces: []string{repoA, repoB},
 		ConfigDir:       configDir,
-		UID:             os.Getuid(),
-		GID:             os.Getgid(),
+		UID:             ContainerUID(),
+		GID:             ContainerGID(),
 		Command:         []string{"ls", "/workspace/repo-a"},
 	})
 	if !strings.Contains(resultA.Stdout, "a.txt") {
@@ -317,8 +335,8 @@ func TestIntegrationExtraWorkspaces(t *testing.T) {
 	resultB := runContainer(t, runContainerOpts{
 		ExtraWorkspaces: []string{repoA, repoB},
 		ConfigDir:       configDir,
-		UID:             os.Getuid(),
-		GID:             os.Getgid(),
+		UID:             ContainerUID(),
+		GID:             ContainerGID(),
 		Command:         []string{"ls", "/workspace/repo-b"},
 	})
 	if !strings.Contains(resultB.Stdout, "b.txt") {
@@ -329,10 +347,10 @@ func TestIntegrationExtraWorkspaces(t *testing.T) {
 func TestIntegrationExtraWorkspacesWithPrimary(t *testing.T) {
 	skipIfDockerUnavailable(t)
 
-	primary := t.TempDir()
+	primary := makeTempDir(t)
 	os.WriteFile(filepath.Join(primary, "main.go"), []byte("package main"), 0o644)
 
-	parent := t.TempDir()
+	parent := makeTempDir(t)
 	libShared := filepath.Join(parent, "lib-shared")
 	os.MkdirAll(libShared, 0o755)
 	os.WriteFile(filepath.Join(libShared, "lib.go"), []byte("package lib"), 0o644)
@@ -344,8 +362,8 @@ func TestIntegrationExtraWorkspacesWithPrimary(t *testing.T) {
 		Workspace:       primary,
 		ExtraWorkspaces: []string{libShared},
 		ConfigDir:       configDir,
-		UID:             os.Getuid(),
-		GID:             os.Getgid(),
+		UID:             ContainerUID(),
+		GID:             ContainerGID(),
 		Command:         []string{"ls", "/workspace/main.go"},
 	})
 	if !strings.Contains(resultPrimary.Stdout, "main.go") {
@@ -357,8 +375,8 @@ func TestIntegrationExtraWorkspacesWithPrimary(t *testing.T) {
 		Workspace:       primary,
 		ExtraWorkspaces: []string{libShared},
 		ConfigDir:       configDir,
-		UID:             os.Getuid(),
-		GID:             os.Getgid(),
+		UID:             ContainerUID(),
+		GID:             ContainerGID(),
 		Command:         []string{"ls", "/workspace/lib-shared/lib.go"},
 	})
 	if !strings.Contains(resultExtra.Stdout, "lib.go") {
@@ -397,8 +415,8 @@ func TestIntegrationManagedSettingsReadable(t *testing.T) {
 
 	result := runContainer(t, runContainerOpts{
 		ConfigDir: configDir,
-		UID:       os.Getuid(),
-		GID:       os.Getgid(),
+		UID:       ContainerUID(),
+		GID:       ContainerGID(),
 		Command:   []string{"cat", "/claude/managed-settings.json"},
 	})
 
@@ -412,8 +430,8 @@ func TestIntegrationManagedSettingsReadable(t *testing.T) {
 		t.Fatal("missing sandbox key in managed-settings.json")
 	}
 	enabled, _ := sb["enabled"].(bool)
-	if enabled {
-		t.Error("med profile: sandbox.enabled should be false (proxy mode)")
+	if !enabled {
+		t.Error("med profile: sandbox.enabled should be true (weaker nested sandbox)")
 	}
 
 	// Verify permissions are present.
@@ -437,8 +455,8 @@ func TestIntegrationProfileSettingsLow(t *testing.T) {
 
 	result := runContainer(t, runContainerOpts{
 		ConfigDir: configDir,
-		UID:       os.Getuid(),
-		GID:       os.Getgid(),
+		UID:       ContainerUID(),
+		GID:       ContainerGID(),
 		Command:   []string{"cat", "/claude/managed-settings.json"},
 	})
 
@@ -449,8 +467,8 @@ func TestIntegrationProfileSettingsLow(t *testing.T) {
 
 	sb := settings["sandbox"].(map[string]any)
 	enabled, _ := sb["enabled"].(bool)
-	if enabled {
-		t.Error("low profile: sandbox.enabled should be false")
+	if !enabled {
+		t.Error("low profile: sandbox.enabled should be true")
 	}
 }
 
@@ -462,8 +480,8 @@ func TestIntegrationProfileSettingsHigh(t *testing.T) {
 
 	result := runContainer(t, runContainerOpts{
 		ConfigDir: configDir,
-		UID:       os.Getuid(),
-		GID:       os.Getgid(),
+		UID:       ContainerUID(),
+		GID:       ContainerGID(),
 		Command:   []string{"cat", "/claude/managed-settings.json"},
 	})
 
@@ -474,8 +492,8 @@ func TestIntegrationProfileSettingsHigh(t *testing.T) {
 
 	sb := settings["sandbox"].(map[string]any)
 	enabled, _ := sb["enabled"].(bool)
-	if enabled {
-		t.Error("high profile: sandbox.enabled should be false (proxy mode)")
+	if !enabled {
+		t.Error("high profile: sandbox.enabled should be true (weaker nested sandbox)")
 	}
 
 	perms, ok := settings["permissions"].(map[string]any)
@@ -594,8 +612,14 @@ func TestIntegrationProfileYoloEquivalence(t *testing.T) {
 		Yolo:      true,
 	}, false)
 
-	if !slices.Contains(args, "--dangerously-skip-permissions") {
-		t.Errorf("yolo RunArgs missing --dangerously-skip-permissions in %v", args)
+	if IsRootless() {
+		if slices.Contains(args, "--dangerously-skip-permissions") {
+			t.Errorf("rootless Docker: yolo RunArgs should not have --dangerously-skip-permissions in %v", args)
+		}
+	} else {
+		if !slices.Contains(args, "--dangerously-skip-permissions") {
+			t.Errorf("yolo RunArgs missing --dangerously-skip-permissions in %v", args)
+		}
 	}
 
 	argsNoYolo := RunArgs(RunOpts{
@@ -704,8 +728,8 @@ func TestIntegrationProxyContainerSetup(t *testing.T) {
 		fmt.Sprintf(`^http://%s:8081(/.*)?$`, proxyContainer),
 		"proxy-dashboard")
 
-	uid := os.Getuid()
-	gid := os.Getgid()
+	uid := ContainerUID()
+	gid := ContainerGID()
 
 	t.Run("ProxyEnvVarsSet", func(t *testing.T) {
 		result := runContainer(t, runContainerOpts{
@@ -832,7 +856,7 @@ func runClaudeProxyE2E(t *testing.T, profile string, hnAction string) claudeProx
 
 	configDir := makeConfigDir(t)
 	os.MkdirAll(filepath.Join(configDir, "proxy-profiles"), 0o755)
-	workspace := t.TempDir()
+	workspace := makeTempDir(t)
 
 	// Write managed settings: sandbox disabled (bubblewrap can't run in Docker)
 	// with wildcard domains and httpProxyPort. Network access control is handled
@@ -875,7 +899,7 @@ func runClaudeProxyE2E(t *testing.T, profile string, hnAction string) claudeProx
 	containerName := "claude-e2e-" + profile
 	proxyContainer := httpproxy.ContainerName(profile)
 	network := httpproxy.NetworkName(profile)
-	uid, gid := os.Getuid(), os.Getgid()
+	uid, gid := ContainerUID(), ContainerGID()
 
 	prompt := `Download https://hacker-news.firebaseio.com/v0/topstories.json using curl and save the raw content to /workspace/topstories.json. If the download fails for any reason (connection reset, timeout, HTTP error, etc), instead write a file /workspace/topstories-error.txt whose first line is FAILED and whose second line describes the error.`
 
@@ -901,8 +925,15 @@ func runClaudeProxyE2E(t *testing.T, profile string, hnAction string) claudeProx
 	if p := config.HostClaudeJSON(); p != "" {
 		args = append(args, "-v", p+":/mnt/claude-host-json:ro")
 	}
-	args = append(args, ImageTag(),
-		"claude", "-p", "--dangerously-skip-permissions", prompt)
+	claudeArgs := []string{"claude"}
+	// In rootless Docker the container runs as root; Claude refuses
+	// --dangerously-skip-permissions as root. Managed settings handle perms.
+	if !IsRootless() {
+		claudeArgs = append(claudeArgs, "--dangerously-skip-permissions")
+	}
+	claudeArgs = append(claudeArgs, "-p", prompt)
+	args = append(args, ImageTag())
+	args = append(args, claudeArgs...)
 
 	cmd := exec.Command("docker", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -981,6 +1012,11 @@ func runClaudeProxyE2E(t *testing.T, profile string, hnAction string) claudeProx
 		logs, _ := logsCmd.CombinedOutput()
 		t.Fatalf("hacker-news request never appeared in proxy pending\nContainer logs:\n%s", StripANSI(string(logs)))
 	}
+
+	// Fix workspace permissions so the host test process can read output
+	// files. In rootless Docker, files created by the container user are
+	// owned by a subordinate UID that the host user cannot read.
+	fixContainerPerms(workspace)
 
 	return claudeProxyE2EResult{
 		Workspace:     workspace,

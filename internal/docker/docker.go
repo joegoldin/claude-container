@@ -9,6 +9,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+)
+
+var (
+	isRootlessOnce sync.Once
+	isRootlessVal  bool
 )
 
 // ImageName is the Docker image tag used for Claude Code containers.
@@ -155,7 +161,10 @@ func RunArgs(opts RunOpts, detached bool) []string {
 	args = append(args, ImageTag(), "claude")
 
 	// Append optional claude flags after the base "claude" command.
-	if opts.Yolo {
+	// In rootless Docker the container runs as UID 0 and Claude Code refuses
+	// --dangerously-skip-permissions as root. Managed settings (always written
+	// by the Go binary) handle permission control instead.
+	if opts.Yolo && !IsRootless() {
 		args = append(args, "--dangerously-skip-permissions")
 	}
 	if opts.Resume != "" {
@@ -226,8 +235,13 @@ func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
 	args = append(args, ImageTag(), "claude",
 		"-p",
 		"--output-format", "stream-json",
-		"--dangerously-skip-permissions",
 	)
+
+	// In rootless Docker the container runs as UID 0 and Claude Code refuses
+	// --dangerously-skip-permissions as root. Managed settings handle permissions.
+	if !IsRootless() {
+		args = append(args, "--dangerously-skip-permissions")
+	}
 
 	if model != "" {
 		args = append(args, "--model", model)
@@ -272,6 +286,40 @@ func RunDetached(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// IsRootless returns true if the Docker daemon is running in rootless mode.
+// In rootless mode, UID mapping is different: host UID maps to container UID 0.
+// The result is cached after the first call.
+func IsRootless() bool {
+	isRootlessOnce.Do(func() {
+		cmd := exec.Command("docker", "info", "-f", "{{.SecurityOptions}}")
+		out, err := cmd.Output()
+		if err == nil {
+			isRootlessVal = strings.Contains(string(out), "rootless")
+		}
+	})
+	return isRootlessVal
+}
+
+// ContainerUID returns the UID to use inside the container. In rootless Docker,
+// returns 0 because host UID maps to container root. Otherwise returns the
+// caller's UID.
+func ContainerUID() int {
+	if IsRootless() {
+		return 0
+	}
+	return os.Getuid()
+}
+
+// ContainerGID returns the GID to use inside the container. In rootless Docker,
+// returns 0 because host GID maps to container root group. Otherwise returns
+// the caller's GID.
+func ContainerGID() int {
+	if IsRootless() {
+		return 0
+	}
+	return os.Getgid()
 }
 
 // ImageExists returns true if the Claude Code Docker image has been built.

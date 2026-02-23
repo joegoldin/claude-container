@@ -15,7 +15,7 @@
     enabled = true;
     autoAllowBashIfSandboxed = true;
     enableWeakerNestedSandbox = true;
-    allowUnsandboxedCommands = false;
+    allowUnsandboxedCommands = true;
     excludedCommands = [ "git" ];
     network.allowedDomains = [
       "api.anthropic.com"

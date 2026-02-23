@@ -85,8 +85,14 @@ func TestRunArgsYolo(t *testing.T) {
 	}
 	args := RunArgs(opts, false)
 
-	if !slices.Contains(args, "--dangerously-skip-permissions") {
-		t.Errorf("RunArgs with Yolo=true missing --dangerously-skip-permissions in %v", args)
+	if IsRootless() {
+		if slices.Contains(args, "--dangerously-skip-permissions") {
+			t.Errorf("rootless Docker: RunArgs with Yolo=true should not have --dangerously-skip-permissions in %v", args)
+		}
+	} else {
+		if !slices.Contains(args, "--dangerously-skip-permissions") {
+			t.Errorf("RunArgs with Yolo=true missing --dangerously-skip-permissions in %v", args)
+		}
 	}
 }
 
@@ -429,9 +435,15 @@ func TestTaskRunArgs(t *testing.T) {
 	if !strings.Contains(joined, "--output-format stream-json") {
 		t.Errorf("TaskRunArgs missing --output-format stream-json in %v", args)
 	}
-	// Must have --dangerously-skip-permissions (task mode always uses yolo).
-	if !slices.Contains(args, "--dangerously-skip-permissions") {
-		t.Errorf("TaskRunArgs missing --dangerously-skip-permissions in %v", args)
+	// Must have --dangerously-skip-permissions unless rootless Docker.
+	if IsRootless() {
+		if slices.Contains(args, "--dangerously-skip-permissions") {
+			t.Errorf("rootless Docker: TaskRunArgs should not have --dangerously-skip-permissions in %v", args)
+		}
+	} else {
+		if !slices.Contains(args, "--dangerously-skip-permissions") {
+			t.Errorf("TaskRunArgs missing --dangerously-skip-permissions in %v", args)
+		}
 	}
 	// Prompt should be last.
 	if args[len(args)-1] != "fix the tests" {
