@@ -317,6 +317,10 @@ func createSession(opts createOpts) error {
 	if opts.worktree != "" && !opts.noWorktree {
 		worktreeDir := filepath.Join(store.WorktreeDir(), name)
 
+		if err := os.MkdirAll(store.WorktreeDir(), 0o755); err != nil {
+			return fmt.Errorf("create worktree dir: %w", err)
+		}
+
 		if opts.from != "" {
 			if err := gitpkg.CreateWorktreeFromBranch(repoRoot, worktreeDir, opts.worktree, opts.from); err != nil {
 				return fmt.Errorf("create worktree from branch: %w", err)
