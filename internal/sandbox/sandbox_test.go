@@ -69,23 +69,13 @@ func TestYoloProfiles(t *testing.T) {
 
 // --- dontAsk mode tests ---
 
-func TestDontAskModeForNonYolo(t *testing.T) {
-	for _, name := range []string{"med", "high"} {
+func TestDontAskModeForAllProfiles(t *testing.T) {
+	for _, name := range []string{"low", "default", "med", "high"} {
 		p, _ := GetProfile(name)
 		settings := p.ManagedSettingsForProxy(8080, nil, nil)
 		mode, ok := settings["defaultMode"].(string)
 		if !ok || mode != "dontAsk" {
 			t.Errorf("profile %q: defaultMode = %v, want dontAsk", name, settings["defaultMode"])
-		}
-	}
-}
-
-func TestNoDontAskModeForYolo(t *testing.T) {
-	for _, name := range []string{"low", "default"} {
-		p, _ := GetProfile(name)
-		settings := p.ManagedSettingsForProxy(8080, nil, nil)
-		if _, has := settings["defaultMode"]; has {
-			t.Errorf("profile %q: should not have defaultMode (yolo)", name)
 		}
 	}
 }
@@ -174,9 +164,11 @@ func TestManagedSettingsForProxyDefaultProfile(t *testing.T) {
 		t.Error("default profile (yolo) should not have permissions key")
 	}
 
-	// Should not have defaultMode (yolo profiles skip it).
-	if _, has := settings["defaultMode"]; has {
-		t.Error("default profile should not have defaultMode")
+	// All profiles get dontAsk mode (needed for rootless Docker where
+	// --dangerously-skip-permissions cannot be used).
+	mode, ok := settings["defaultMode"].(string)
+	if !ok || mode != "dontAsk" {
+		t.Errorf("default profile: defaultMode = %v, want dontAsk", settings["defaultMode"])
 	}
 }
 
@@ -195,6 +187,13 @@ func TestProxyRulesLow(t *testing.T) {
 	}
 	if r["label"] != "allow-all" {
 		t.Errorf("low profile label = %q, want allow-all", r["label"])
+	}
+	// Proxy sidecar requires id and created_at fields.
+	if _, ok := r["id"].(string); !ok || r["id"] == "" {
+		t.Error("low profile rule missing id")
+	}
+	if _, ok := r["created_at"].(float64); !ok {
+		t.Error("low profile rule missing created_at")
 	}
 }
 

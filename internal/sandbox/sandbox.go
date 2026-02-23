@@ -1,8 +1,10 @@
 package sandbox
 
 import (
+	"crypto/rand"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Profile defines a sandbox security profile.
@@ -110,6 +112,29 @@ func domainToRegex(domain string) string {
 	return fmt.Sprintf(`^https?://([^/]*\.)?%s(/.*)?$`, escaped)
 }
 
+// newRuleID returns a random UUID v4 string for use as a proxy rule ID.
+func newRuleID() string {
+	var b [16]byte
+	rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 1
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// proxyRule builds a single proxy rule dict with all fields required by the
+// proxy sidecar (id, rule_type, pattern, label, created_at, source).
+func proxyRule(ruleType, pattern, label string) map[string]any {
+	return map[string]any{
+		"id":         newRuleID(),
+		"rule_type":  ruleType,
+		"pattern":    pattern,
+		"label":      label,
+		"created_at": float64(time.Now().Unix()),
+		"source":     "profile",
+	}
+}
+
 // ProxyRules converts the profile's AllowedDomains (plus any extraDomains)
 // into proxy rule JSON dicts suitable for writing to a profile rules file.
 // For profiles with no domains (e.g. "low"), a single wildcard allow-all rule
@@ -120,12 +145,7 @@ func (p Profile) ProxyRules(extraDomains []string) []map[string]any {
 	domains = append(domains, extraDomains...)
 
 	if len(domains) == 0 {
-		return []map[string]any{{
-			"rule_type": "allow",
-			"pattern":   ".*",
-			"label":     "allow-all",
-			"source":    "profile",
-		}}
+		return []map[string]any{proxyRule("allow", ".*", "allow-all")}
 	}
 
 	// Dedup: if both "x.com" and "*.x.com" exist, they produce the same
@@ -139,13 +159,7 @@ func (p Profile) ProxyRules(extraDomains []string) []map[string]any {
 			continue
 		}
 		seen[base] = true
-
-		rules = append(rules, map[string]any{
-			"rule_type": "allow",
-			"pattern":   domainToRegex(d),
-			"label":     base,
-			"source":    "profile",
-		})
+		rules = append(rules, proxyRule("allow", domainToRegex(d), base))
 	}
 
 	return rules
@@ -182,11 +196,11 @@ func (p Profile) ManagedSettingsForProxy(httpProxyPort int, extraAllowPerms []st
 		},
 	}
 
-	// Non-yolo profiles use dontAsk mode — permissions enforced by allow/deny
-	// lists without interactive prompts.
-	if !p.Yolo {
-		settings["defaultMode"] = "dontAsk"
-	}
+	// dontAsk mode enforces permissions via allow/deny lists without
+	// interactive prompts. Required for all profiles in rootless Docker
+	// where --dangerously-skip-permissions cannot be used (Claude refuses
+	// it as root). Also correct for non-yolo profiles in standard Docker.
+	settings["defaultMode"] = "dontAsk"
 
 	// Build permissions block.
 	perms := map[string]any{}
