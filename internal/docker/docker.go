@@ -235,6 +235,7 @@ func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
 	args = append(args, ImageTag(), "claude",
 		"-p",
 		"--output-format", "stream-json",
+		"--verbose",
 	)
 
 	// In rootless Docker the container runs as UID 0 and Claude Code refuses
@@ -356,7 +357,7 @@ func Exists(session string) bool {
 func Stop(session string) error {
 	name := ContainerName(session)
 	cmd := exec.Command("docker", "stop", name)
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = nil
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
@@ -365,7 +366,7 @@ func Stop(session string) error {
 func Remove(session string) error {
 	name := ContainerName(session)
 	cmd := exec.Command("docker", "rm", name)
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = nil
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
