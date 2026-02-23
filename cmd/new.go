@@ -85,6 +85,15 @@ var newCmd = &cobra.Command{
 			if res.Cancelled {
 				return nil
 			}
+			// Prefer wizard selections; fall back to CLI flags.
+			resolvedProfile := res.Profile
+			if resolvedProfile == "" {
+				resolvedProfile = newProfile
+			}
+			resolvedWorkspace := res.Workspace
+			if resolvedWorkspace == "" {
+				resolvedWorkspace = newWorkspaceName
+			}
 			return createSession(createOpts{
 				name:          res.Name,
 				worktree:      res.Worktree,
@@ -94,8 +103,8 @@ var newCmd = &cobra.Command{
 				prompt:        res.Prompt,
 				background:    res.Background,
 				mounts:        newMounts,
-				workspace:     newWorkspaceName,
-				profile:       newProfile,
+				workspace:     resolvedWorkspace,
+				profile:       resolvedProfile,
 				allowDomains:  newAllowDomains,
 				denyPaths:     newDenyPaths,
 				allowCommands: newAllowCommands,

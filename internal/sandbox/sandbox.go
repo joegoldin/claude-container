@@ -10,23 +10,38 @@ import (
 // Profile defines a sandbox security profile.
 type Profile struct {
 	Name           string
+	Description    string
 	Yolo           bool     // use --dangerously-skip-permissions
 	AllowedDomains []string // for proxy rules
 	AllowPerms     []string // permissions.allow rules
 	DenyPerms      []string // permissions.deny rules
 }
 
+// ProfileOrder defines the display order of profiles from least to most restrictive.
+var ProfileOrder = []string{"low", "default", "med", "high"}
+
+// ListProfiles returns all profiles in display order.
+func ListProfiles() []Profile {
+	result := make([]Profile, 0, len(ProfileOrder))
+	for _, name := range ProfileOrder {
+		result = append(result, profiles[name])
+	}
+	return result
+}
+
 var profiles = map[string]Profile{
 	"low": {
 		Name:           "low",
+		Description:    "Full access. No network restrictions, no permission prompts.",
 		Yolo:           true,
 		AllowedDomains: nil, // proxy: wildcard allow-all
 		AllowPerms:     nil,
 		DenyPerms:      nil,
 	},
 	"default": {
-		Name: "default",
-		Yolo: true,
+		Name:        "default",
+		Description: "Yolo mode with network allowlist (GitHub, npm, PyPI). No permission prompts.",
+		Yolo:        true,
 		AllowedDomains: []string{
 			"api.anthropic.com",
 			"statsig.anthropic.com",
@@ -45,8 +60,9 @@ var profiles = map[string]Profile{
 		DenyPerms:  nil,
 	},
 	"med": {
-		Name: "med",
-		Yolo: false,
+		Name:        "med",
+		Description: "Permission prompts enabled. Network allowlist. Commands limited to dev tools. Sensitive paths denied.",
+		Yolo:        false,
 		AllowedDomains: []string{
 			"api.anthropic.com",
 			"statsig.anthropic.com",
@@ -75,8 +91,9 @@ var profiles = map[string]Profile{
 		},
 	},
 	"high": {
-		Name: "high",
-		Yolo: false,
+		Name:        "high",
+		Description: "Strict lockdown. API-only network. Read-only git. Workspace-only writes.",
+		Yolo:        false,
 		AllowedDomains: []string{"api.anthropic.com"},
 		AllowPerms: []string{
 			"Bash(git status *)", "Bash(git diff *)", "Bash(git log *)",

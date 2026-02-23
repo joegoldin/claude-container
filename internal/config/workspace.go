@@ -75,6 +75,17 @@ func (ws *WorkspaceStore) List() []string {
 	return names
 }
 
+func (ws *WorkspaceStore) ListAll() map[string][]string {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+
+	all, err := ws.loadLocked()
+	if err != nil {
+		return nil
+	}
+	return all
+}
+
 func (ws *WorkspaceStore) Remove(name string) error {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()

@@ -121,6 +121,8 @@ var rootCmd = &cobra.Command{
 					yolo:       res.Yolo,
 					prompt:     res.Prompt,
 					background: true, // dashboard manages attach
+					profile:    res.Profile,
+					workspace:  res.Workspace,
 				}); err != nil {
 					fmt.Fprintln(os.Stderr, "error:", err)
 					continue

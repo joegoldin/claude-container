@@ -27,4 +27,17 @@ var (
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241"))
+
+	previewBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("63")).
+			PaddingLeft(1).
+			PaddingRight(1)
+
+	previewTitleStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("63"))
+
+	cliCommandStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("78"))
 )
