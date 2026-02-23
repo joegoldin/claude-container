@@ -117,6 +117,7 @@ func Run(opts Opts) error {
 
 	var detached bool
 	var quit bool
+	var overlayStop func() // stops spinner from renderOverlay
 
 	// stdout proxy: docker pty -> host stdout.
 	// Also watches for Claude Code's workspace trust prompt and auto-accepts it.
@@ -274,12 +275,12 @@ func Run(opts Opts) error {
 					switch b {
 					case 'd':
 						detached = true
-						renderOverlay(os.Stdout, width, height, "Detaching...")
+						overlayStop = renderOverlay(os.Stdout, "Detaching...")
 						close(done)
 						return
 					case 'q':
 						quit = true
-						renderOverlay(os.Stdout, width, height, "Stopping container...")
+						overlayStop = renderOverlay(os.Stdout, "Stopping container...")
 						close(done)
 						return
 					case prefixKey:
@@ -377,6 +378,11 @@ func Run(opts Opts) error {
 	signal.Stop(sigwinch)
 	wg.Wait()
 
+	// Stop overlay spinner if active.
+	if overlayStop != nil {
+		overlayStop()
+	}
+
 	// Restore terminal: reset scroll region, switch back from alternate
 	// screen buffer if active, clear the screen, and show cursor.
 	clearScrollRegion()
@@ -472,19 +478,36 @@ func renderStatusBar(w io.Writer, width, height int, info StatusBarInfo, prefixA
 	fmt.Fprintf(w, "\033[s\033[1;%dr\033[%d;1H\033[2K\033[7m%s\033[0m\033[u", height-1, height, bar)
 }
 
-// renderOverlay clears the scroll region and shows a centered message,
-// used to provide feedback during quit/detach operations.
-func renderOverlay(w io.Writer, width, height int, msg string) {
-	if height < 2 || width < 1 {
-		return
-	}
-	// Clear the scroll region.
+// renderOverlay clears the screen and shows a message at the top-left with a
+// spinner. The spinner animates in a background goroutine until stop is called.
+func renderOverlay(w io.Writer, msg string) (stop func()) {
+	// Clear scroll region, clear screen, cursor home.
+	clearScrollRegion()
 	fmt.Fprint(w, "\033[2J\033[H")
-	// Center the message vertically and horizontally.
-	row := height / 2
-	col := (width - len(msg)) / 2
-	if col < 1 {
-		col = 1
+
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	stopCh := make(chan struct{})
+
+	// Draw initial frame immediately.
+	fmt.Fprintf(w, "\033[1;1H\033[2K%s %s", frames[0], msg)
+
+	go func() {
+		i := 1
+		ticker := time.NewTicker(80 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				fmt.Fprintf(w, "\033[1;1H\033[2K%s %s", frames[i%len(frames)], msg)
+				i++
+			}
+		}
+	}()
+
+	return func() {
+		close(stopCh)
+		fmt.Fprint(w, "\033[2J\033[H") // clear screen on stop
 	}
-	fmt.Fprintf(w, "\033[%d;%dH%s", row, col, msg)
 }
