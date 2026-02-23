@@ -81,7 +81,9 @@
             '';
           };
         in
-        { inherit image proxyImage cli; };
+        {
+          inherit image proxyImage cli;
+        };
     }
     // flake-utils.lib.eachDefaultSystem (
       system:
