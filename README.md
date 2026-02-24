@@ -47,7 +47,6 @@ claude-container workspace add|list|show|rm  # manage named workspaces
 claude-container auth                     # authenticate Claude Code
 claude-container doctor                   # check system health
 claude-container gc [--all] [--auth]      # garbage collect
-claude-container fix-perms <session>      # fix workspace ownership
 ```
 
 ## DESCRIPTION
@@ -98,7 +97,6 @@ Available Commands:
   build       Load the Claude Code Docker image
   completion  Generate the autocompletion script for the specified shell
   doctor      Check system health and configuration
-  fix-perms   Fix workspace ownership after container UID remapping
   gc          Clean up stopped containers and stale sessions
   logs        Stream logs from a session
   new         Create a new Claude Code session
@@ -382,19 +380,6 @@ authentication is set up.
 ```
 Usage:
   claude-container doctor [flags]
-```
-
-### fix-perms
-
-Runs `sudo chown` to restore workspace ownership to the current user.
-Useful when Docker user namespace remapping causes files to be owned by
-a remapped UID.
-
-<!-- Generated from: claude-container fix-perms --help -->
-
-```
-Usage:
-  claude-container fix-perms <session> [flags]
 ```
 
 ### gc
@@ -757,9 +742,6 @@ claude-container attach auth
 
 # Remove completely
 claude-container rm auth
-
-# Fix file ownership after UID remapping
-claude-container fix-perms auth
 
 # Force reload the Docker image
 claude-container build

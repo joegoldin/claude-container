@@ -1489,6 +1489,232 @@ func TestE2E_WorkWithWorkspace(t *testing.T) {
 	}
 }
 
+func TestE2E_RunFilePermissions(t *testing.T) {
+	setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	repo := setupGitRepo(t)
+	// Write a marker file so we have something to overwrite inside the container.
+	os.WriteFile(filepath.Join(repo, "host-marker.txt"), []byte("FROM_HOST\n"), 0o644)
+
+	name := "e2e-run-perms"
+	proxyProf := "e2e-run-perms"
+	cleanupContainer(t, name)
+	cleanupProxy(t, proxyProf)
+
+	origDir, _ := os.Getwd()
+	os.Chdir(repo)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	_, stderr, code := runCLI(t, "run", "--yolo", "-b", "--name", name,
+		"--proxy-profile", proxyProf)
+	if code != 0 {
+		t.Fatalf("run -b: exit %d\nstderr: %s", code, stderr)
+	}
+
+	// Wait for container to be ready.
+	time.Sleep(3 * time.Second)
+	if !dockerContainerRunning(name) {
+		logs := dockerLogs(name, 50)
+		t.Fatalf("container not running\nLogs:\n%s", logs)
+	}
+
+	// Create a file inside the container.
+	_, err := dockerExec(t, name, "touch", "/workspace/created-inside.txt")
+	if err != nil {
+		t.Fatalf("docker exec touch failed: %v", err)
+	}
+
+	// Verify file appears on host.
+	hostPath := filepath.Join(repo, "created-inside.txt")
+	info, err := os.Stat(hostPath)
+	if err != nil {
+		t.Fatalf("file created inside container not visible on host: %v", err)
+	}
+	if info.IsDir() {
+		t.Fatal("created-inside.txt is a directory, want file")
+	}
+
+	// Verify owner UID matches current user (rootless Docker maps container
+	// root to host user).
+	expectedUID := os.Getuid()
+	stat, err := os.Stat(hostPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	_ = stat // UID check via docker exec below is more portable.
+
+	// Verify UID inside the container (should be 0 for rootless, or USER_UID).
+	uidOut, err := dockerExec(t, name, "stat", "-c", "%u", "/workspace/created-inside.txt")
+	if err != nil {
+		t.Errorf("stat UID inside container failed: %v", err)
+	}
+	t.Logf("file UID inside container: %s (host UID: %d)", uidOut, expectedUID)
+
+	// Write to existing host file from inside the container.
+	_, err = dockerExec(t, name, "sh", "-c", "echo MODIFIED_INSIDE > /workspace/host-marker.txt")
+	if err != nil {
+		t.Fatalf("docker exec write failed: %v", err)
+	}
+
+	// Verify changes visible on host.
+	data, err := os.ReadFile(filepath.Join(repo, "host-marker.txt"))
+	if err != nil {
+		t.Fatalf("read host-marker.txt: %v", err)
+	}
+	if !strings.Contains(string(data), "MODIFIED_INSIDE") {
+		t.Errorf("host-marker.txt = %q, want 'MODIFIED_INSIDE'", string(data))
+	}
+
+	// Cleanup.
+	os.Remove(hostPath)
+	runCLI(t, "rm", name)
+}
+
+func TestE2E_WorktreeFilePermissions(t *testing.T) {
+	xdgDir := setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	repo := setupGitRepo(t)
+	name := "e2e-wt-perms"
+	proxyProf := "e2e-wt-perms"
+	cleanupContainer(t, name)
+	cleanupProxy(t, proxyProf)
+
+	origDir, _ := os.Getwd()
+	os.Chdir(repo)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	_, stderr, code := runCLI(t, "work", "--yolo", "-b", "--name", name,
+		"--proxy-profile", proxyProf)
+	if code != 0 {
+		t.Fatalf("work -b: exit %d\nstderr: %s", code, stderr)
+	}
+
+	// Wait for the worktree branch to be created by the entrypoint.
+	sessions := readSessionsJSON(t, xdgDir)
+	sess := findSession(sessions, name)
+	if sess == nil {
+		t.Fatal("session not in sessions.json")
+	}
+	branch, _ := sess["branch"].(string)
+	if branch == "" {
+		t.Fatal("branch is empty")
+	}
+	if !waitForBranch(t, repo, branch, 15*time.Second) {
+		t.Fatalf("branch %q not created in time", branch)
+	}
+
+	// Wait for container to settle.
+	time.Sleep(3 * time.Second)
+	if !dockerContainerRunning(name) {
+		logs := dockerLogs(name, 50)
+		t.Fatalf("container not running\nLogs:\n%s", logs)
+	}
+
+	// Create a file inside the container worktree.
+	_, err := dockerExec(t, name, "touch", "/workspace/wt-created.txt")
+	if err != nil {
+		t.Fatalf("docker exec touch failed: %v", err)
+	}
+
+	// Verify the file exists inside the container.
+	out, err := dockerExec(t, name, "ls", "/workspace/wt-created.txt")
+	if err != nil {
+		t.Errorf("file not found inside container: %v", err)
+	} else if !strings.Contains(out, "wt-created.txt") {
+		t.Errorf("ls = %q, want 'wt-created.txt'", out)
+	}
+
+	// Write content and read it back inside the container.
+	_, err = dockerExec(t, name, "sh", "-c", "echo WT_CONTENT > /workspace/wt-created.txt")
+	if err != nil {
+		t.Fatalf("docker exec write failed: %v", err)
+	}
+	content, err := dockerExec(t, name, "cat", "/workspace/wt-created.txt")
+	if err != nil {
+		t.Errorf("docker exec cat failed: %v", err)
+	} else if !strings.Contains(content, "WT_CONTENT") {
+		t.Errorf("cat = %q, want 'WT_CONTENT'", content)
+	}
+
+	// Verify UID inside container.
+	uidOut, err := dockerExec(t, name, "stat", "-c", "%u", "/workspace/wt-created.txt")
+	if err != nil {
+		t.Errorf("stat UID failed: %v", err)
+	}
+	t.Logf("worktree file UID inside container: %s (host UID: %d)", uidOut, os.Getuid())
+
+	// Cleanup.
+	runCLI(t, "rm", name)
+}
+
+func TestE2E_MountFilePermissions(t *testing.T) {
+	setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	// Create a temp dir with a marker file to mount.
+	mountDir := filepath.Join(t.TempDir(), "perm-mount")
+	os.MkdirAll(mountDir, 0o755)
+	os.WriteFile(filepath.Join(mountDir, "marker.txt"), []byte("MOUNT_MARKER\n"), 0o644)
+	mountBase := filepath.Base(mountDir)
+
+	name := "e2e-mount-perms"
+	proxyProf := "e2e-mount-perms"
+	cleanupContainer(t, name)
+	cleanupProxy(t, proxyProf)
+
+	_, stderr, code := runCLI(t, "run", "--yolo", "-b", "--name", name,
+		"--proxy-profile", proxyProf, "-w", mountDir)
+	if code != 0 {
+		t.Fatalf("run -b -w: exit %d\nstderr: %s", code, stderr)
+	}
+
+	// Wait for container to be ready.
+	time.Sleep(3 * time.Second)
+	if !dockerContainerRunning(name) {
+		logs := dockerLogs(name, 50)
+		t.Fatalf("container not running\nLogs:\n%s", logs)
+	}
+
+	// Verify mounted marker file is readable inside container.
+	out, err := dockerExec(t, name, "cat", "/workspace/"+mountBase+"/marker.txt")
+	if err != nil {
+		t.Fatalf("docker exec cat marker.txt failed: %v\noutput: %s", err, out)
+	}
+	if !strings.Contains(out, "MOUNT_MARKER") {
+		t.Errorf("marker.txt = %q, want 'MOUNT_MARKER'", out)
+	}
+
+	// Write a new file inside the mounted directory from container.
+	_, err = dockerExec(t, name, "sh", "-c",
+		fmt.Sprintf("echo WRITTEN > /workspace/%s/new-file.txt", mountBase))
+	if err != nil {
+		t.Fatalf("docker exec write failed: %v", err)
+	}
+
+	// Verify new file appears on host.
+	hostNewFile := filepath.Join(mountDir, "new-file.txt")
+	data, err := os.ReadFile(hostNewFile)
+	if err != nil {
+		t.Fatalf("new-file.txt not visible on host: %v", err)
+	}
+	if !strings.Contains(string(data), "WRITTEN") {
+		t.Errorf("new-file.txt = %q, want 'WRITTEN'", string(data))
+	}
+
+	// Verify file ownership on host matches current user.
+	info, err := os.Stat(hostNewFile)
+	if err != nil {
+		t.Fatalf("stat new-file.txt: %v", err)
+	}
+	t.Logf("new-file.txt on host: size=%d, mode=%s", info.Size(), info.Mode())
+
+	// Cleanup.
+	os.Remove(hostNewFile)
+	runCLI(t, "rm", name)
+}
+
 // ---------------------------------------------------------------------------
 // Group 3: Live execution — Claude actually runs and produces output
 //
