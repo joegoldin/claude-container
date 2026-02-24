@@ -94,14 +94,18 @@ func CheckoutWorktree(repoDir, worktreeDir, existingBranch string) error {
 
 // RemoveWorktree removes a git worktree and optionally deletes the branch.
 // Errors from individual steps are ignored (best effort cleanup).
+// When worktreeDir is empty (container-created worktrees), the force-remove
+// is skipped — git worktree prune handles stale entries.
 func RemoveWorktree(repoDir, worktreeDir, branch string) error {
-	// Force-remove the worktree.
-	cmd := exec.Command("git", "worktree", "remove", "-f", worktreeDir)
-	cmd.Dir = repoDir
-	cmd.CombinedOutput() // best effort
+	if worktreeDir != "" {
+		// Force-remove the worktree.
+		cmd := exec.Command("git", "worktree", "remove", "-f", worktreeDir)
+		cmd.Dir = repoDir
+		cmd.CombinedOutput() // best effort
+	}
 
 	// Prune stale worktree entries.
-	cmd = exec.Command("git", "worktree", "prune")
+	cmd := exec.Command("git", "worktree", "prune")
 	cmd.Dir = repoDir
 	cmd.CombinedOutput() // best effort
 

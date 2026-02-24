@@ -94,6 +94,10 @@ type RunOpts struct {
 	ExtraWorkspaces []string // additional folders mounted as /workspace/<basename>
 	ProxyProfile    string   // proxy profile name (for network/env args)
 	ProxyCACertDir  string   // path to mitmproxy CA cert directory
+	RepoPath        string   // host repo path, mounted at /mnt/repo for worktree creation
+	WorktreeBranch  string   // branch name — entrypoint creates worktree at /workspace
+	WorktreeFrom    string   // optional base branch for worktree
+	WorktreeRepos   []string // extra git repos: mounted at /mnt/repos/<basename>, worktrees at /workspace/<basename>
 }
 
 // RunArgs returns the docker run command arguments for a persistent
@@ -113,9 +117,34 @@ func RunArgs(opts RunOpts, detached bool) []string {
 		flag,
 	}
 
-	// Mount primary workspace (if set).
-	if opts.Workspace != "" {
+	// Mount primary workspace (if set) — skip when worktree mode is active
+	// (the container entrypoint creates /workspace from /mnt/repo).
+	if opts.Workspace != "" && opts.WorktreeBranch == "" {
 		args = append(args, "-v", opts.Workspace+":/workspace")
+	}
+
+	// Worktree env vars (shared by single-repo and multi-repo modes).
+	if opts.WorktreeBranch != "" {
+		args = append(args, "-e", "WORKTREE_BRANCH="+opts.WorktreeBranch)
+		if opts.WorktreeFrom != "" {
+			args = append(args, "-e", "WORKTREE_FROM="+opts.WorktreeFrom)
+		}
+	}
+
+	// Single-repo worktree: mount repo at /mnt/repo → entrypoint creates /workspace.
+	if opts.RepoPath != "" && opts.WorktreeBranch != "" {
+		args = append(args, "-v", opts.RepoPath+":/mnt/repo")
+	}
+
+	// Multi-repo worktrees: mount each at /mnt/repos/<basename> → entrypoint creates /workspace/<basename>.
+	if len(opts.WorktreeRepos) > 0 && opts.WorktreeBranch != "" {
+		var names []string
+		for _, ws := range opts.WorktreeRepos {
+			base := filepath.Base(ws)
+			args = append(args, "-v", ws+":/mnt/repos/"+base)
+			names = append(names, base)
+		}
+		args = append(args, "-e", "WORKTREE_REPOS="+strings.Join(names, ","))
 	}
 
 	// Mount extra workspaces as subdirectories of /workspace.
@@ -192,9 +221,34 @@ func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
 		"-d",
 	}
 
-	if opts.Workspace != "" {
+	if opts.Workspace != "" && opts.WorktreeBranch == "" {
 		args = append(args, "-v", opts.Workspace+":/workspace")
 	}
+
+	// Worktree env vars (shared by single-repo and multi-repo modes).
+	if opts.WorktreeBranch != "" {
+		args = append(args, "-e", "WORKTREE_BRANCH="+opts.WorktreeBranch)
+		if opts.WorktreeFrom != "" {
+			args = append(args, "-e", "WORKTREE_FROM="+opts.WorktreeFrom)
+		}
+	}
+
+	// Single-repo worktree: mount repo at /mnt/repo.
+	if opts.RepoPath != "" && opts.WorktreeBranch != "" {
+		args = append(args, "-v", opts.RepoPath+":/mnt/repo")
+	}
+
+	// Multi-repo worktrees: mount each at /mnt/repos/<basename>.
+	if len(opts.WorktreeRepos) > 0 && opts.WorktreeBranch != "" {
+		var names []string
+		for _, ws := range opts.WorktreeRepos {
+			base := filepath.Base(ws)
+			args = append(args, "-v", ws+":/mnt/repos/"+base)
+			names = append(names, base)
+		}
+		args = append(args, "-e", "WORKTREE_REPOS="+strings.Join(names, ","))
+	}
+
 	for _, ws := range opts.ExtraWorkspaces {
 		base := filepath.Base(ws)
 		args = append(args, "-v", ws+":/workspace/"+base)

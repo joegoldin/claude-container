@@ -24,6 +24,7 @@ let
   cut = "${coreutils}/bin/cut";
   jqBin = "${jq}/bin/jq";
   suExec = "${su-exec}/bin/su-exec";
+  gitBin = "${git}/bin/git";
 
   managedSettingsFile = pkgs.writeText "managed-settings.json" (builtins.toJSON managedSettings);
 
@@ -124,6 +125,51 @@ let
     fi
 
     export SHELL=${bash}/bin/bash
+
+    # --- Worktree setup ---
+    # Helper: create a worktree from a repo dir to a target dir.
+    create_worktree() {
+      local repo_dir="$1"
+      local target_dir="$2"
+
+      ${gitBin} config --global --add safe.directory "$repo_dir"
+      ${gitBin} config --global --add safe.directory "$target_dir"
+
+      if [ "$USER_UID" -eq 0 ]; then
+        if [ -n "$WORKTREE_FROM" ]; then
+          ${gitBin} -C "$repo_dir" worktree add -b "$WORKTREE_BRANCH" "$target_dir" "$WORKTREE_FROM"
+        else
+          ${gitBin} -C "$repo_dir" worktree add -b "$WORKTREE_BRANCH" "$target_dir"
+        fi
+      else
+        if [ -n "$WORKTREE_FROM" ]; then
+          ${suExec} "$USER_NAME" ${gitBin} -C "$repo_dir" worktree add -b "$WORKTREE_BRANCH" "$target_dir" "$WORKTREE_FROM"
+        else
+          ${suExec} "$USER_NAME" ${gitBin} -C "$repo_dir" worktree add -b "$WORKTREE_BRANCH" "$target_dir"
+        fi
+      fi
+    }
+
+    # For non-root users, grant write access to /workspace so git worktree
+    # add can populate it. git handles existing empty directories.
+    if [ -n "$WORKTREE_BRANCH" ] && [ "$USER_UID" -ne 0 ]; then
+      ${chown} "$USER_UID:$USER_GID" /workspace
+    fi
+
+    # Single-repo worktree: /mnt/repo → /workspace
+    if [ -n "$WORKTREE_BRANCH" ] && [ -d /mnt/repo ] && [ ! -e /workspace/.git ]; then
+      create_worktree /mnt/repo /workspace
+    fi
+
+    # Multi-repo worktrees: /mnt/repos/<name> → /workspace/<name>
+    if [ -n "$WORKTREE_BRANCH" ] && [ -n "$WORKTREE_REPOS" ]; then
+      IFS=',' read -r -a _repos <<< "$WORKTREE_REPOS"
+      for _repo_name in "''${_repos[@]}"; do
+        if [ -d "/mnt/repos/$_repo_name" ] && [ ! -e "/workspace/$_repo_name/.git" ]; then
+          create_worktree "/mnt/repos/$_repo_name" "/workspace/$_repo_name"
+        fi
+      done
+    fi
 
     if [ "$USER_UID" -eq 0 ]; then
       exec "$@"

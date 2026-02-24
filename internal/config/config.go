@@ -34,6 +34,7 @@ type Session struct {
 	CreatedAt       time.Time `json:"created_at"`
 	Profile         string    `json:"profile,omitempty"`
 	ExtraWorkspaces []string  `json:"extra_workspaces,omitempty"`
+	WorktreeRepos   []string  `json:"worktree_repos,omitempty"` // extra repos with container-created worktrees (for cleanup)
 	AllowDomains    []string  `json:"allow_domains,omitempty"`
 	DenyPaths       []string  `json:"deny_paths,omitempty"`
 	AllowCommands   []string  `json:"allow_commands,omitempty"`

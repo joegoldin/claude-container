@@ -40,6 +40,14 @@ func removeSession(store *config.Store, name string) {
 			fmt.Fprintf(os.Stderr, "warning: remove worktree: %v\n", err)
 		}
 	}
+	// Clean up worktree branches in extra repos (container-created worktrees).
+	if sess != nil && sess.Branch != "" && len(sess.WorktreeRepos) > 0 {
+		for _, repo := range sess.WorktreeRepos {
+			if err := gitpkg.RemoveWorktree(repo, "", sess.Branch); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: remove worktree in %s: %v\n", repo, err)
+			}
+		}
+	}
 	if err := store.Delete(name); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: delete session: %v\n", err)
 	}

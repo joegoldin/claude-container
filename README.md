@@ -60,7 +60,8 @@ with the host:
 
 - **Docker containers** -- rootless Docker provides OS-level sandboxing
   without requiring root privileges or changing file ownership
-- **Git worktrees** -- each session gets its own branch and working directory
+- **Git worktrees** -- each session gets its own branch and working copy
+  (created inside the container from the mounted repository)
 - **Network proxy** -- optional HTTP/HTTPS proxy sidecar with per-domain
   allow/deny rules and a web dashboard for interactive approval
 
@@ -113,8 +114,8 @@ Available Commands:
 
 ### run
 
-Quick-start a session in the current directory. No worktree, no wizard.
-Name is auto-generated (e.g. `myproject-calm-reef`) unless `--name` is given.
+Create a session without a worktree, using the current directory. Name is
+auto-generated (e.g. `myproject-calm-reef`) unless `--name` is given.
 
 <!-- Generated from: claude-container run --help -->
 
@@ -141,7 +142,7 @@ Flags:
 
 ### work
 
-Quick-start a session with its own git worktree for isolation. Name and
+Create a session with its own git worktree for isolation. Name and
 branch are auto-generated unless `--name` is given.
 
 <!-- Generated from: claude-container work --help -->
@@ -275,8 +276,7 @@ See **KEY BINDINGS** below for detach/quit controls.
 
 ### stop
 
-Stop a session. The git worktree and branch are preserved for later resume
-via `attach`.
+Stop a session. The branch is preserved for later resume via `attach`.
 
 <!-- Generated from: claude-container stop --help -->
 
@@ -287,8 +287,8 @@ Usage:
 
 ### rm
 
-Remove a session completely: stops container, removes worktree, deletes
-branch, removes session record.
+Remove a session completely: stops container, deletes branch, removes
+session record.
 
 <!-- Generated from: claude-container rm --help -->
 
@@ -313,8 +313,8 @@ Flags:
 
 ### build
 
-Load the Nix-built Docker image into Docker. This is done automatically
-when starting sessions, but can be run manually to force a reload.
+Load the Docker image from the Nix-built tarball. This is done automatically
+when creating sessions, but can be run manually to force a reload.
 
 <!-- Generated from: claude-container build --help -->
 
@@ -351,11 +351,10 @@ Available Commands:
 
 ### auth
 
-Authenticate Claude Code inside a container. Runs an interactive session
-where you complete the Claude Code login flow. Credentials are stored in the
-shared config directory and used by all sessions.
-
-Auto-exits once authentication succeeds.
+Log in to Claude Code by running an interactive authentication session
+inside a container. If you have already authenticated Claude Code on the
+host (credentials in `~/.claude/`), those credentials are automatically
+mounted into containers -- no separate auth step needed.
 
 <!-- Generated from: claude-container auth --help -->
 
@@ -387,8 +386,9 @@ Usage:
 
 ### fix-perms
 
-Fix workspace file ownership after container UID remapping. Runs
-`sudo chown -R` to restore ownership to the current user.
+Runs `sudo chown` to restore workspace ownership to the current user.
+Useful when Docker user namespace remapping causes files to be owned by
+a remapped UID.
 
 <!-- Generated from: claude-container fix-perms --help -->
 
@@ -399,7 +399,9 @@ Usage:
 
 ### gc
 
-Clean up stopped containers and stale sessions.
+Remove stopped containers, orphaned session records, and optionally
+worktrees. By default, removes stopped containers and cleans up session
+records whose containers no longer exist.
 
 <!-- Generated from: claude-container gc --help -->
 
@@ -408,7 +410,7 @@ Usage:
   claude-container gc [flags]
 
 Flags:
-      --all    Also remove worktrees, branches, and session records
+      --all    Also remove worktrees and branches for stopped sessions
       --auth   Remove shared Claude config directory (logs you out)
 ```
 
@@ -645,6 +647,13 @@ In rootless Docker, the container runs as root (which maps to the host
 user's UID) so mounted volumes keep their original ownership. In standard
 Docker, a non-root user matching the host UID is created at startup.
 
+When a worktree session is started, the host repository is mounted
+read-write into the container and `git worktree add` runs inside the
+entrypoint to create the working copy at `/workspace`. This avoids
+broken `.git` path references that would occur if the worktree were
+created on the host. For multi-repo workspaces, each repository is
+mounted separately and gets its own worktree under `/workspace/<name>`.
+
 ## DEPENDENCIES
 
 Runtime: `docker`.
@@ -656,7 +665,6 @@ The nix package wraps the binary with `git` and `docker` on PATH and sets
 
     ~/.config/claude-container/sessions.json        session metadata
     ~/.config/claude-container/workspaces.json        named workspace definitions
-    ~/.config/claude-container/worktrees/            git worktrees
     ~/.config/claude-container/claude-config/        shared Claude Code config
     ~/.config/claude-container/claude-config/.credentials.json   auth credentials
     ~/.config/claude-container/loaded-image          image load marker
@@ -715,6 +723,10 @@ claude-container new --name auth --worktree feature-auth
 claude-container workspace add my-work ~/code/repo-a ~/code/repo-b
 claude-container run -W my-work
 
+# Multi-repo workspace with worktrees (each repo gets its own branch)
+claude-container workspace add my-repos ~/code/repo-a ~/code/repo-b
+claude-container work -W my-repos
+
 # Ad-hoc multi-folder mount
 claude-container run -w ~/code/repo-a -w ~/code/repo-b
 
@@ -737,7 +749,7 @@ claude-container attach auth
 # Stream logs
 claude-container logs -f auth
 
-# Stop (worktree preserved)
+# Stop (branch preserved)
 claude-container stop auth
 
 # Resume a stopped session

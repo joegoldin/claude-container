@@ -315,23 +315,9 @@ func createSession(opts createOpts) error {
 	branch := opts.worktree
 
 	if opts.worktree != "" && !opts.noWorktree {
-		worktreeDir := filepath.Join(store.WorktreeDir(), name)
-
-		if err := os.MkdirAll(store.WorktreeDir(), 0o755); err != nil {
-			return fmt.Errorf("create worktree dir: %w", err)
-		}
-
-		if opts.from != "" {
-			if err := gitpkg.CreateWorktreeFromBranch(repoRoot, worktreeDir, opts.worktree, opts.from); err != nil {
-				return fmt.Errorf("create worktree from branch: %w", err)
-			}
-		} else {
-			if err := gitpkg.CreateWorktree(repoRoot, worktreeDir, opts.worktree); err != nil {
-				return fmt.Errorf("create worktree: %w", err)
-			}
-		}
-
-		workspace = worktreeDir
+		// Don't create worktree on host — the container entrypoint will
+		// create it from the mounted repo at /mnt/repo.
+		workspace = ""
 	}
 
 	// For no-worktree mode, try to get the current branch name.
@@ -342,8 +328,21 @@ func createSession(opts createOpts) error {
 	}
 
 	// When extra workspaces are provided, don't mount cwd as primary workspace.
+	// In worktree mode, extra workspaces that are git repos become worktree
+	// repos (mounted at /mnt/repos/ with worktrees at /workspace/).
+	var worktreeRepos []string
 	if len(extraWorkspaces) > 0 {
 		workspace = ""
+		if opts.worktree != "" && !opts.noWorktree {
+			// All extra workspaces become worktree repos.
+			for _, ws := range extraWorkspaces {
+				if _, err := gitpkg.RepoRoot(ws); err != nil {
+					return fmt.Errorf("worktree mode: %q is not a git repository", ws)
+				}
+				worktreeRepos = append(worktreeRepos, ws)
+			}
+			extraWorkspaces = nil // don't direct-mount, entrypoint creates worktrees
+		}
 	}
 
 	// f. Ensure shared Claude config dir exists.
@@ -396,12 +395,32 @@ func createSession(opts createOpts) error {
 		ProxyCACertDir:  httpproxy.CACertDir(config.DefaultDir()),
 	}
 
+	// When using worktree mode, pass repo info so the container entrypoint
+	// creates the worktree inside the container (fixing broken .git refs).
+	if opts.worktree != "" && !opts.noWorktree {
+		runOpts.WorktreeBranch = branch
+		runOpts.WorktreeFrom = opts.from
+		if len(worktreeRepos) > 0 {
+			// Multi-repo: worktrees at /workspace/<basename> for each repo.
+			// Don't mount primary repo at /mnt/repo (would conflict with /workspace/).
+			runOpts.WorktreeRepos = worktreeRepos
+		} else {
+			// Single-repo: worktree at /workspace from cwd repo.
+			runOpts.RepoPath = repoRoot
+		}
+	}
+
 	// g. Save session to store before running so it's tracked even if
 	// the user detaches quickly.
+	// For container-created worktrees, WorktreePath is empty (no host path).
+	worktreePath := workspace
+	if opts.worktree != "" && !opts.noWorktree {
+		worktreePath = ""
+	}
 	sess := &config.Session{
 		Name:            name,
 		Branch:          branch,
-		WorktreePath:    workspace,
+		WorktreePath:    worktreePath,
 		RepoPath:        repoRoot,
 		ContainerName:   docker.ContainerName(name),
 		Yolo:            prof.Yolo,
@@ -409,6 +428,7 @@ func createSession(opts createOpts) error {
 		CreatedAt:       time.Now(),
 		Profile:         profile,
 		ExtraWorkspaces: extraWorkspaces,
+		WorktreeRepos:   worktreeRepos,
 		AllowDomains:    opts.allowDomains,
 		DenyPaths:       opts.denyPaths,
 		AllowCommands:   opts.allowCommands,

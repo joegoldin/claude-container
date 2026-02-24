@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -267,10 +268,71 @@ func gitBranchExists(repo, branch string) bool {
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
+// waitForBranch polls for a git branch to appear (created by container entrypoint).
+func waitForBranch(t *testing.T, repo, branch string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if gitBranchExists(repo, branch) {
+			return true
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return false
+}
+
 // proxyRulesPath returns the path where proxy rules are written for a given
 // proxy profile name within the test's isolated config dir.
 func proxyRulesPath(xdgDir, proxyProfile string) string {
 	return filepath.Join(xdgDir, "claude-container", "proxy-profiles", "profiles", proxyProfile+".json")
+}
+
+// runCLIWithTimeout executes the compiled binary with a custom timeout.
+func runCLIWithTimeout(t *testing.T, timeout time.Duration, args ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	return runCLIInDirWithTimeout(t, "", timeout, args...)
+}
+
+// runCLIInDir executes the compiled binary from a specific working directory.
+func runCLIInDir(t *testing.T, dir string, args ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	return runCLIInDirWithTimeout(t, dir, 2*time.Minute, args...)
+}
+
+// runCLIInDirWithTimeout executes the compiled binary in a specific directory with a timeout.
+func runCLIInDirWithTimeout(t *testing.T, dir string, timeout time.Duration, args ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, testBinary, args...)
+	cmd.Env = os.Environ()
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	var outBuf, errBuf strings.Builder
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	exitCode = 0
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			t.Fatalf("command timed out after %s: %v", timeout, args)
+		}
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			t.Fatalf("exec error: %v", err)
+		}
+	}
+	return outBuf.String(), errBuf.String(), exitCode
+}
+
+// dockerExec runs a command inside a running container and returns the output.
+func dockerExec(t *testing.T, name string, args ...string) (string, error) {
+	t.Helper()
+	cmdArgs := append([]string{"exec", "claude-container_" + name}, args...)
+	out, err := exec.Command("docker", cmdArgs...).CombinedOutput()
+	return strings.TrimSpace(string(out)), err
 }
 
 // ---------------------------------------------------------------------------
@@ -613,7 +675,7 @@ func TestE2E_WorkSession(t *testing.T) {
 		t.Fatal("container not created")
 	}
 
-	// Session has worktree and branch.
+	// Session has branch (worktree_path is empty for container-created worktrees).
 	sessions := readSessionsJSON(t, xdgDir)
 	sess := findSession(sessions, name)
 	if sess == nil {
@@ -623,26 +685,32 @@ func TestE2E_WorkSession(t *testing.T) {
 	if branch == "" {
 		t.Error("branch is empty — work should create a worktree branch")
 	}
-	wtPath, _ := sess["worktree_path"].(string)
-	if wtPath == "" {
-		t.Error("worktree_path is empty")
+
+	// Git branch created in host repo (via bind mount) — wait for entrypoint.
+	if !waitForBranch(t, repo, branch, 10*time.Second) {
+		t.Errorf("git branch %q not found in repo after waiting", branch)
 	}
 
-	// Worktree directory exists on disk.
-	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
-		t.Errorf("worktree %q does not exist on disk", wtPath)
+	// Verify workspace content is accessible INSIDE the container.
+	if dockerContainerRunning(name) {
+		out, err := dockerExec(t, name, "cat", "/workspace/README.md")
+		if err != nil {
+			t.Errorf("docker exec cat README.md failed: %v", err)
+		} else if !strings.Contains(out, "E2E") {
+			t.Errorf("README.md inside container = %q, want 'E2E'", out)
+		}
+
+		// Verify git works inside the container (worktree has valid .git).
+		branchOut, err := dockerExec(t, name, "git", "rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			t.Errorf("docker exec git rev-parse failed: %v", err)
+		} else if branchOut != branch {
+			t.Errorf("branch inside container = %q, want %q", branchOut, branch)
+		}
 	}
 
-	// Git branch was created.
-	if !gitBranchExists(repo, branch) {
-		t.Errorf("git branch %q not found in repo", branch)
-	}
-
-	// rm cleans up worktree and branch.
+	// rm cleans up the branch.
 	runCLI(t, "rm", name)
-	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
-		t.Errorf("worktree %q still exists after rm", wtPath)
-	}
 	if gitBranchExists(repo, branch) {
 		t.Errorf("git branch %q still exists after rm", branch)
 	}
@@ -686,19 +754,29 @@ func TestE2E_WorkFromBranch(t *testing.T) {
 		t.Fatalf("work --from: exit %d\nstderr: %s", code, stderr)
 	}
 
-	// Worktree contains the marker file from main.
+	// Session has branch set.
 	sessions := readSessionsJSON(t, xdgDir)
 	sess := findSession(sessions, name)
 	if sess == nil {
 		t.Fatal("session not in sessions.json")
 	}
-	wtPath, _ := sess["worktree_path"].(string)
-	if wtPath == "" {
-		t.Fatal("worktree_path empty")
-	}
-	markerPath := filepath.Join(wtPath, "main-marker.txt")
-	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
-		t.Errorf("worktree missing main-marker.txt — --from %s did not work", mainBranch)
+
+	// Verify worktree content (including --from marker) is accessible INSIDE the container.
+	if dockerContainerRunning(name) {
+		out, err := dockerExec(t, name, "cat", "/workspace/main-marker.txt")
+		if err != nil {
+			t.Errorf("docker exec cat main-marker.txt failed: %v", err)
+		} else if !strings.Contains(out, "from main") {
+			t.Errorf("main-marker.txt inside container = %q, want 'from main'", out)
+		}
+
+		// Verify git works and branch name is correct.
+		branchInContainer, err := dockerExec(t, name, "git", "rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			t.Errorf("docker exec git rev-parse failed: %v", err)
+		} else if branchInContainer != name {
+			t.Errorf("branch inside container = %q, want %q", branchInContainer, name)
+		}
 	}
 
 	runCLI(t, "rm", name)
@@ -1255,13 +1333,27 @@ func TestE2E_NewWithFlags(t *testing.T) {
 		t.Errorf("yolo = %v, want true", sess["yolo"])
 	}
 
-	// Worktree exists.
-	wtPath, _ := sess["worktree_path"].(string)
-	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
-		t.Errorf("worktree %q not on disk", wtPath)
+	// Git branch created in host repo (via bind mount) — wait for entrypoint.
+	if !waitForBranch(t, repo, "feature-auth", 10*time.Second) {
+		t.Error("git branch 'feature-auth' not created after waiting")
 	}
-	if !gitBranchExists(repo, "feature-auth") {
-		t.Error("git branch 'feature-auth' not created")
+
+	// Verify worktree is accessible INSIDE the container.
+	if dockerContainerRunning(name) {
+		out, err := dockerExec(t, name, "cat", "/workspace/README.md")
+		if err != nil {
+			t.Errorf("docker exec cat README.md failed: %v", err)
+		} else if !strings.Contains(out, "E2E") {
+			t.Errorf("README.md inside container = %q, want 'E2E'", out)
+		}
+
+		// Verify git works inside container and branch is correct.
+		branchOut, err := dockerExec(t, name, "git", "rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			t.Errorf("docker exec git rev-parse failed: %v", err)
+		} else if branchOut != "feature-auth" {
+			t.Errorf("branch inside container = %q, want 'feature-auth'", branchOut)
+		}
 	}
 
 	// ps shows branch.
@@ -1270,40 +1362,548 @@ func TestE2E_NewWithFlags(t *testing.T) {
 		t.Error("ps missing branch 'feature-auth'")
 	}
 
-	// rm cleans up everything.
+	// rm cleans up the branch.
 	runCLI(t, "rm", name)
-	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
-		t.Error("worktree still on disk after rm")
-	}
 	if gitBranchExists(repo, "feature-auth") {
 		t.Error("branch still exists after rm")
 	}
 }
 
+func TestE2E_WorkWithWorkspace(t *testing.T) {
+	xdgDir := setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	// Create two separate git repos as extra workspaces.
+	repoA := setupGitRepo(t)
+	os.WriteFile(filepath.Join(repoA, "marker-a.txt"), []byte("REPO_A"), 0o644)
+	execInDir := func(dir string, args ...string) {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+		}
+	}
+	execInDir(repoA, "add", "marker-a.txt")
+	execInDir(repoA, "commit", "-m", "add marker-a")
+
+	repoB := setupGitRepo(t)
+	os.WriteFile(filepath.Join(repoB, "marker-b.txt"), []byte("REPO_B"), 0o644)
+	execInDir(repoB, "add", "marker-b.txt")
+	execInDir(repoB, "commit", "-m", "add marker-b")
+
+	// Use repoA as cwd (primary repo for worktree).
+	origDir, _ := os.Getwd()
+	os.Chdir(repoA)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	// Register workspace with both repos.
+	_, _, code := runCLI(t, "workspace", "add", "multi-wt", repoA, repoB)
+	if code != 0 {
+		t.Fatal("workspace add failed")
+	}
+
+	name := "e2e-work-ws"
+	proxyProf := "e2e-work-ws"
+	cleanupContainer(t, name)
+	cleanupProxy(t, proxyProf)
+
+	stdout, stderr, code := runCLI(t, "work", "-W", "multi-wt", "--yolo", "-b",
+		"--name", name, "--proxy-profile", proxyProf)
+	if code != 0 {
+		t.Fatalf("work -W: exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+
+	if !dockerContainerExists(name) {
+		t.Fatal("container not created")
+	}
+
+	// Session should have worktree_repos set and extra_workspaces empty.
+	sessions := readSessionsJSON(t, xdgDir)
+	sess := findSession(sessions, name)
+	if sess == nil {
+		t.Fatal("session not in sessions.json")
+	}
+	wtRepos, _ := sess["worktree_repos"].([]interface{})
+	if len(wtRepos) != 2 {
+		t.Errorf("worktree_repos has %d entries, want 2", len(wtRepos))
+	}
+	extraWs, _ := sess["extra_workspaces"].([]interface{})
+	if len(extraWs) != 0 {
+		t.Errorf("extra_workspaces should be empty in worktree mode, got %d", len(extraWs))
+	}
+	branch, _ := sess["branch"].(string)
+	if branch == "" {
+		t.Error("branch is empty")
+	}
+
+	// Branches created in both host repos — wait for entrypoint.
+	if !waitForBranch(t, repoA, branch, 10*time.Second) {
+		t.Errorf("branch %q not found in repoA after waiting", branch)
+	}
+	if !waitForBranch(t, repoB, branch, 10*time.Second) {
+		t.Errorf("branch %q not found in repoB after waiting", branch)
+	}
+
+	// Verify worktree content is accessible INSIDE the container.
+	if dockerContainerRunning(name) {
+		baseA := filepath.Base(repoA)
+		baseB := filepath.Base(repoB)
+
+		out, err := dockerExec(t, name, "cat", "/workspace/"+baseA+"/marker-a.txt")
+		if err != nil {
+			t.Errorf("docker exec cat marker-a.txt failed: %v", err)
+		} else if !strings.Contains(out, "REPO_A") {
+			t.Errorf("marker-a.txt = %q, want 'REPO_A'", out)
+		}
+
+		out, err = dockerExec(t, name, "cat", "/workspace/"+baseB+"/marker-b.txt")
+		if err != nil {
+			t.Errorf("docker exec cat marker-b.txt failed: %v", err)
+		} else if !strings.Contains(out, "REPO_B") {
+			t.Errorf("marker-b.txt = %q, want 'REPO_B'", out)
+		}
+
+		// Git works in each worktree.
+		branchA, err := dockerExec(t, name, "git", "-C", "/workspace/"+baseA, "rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			t.Errorf("git rev-parse in repoA failed: %v", err)
+		} else if branchA != branch {
+			t.Errorf("branch in repoA = %q, want %q", branchA, branch)
+		}
+
+		branchB, err := dockerExec(t, name, "git", "-C", "/workspace/"+baseB, "rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			t.Errorf("git rev-parse in repoB failed: %v", err)
+		} else if branchB != branch {
+			t.Errorf("branch in repoB = %q, want %q", branchB, branch)
+		}
+	}
+
+	// rm cleans up branches in both repos.
+	runCLI(t, "rm", name)
+	if gitBranchExists(repoA, branch) {
+		t.Errorf("branch %q still exists in repoA after rm", branch)
+	}
+	if gitBranchExists(repoB, branch) {
+		t.Errorf("branch %q still exists in repoB after rm", branch)
+	}
+}
+
 // ---------------------------------------------------------------------------
-// Group 3: Task — actually runs Claude and verifies output
+// Group 3: Live execution — Claude actually runs and produces output
+//
+// These tests verify that Claude works end-to-end inside containers.
+// `task` tests run Claude non-interactively and verify stdout output.
+// Background session tests verify Claude starts and workspace is correct
+// via `docker exec`.
 // ---------------------------------------------------------------------------
 
-func TestE2E_TaskPipe(t *testing.T) {
+func TestLive_TaskPong(t *testing.T) {
 	setupConfigDir(t)
 	requireDockerAndAuth(t)
 
-	proxyProf := "e2e-task-pipe"
+	repo := setupGitRepo(t)
+	name := "e2e-live-pong"
+	proxyProf := "e2e-live-pong"
+	cleanupContainer(t, name)
 	cleanupProxy(t, proxyProf)
 
-	stdout, stderr, code := runCLI(t, "task", "-p", "respond with exactly: PONG",
-		"--proxy-profile", proxyProf)
+	stdout, stderr, code := runCLIInDirWithTimeout(t, repo, 5*time.Minute,
+		"task", "-p", "Respond with exactly the word PONG and nothing else.",
+		"--name", name, "--proxy-profile", proxyProf, "--max-turns", "1")
+
+	if code != 0 {
+		t.Fatalf("task exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "PONG") {
+		t.Errorf("stdout = %q, want PONG in output", stdout)
+	}
 	if !strings.Contains(stderr, "Task Complete") {
-		t.Fatalf("task did not complete: exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+		t.Errorf("stderr missing 'Task Complete'")
 	}
 	if !strings.Contains(stderr, "Duration:") {
-		t.Errorf("task stderr missing Duration summary")
+		t.Errorf("stderr missing 'Duration:'")
 	}
-	if code == 0 {
-		// Claude ran successfully — verify it actually produced output.
-		if !strings.Contains(stdout, "PONG") {
-			t.Errorf("task stdout = %q, want 'PONG' in output", stdout)
+	if !strings.Contains(stderr, "Tokens:") {
+		t.Errorf("stderr missing token summary")
+	}
+}
+
+func TestLive_TaskReadsFile(t *testing.T) {
+	setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	repo := setupGitRepo(t)
+	// Write a file with a unique sentinel value and commit it.
+	sentinel := "SENTINEL_E2E_42"
+	if err := os.WriteFile(filepath.Join(repo, "magic.txt"), []byte(sentinel+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd := exec.Command("git", "add", "magic.txt")
+	gitCmd.Dir = repo
+	gitCmd.CombinedOutput()
+	gitCmd = exec.Command("git", "commit", "-m", "add magic file")
+	gitCmd.Dir = repo
+	gitCmd.CombinedOutput()
+
+	name := "e2e-live-reads"
+	proxyProf := "e2e-live-reads"
+	cleanupContainer(t, name)
+	cleanupProxy(t, proxyProf)
+
+	stdout, stderr, code := runCLIInDirWithTimeout(t, repo, 5*time.Minute,
+		"task", "-p", "Read the file magic.txt in the current directory and respond with its exact contents, nothing else.",
+		"--name", name, "--proxy-profile", proxyProf, "--max-turns", "3")
+
+	if code != 0 {
+		t.Fatalf("task exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, sentinel) {
+		t.Errorf("stdout = %q, want sentinel %q — Claude could not read workspace file", stdout, sentinel)
+	}
+}
+
+func TestLive_TaskMaxTurns(t *testing.T) {
+	setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	repo := setupGitRepo(t)
+	name := "e2e-live-turns"
+	proxyProf := "e2e-live-turns"
+	cleanupContainer(t, name)
+	cleanupProxy(t, proxyProf)
+
+	stdout, stderr, code := runCLIInDirWithTimeout(t, repo, 5*time.Minute,
+		"task", "-p", "Respond with exactly the word TURNS_OK and nothing else.",
+		"--name", name, "--proxy-profile", proxyProf, "--max-turns", "1")
+
+	if code != 0 {
+		t.Fatalf("task --max-turns=1 exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "TURNS_OK") {
+		t.Errorf("stdout = %q, want TURNS_OK", stdout)
+	}
+}
+
+func TestLive_TaskKeep(t *testing.T) {
+	xdgDir := setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	repo := setupGitRepo(t)
+	name := "e2e-live-keep"
+	proxyProf := "e2e-live-keep"
+	cleanupContainer(t, name)
+	cleanupProxy(t, proxyProf)
+
+	stdout, stderr, code := runCLIInDirWithTimeout(t, repo, 5*time.Minute,
+		"task", "-p", "Respond with exactly the word KEPT and nothing else.",
+		"--name", name, "--proxy-profile", proxyProf, "--keep", "--max-turns", "1")
+
+	if code != 0 {
+		t.Fatalf("task --keep exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "KEPT") {
+		t.Errorf("stdout = %q, want KEPT", stdout)
+	}
+
+	// Session should still exist because --keep was used.
+	sessions := readSessionsJSON(t, xdgDir)
+	sess := findSession(sessions, name)
+	if sess == nil {
+		t.Error("session removed despite --keep flag")
+	}
+
+	// ps should show it.
+	psOut, _, _ := runCLI(t, "ps")
+	if !strings.Contains(psOut, name) {
+		t.Errorf("ps missing kept session %q", name)
+	}
+
+	runCLI(t, "rm", name)
+}
+
+func TestLive_TaskWithMounts(t *testing.T) {
+	setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	// Create a directory with a marker file to mount as extra workspace.
+	mountDir := filepath.Join(t.TempDir(), "extra-mount")
+	os.MkdirAll(mountDir, 0o755)
+	os.WriteFile(filepath.Join(mountDir, "mounted-sentinel.txt"), []byte("MOUNT_OK_99\n"), 0o644)
+
+	repo := setupGitRepo(t)
+	name := "e2e-live-mounts"
+	proxyProf := "e2e-live-mounts"
+	cleanupContainer(t, name)
+	cleanupProxy(t, proxyProf)
+
+	// Extra workspaces become /workspace/<basename>/ inside the container.
+	stdout, stderr, code := runCLIInDirWithTimeout(t, repo, 5*time.Minute,
+		"task", "-p", "Read the file /workspace/extra-mount/mounted-sentinel.txt and respond with its exact contents, nothing else.",
+		"--name", name, "--proxy-profile", proxyProf, "-w", mountDir, "--max-turns", "3")
+
+	if code != 0 {
+		t.Fatalf("task -w mount exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "MOUNT_OK_99") {
+		t.Errorf("stdout = %q, want MOUNT_OK_99 proving extra mount is visible to Claude", stdout)
+	}
+}
+
+func TestLive_RunContainerLive(t *testing.T) {
+	setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	repo := setupGitRepo(t)
+	// Write a marker so we can verify workspace content inside the container.
+	os.WriteFile(filepath.Join(repo, "run-marker.txt"), []byte("RUN_LIVE_OK\n"), 0o644)
+
+	name := "e2e-live-run"
+	proxyProf := "e2e-live-run"
+	cleanupContainer(t, name)
+	cleanupProxy(t, proxyProf)
+
+	origDir, _ := os.Getwd()
+	os.Chdir(repo)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	_, stderr, code := runCLI(t, "run", "--yolo", "-b", "--name", name,
+		"--proxy-profile", proxyProf)
+	if code != 0 {
+		t.Fatalf("run -b: exit %d\nstderr: %s", code, stderr)
+	}
+
+	if !dockerContainerRunning(name) {
+		t.Fatal("container not running after creation")
+	}
+
+	// Wait for entrypoint + Claude to finish initializing.
+	time.Sleep(5 * time.Second)
+
+	// Container should still be running (Claude didn't crash).
+	if !dockerContainerRunning(name) {
+		logs := dockerLogs(name, 50)
+		t.Fatalf("container exited within 5s — Claude likely failed to start.\nLogs:\n%s", logs)
+	}
+
+	// Verify workspace files are accessible INSIDE the container.
+	out, err := dockerExec(t, name, "cat", "/workspace/run-marker.txt")
+	if err != nil {
+		t.Errorf("docker exec cat run-marker.txt failed: %v\noutput: %s", err, out)
+	} else if !strings.Contains(out, "RUN_LIVE_OK") {
+		t.Errorf("run-marker.txt inside container = %q, want 'RUN_LIVE_OK'", out)
+	}
+
+	// Verify README.md from the git repo is also visible.
+	out, err = dockerExec(t, name, "cat", "/workspace/README.md")
+	if err != nil {
+		t.Errorf("docker exec cat README.md failed: %v", err)
+	} else if !strings.Contains(out, "E2E") {
+		t.Errorf("README.md inside container = %q, want 'E2E'", out)
+	}
+
+	// `run` mounts a real git repo (not a worktree), so git works inside.
+	branchOut, err := dockerExec(t, name, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		t.Errorf("docker exec git rev-parse failed: %v", err)
+	} else {
+		// setupGitRepo creates a repo on "main" or "master".
+		if branchOut != "main" && branchOut != "master" {
+			t.Errorf("branch inside container = %q, want main or master", branchOut)
 		}
 	}
-	t.Logf("task exit=%d stdout=%q", code, stdout)
+
+	runCLI(t, "rm", name)
+}
+
+func TestLive_WorkContainerLive(t *testing.T) {
+	setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	repo := setupGitRepo(t)
+	name := "e2e-live-work"
+	proxyProf := "e2e-live-work"
+	cleanupContainer(t, name)
+	cleanupProxy(t, proxyProf)
+
+	origDir, _ := os.Getwd()
+	os.Chdir(repo)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	_, stderr, code := runCLI(t, "work", "--yolo", "-b", "--name", name,
+		"--proxy-profile", proxyProf)
+	if code != 0 {
+		t.Fatalf("work -b: exit %d\nstderr: %s", code, stderr)
+	}
+
+	if !dockerContainerRunning(name) {
+		t.Fatal("container not running")
+	}
+
+	time.Sleep(5 * time.Second)
+	if !dockerContainerRunning(name) {
+		logs := dockerLogs(name, 50)
+		t.Fatalf("container exited within 5s — Claude likely failed to start.\nLogs:\n%s", logs)
+	}
+
+	// Verify worktree README.md is accessible inside the container.
+	out, err := dockerExec(t, name, "cat", "/workspace/README.md")
+	if err != nil {
+		t.Errorf("docker exec cat README.md failed: %v\noutput: %s", err, out)
+	} else if !strings.Contains(out, "E2E") {
+		t.Errorf("README.md inside container = %q, want 'E2E'", out)
+	}
+
+	// Verify git works inside the container (worktree created by entrypoint).
+	branchOut, err := dockerExec(t, name, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		t.Errorf("docker exec git rev-parse failed: %v", err)
+	} else if branchOut != name {
+		t.Errorf("branch inside container = %q, want %q", branchOut, name)
+	}
+
+	runCLI(t, "rm", name)
+}
+
+func TestLive_NewContainerLive(t *testing.T) {
+	setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	repo := setupGitRepo(t)
+	name := "e2e-live-new"
+	proxyProf := "e2e-live-new"
+	cleanupContainer(t, name)
+	cleanupProxy(t, proxyProf)
+
+	origDir, _ := os.Getwd()
+	os.Chdir(repo)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	_, stderr, code := runCLI(t, "new", "--name", name, "--worktree", "live-branch",
+		"--yolo", "--proxy-profile", proxyProf, "-b")
+	if code != 0 {
+		t.Fatalf("new -b: exit %d\nstderr: %s", code, stderr)
+	}
+
+	if !dockerContainerRunning(name) {
+		t.Fatal("container not running")
+	}
+
+	time.Sleep(5 * time.Second)
+	if !dockerContainerRunning(name) {
+		logs := dockerLogs(name, 50)
+		t.Fatalf("container exited within 5s — Claude likely failed to start.\nLogs:\n%s", logs)
+	}
+
+	// Verify the git branch was created on the host (via bind mount).
+	if !gitBranchExists(repo, "live-branch") {
+		t.Error("git branch 'live-branch' not created on host")
+	}
+
+	// Verify worktree content is accessible inside the container.
+	out, err := dockerExec(t, name, "cat", "/workspace/README.md")
+	if err != nil {
+		t.Errorf("docker exec cat README.md failed: %v\noutput: %s", err, out)
+	} else if !strings.Contains(out, "E2E") {
+		t.Errorf("README.md inside container = %q, want 'E2E'", out)
+	}
+
+	// Verify git works inside the container — worktree is on the correct branch.
+	branchOut, err := dockerExec(t, name, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		t.Errorf("docker exec git rev-parse failed: %v", err)
+	} else if branchOut != "live-branch" {
+		t.Errorf("branch inside container = %q, want 'live-branch'", branchOut)
+	}
+
+	runCLI(t, "rm", name)
+}
+
+func TestLive_WorkWithWorkspaceLive(t *testing.T) {
+	setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	// Create two separate git repos.
+	repoA := setupGitRepo(t)
+	os.WriteFile(filepath.Join(repoA, "live-a.txt"), []byte("LIVE_A"), 0o644)
+	execInDir := func(dir string, args ...string) {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+		}
+	}
+	execInDir(repoA, "add", "live-a.txt")
+	execInDir(repoA, "commit", "-m", "add live-a")
+
+	repoB := setupGitRepo(t)
+	os.WriteFile(filepath.Join(repoB, "live-b.txt"), []byte("LIVE_B"), 0o644)
+	execInDir(repoB, "add", "live-b.txt")
+	execInDir(repoB, "commit", "-m", "add live-b")
+
+	origDir, _ := os.Getwd()
+	os.Chdir(repoA)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	// Register workspace.
+	_, _, code := runCLI(t, "workspace", "add", "live-multi", repoA, repoB)
+	if code != 0 {
+		t.Fatal("workspace add failed")
+	}
+
+	name := "e2e-live-multi"
+	proxyProf := "e2e-live-multi"
+	cleanupContainer(t, name)
+	cleanupProxy(t, proxyProf)
+
+	_, stderr, code := runCLI(t, "work", "-W", "live-multi", "--yolo", "-b",
+		"--name", name, "--proxy-profile", proxyProf)
+	if code != 0 {
+		t.Fatalf("work -W: exit %d\nstderr: %s", code, stderr)
+	}
+
+	if !dockerContainerRunning(name) {
+		t.Fatal("container not running")
+	}
+
+	time.Sleep(5 * time.Second)
+	if !dockerContainerRunning(name) {
+		logs := dockerLogs(name, 50)
+		t.Fatalf("container exited within 5s.\nLogs:\n%s", logs)
+	}
+
+	baseA := filepath.Base(repoA)
+	baseB := filepath.Base(repoB)
+
+	// Verify files are accessible inside container worktrees.
+	out, err := dockerExec(t, name, "cat", "/workspace/"+baseA+"/live-a.txt")
+	if err != nil {
+		t.Errorf("docker exec cat live-a.txt failed: %v\noutput: %s", err, out)
+	} else if !strings.Contains(out, "LIVE_A") {
+		t.Errorf("live-a.txt = %q, want 'LIVE_A'", out)
+	}
+
+	out, err = dockerExec(t, name, "cat", "/workspace/"+baseB+"/live-b.txt")
+	if err != nil {
+		t.Errorf("docker exec cat live-b.txt failed: %v\noutput: %s", err, out)
+	} else if !strings.Contains(out, "LIVE_B") {
+		t.Errorf("live-b.txt = %q, want 'LIVE_B'", out)
+	}
+
+	// Git works in each worktree.
+	branchA, err := dockerExec(t, name, "git", "-C", "/workspace/"+baseA, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		t.Errorf("git rev-parse in repoA failed: %v", err)
+	} else if branchA != name {
+		t.Errorf("branch in repoA = %q, want %q", branchA, name)
+	}
+
+	branchB, err := dockerExec(t, name, "git", "-C", "/workspace/"+baseB, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		t.Errorf("git rev-parse in repoB failed: %v", err)
+	} else if branchB != name {
+		t.Errorf("branch in repoB = %q, want %q", branchB, name)
+	}
+
+	runCLI(t, "rm", name)
 }
