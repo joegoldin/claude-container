@@ -78,12 +78,14 @@ var profiles = map[string]Profile{
 			"files.pythonhosted.org",
 		},
 		AllowPerms: []string{
-			"Bash(git *)", "Bash(npm *)", "Bash(npx *)",
+			"Bash(git *)", "Bash(gh *)", "Bash(npm *)", "Bash(npx *)",
 			"Bash(pip *)", "Bash(python *)", "Bash(node *)",
 			"Bash(cargo *)", "Bash(go *)", "Bash(make *)",
-			"Bash(ls *)", "Bash(cat *)", "Bash(grep *)",
+			"Bash(cd *)", "Bash(echo *)", "Bash(ls *)", "Bash(cat *)", "Bash(grep *)",
 			"Bash(find *)", "Bash(touch *)", "Bash(curl *)", "Bash(wget *)",
-			"Write(**)", "Edit(**)",
+			"Bash(mkdir *)", "Bash(rm *)", "Bash(cp *)", "Bash(mv *)", "Bash(sleep *)",
+			"Read(/tmp/**)", "Write(**)", "Edit(**)",
+			"WebFetch(*)", "WebSearch(*)",
 		},
 		DenyPerms: []string{
 			"Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.gnupg/**)",
@@ -97,8 +99,8 @@ var profiles = map[string]Profile{
 		AllowedDomains: []string{"api.anthropic.com"},
 		AllowPerms: []string{
 			"Bash(git status *)", "Bash(git diff *)", "Bash(git log *)",
-			"Bash(ls *)", "Bash(cat *)",
-			"Write(/workspace/**)", "Edit(/workspace/**)",
+			"Bash(cd *)", "Bash(echo *)", "Bash(ls *)", "Bash(cat *)",
+			"Read(/tmp/**)", "Write(/workspace/**)", "Edit(/workspace/**)",
 		},
 		DenyPerms: []string{
 			"Bash(curl *)", "Bash(wget *)",
