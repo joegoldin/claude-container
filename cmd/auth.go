@@ -44,6 +44,43 @@ var authStatusCmd = &cobra.Command{
 	},
 }
 
+var authRefreshCmd = &cobra.Command{
+	Use:   "refresh",
+	Short: "Re-copy host credentials into running containers",
+	Long:  `Re-copies host credentials from ~/.claude/ into all running containers. Use after re-authenticating on the host.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		store := config.NewStore(config.DefaultDir())
+
+		sessions := store.List()
+		if len(sessions) == 0 {
+			fmt.Println("No sessions found.")
+			return nil
+		}
+
+		refreshed := 0
+		for _, sess := range sessions {
+			if !docker.IsRunning(sess.Name) {
+				continue
+			}
+			c := docker.RefreshAuthCmd(sess.Name)
+			c.Stderr = os.Stderr
+			if err := c.Run(); err != nil {
+				fmt.Printf("  %s: failed (%v)\n", sess.Name, err)
+				continue
+			}
+			fmt.Printf("  %s: refreshed\n", sess.Name)
+			refreshed++
+		}
+
+		if refreshed == 0 {
+			fmt.Println("No running containers found.")
+		} else {
+			fmt.Printf("Refreshed credentials in %d container(s).\n", refreshed)
+		}
+		return nil
+	},
+}
+
 func authLoginRun(cmd *cobra.Command, args []string) error {
 	store := config.NewStore(config.DefaultDir())
 
@@ -124,5 +161,6 @@ func authLoginRun(cmd *cobra.Command, args []string) error {
 
 func init() {
 	authCmd.AddCommand(authStatusCmd)
+	authCmd.AddCommand(authRefreshCmd)
 	rootCmd.AddCommand(authCmd)
 }
