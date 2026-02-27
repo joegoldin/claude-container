@@ -487,6 +487,40 @@ func TestExecGitDiffArgs(t *testing.T) {
 	}
 }
 
+func TestRefreshAuthArgs(t *testing.T) {
+	cmd := RefreshAuthCmd("test-session")
+	args := cmd.Args
+
+	if args[0] != "docker" {
+		t.Errorf("first arg = %q, want docker", args[0])
+	}
+	if args[1] != "exec" {
+		t.Errorf("second arg = %q, want exec", args[1])
+	}
+	if args[2] != ContainerName("test-session") {
+		t.Errorf("third arg = %q, want container name", args[2])
+	}
+	if args[3] != "sh" || args[4] != "-c" {
+		t.Errorf("args[3:5] = %v, want [sh -c]", args[3:5])
+	}
+
+	script := args[5]
+	// Must copy the three credential files from /mnt/claude-host/.
+	for _, f := range []string{".credentials.json", "settings.json", ".claude.json"} {
+		if !strings.Contains(script, f) {
+			t.Errorf("refresh script missing %q", f)
+		}
+	}
+	// Must handle /mnt/claude-host-json.
+	if !strings.Contains(script, "/mnt/claude-host-json") {
+		t.Errorf("refresh script missing /mnt/claude-host-json copy")
+	}
+	// Must set permissions to 600.
+	if !strings.Contains(script, "chmod 600") {
+		t.Errorf("refresh script missing chmod 600")
+	}
+}
+
 func TestTaskRunArgsMaxTurns(t *testing.T) {
 	opts := RunOpts{
 		Name:      "turns-test",

@@ -495,6 +495,29 @@ func ExecGitDiff(session string) *exec.Cmd {
 	return exec.Command("docker", "exec", name, "git", "diff", "--name-status", "HEAD")
 }
 
+// refreshAuthScript is the shell snippet that copies host credentials
+// from the read-only mounts into /claude/. Mirrors the entrypoint logic
+// in nix/image.nix.
+const refreshAuthScript = `
+if [ -d /mnt/claude-host ]; then
+  for f in .credentials.json settings.json .claude.json; do
+    if [ -f "/mnt/claude-host/$f" ]; then
+      cp -L "/mnt/claude-host/$f" "/claude/$f" && chmod 600 "/claude/$f"
+    fi
+  done
+fi
+if [ -f /mnt/claude-host-json ]; then
+  cp -L /mnt/claude-host-json /claude/.claude.json && chmod 600 /claude/.claude.json
+fi`
+
+// RefreshAuthCmd returns a prepared *exec.Cmd that re-copies host
+// credentials from the read-only mounts into /claude/ inside the
+// container. The caller is responsible for running the command.
+func RefreshAuthCmd(session string) *exec.Cmd {
+	name := ContainerName(session)
+	return exec.Command("docker", "exec", name, "sh", "-c", refreshAuthScript)
+}
+
 // WaitExitCode runs docker wait and returns the container exit code.
 func WaitExitCode(session string) (int, error) {
 	name := ContainerName(session)
