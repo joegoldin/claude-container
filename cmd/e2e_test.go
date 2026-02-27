@@ -2133,3 +2133,324 @@ func TestLive_WorkWithWorkspaceLive(t *testing.T) {
 
 	runCLI(t, "rm", name)
 }
+
+// ---------------------------------------------------------------------------
+// Group 5: Parallel sessions — multiple containers from same repo
+// ---------------------------------------------------------------------------
+
+func TestE2E_ParallelRunSessions(t *testing.T) {
+	xdgDir := setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	repo := setupGitRepo(t)
+	os.WriteFile(filepath.Join(repo, "shared.txt"), []byte("SHARED_DATA\n"), 0o644)
+
+	name1 := "e2e-par-run1"
+	name2 := "e2e-par-run2"
+	proxyProf := "e2e-par-run"
+	cleanupContainer(t, name1)
+	cleanupContainer(t, name2)
+	cleanupProxy(t, proxyProf)
+
+	origDir, _ := os.Getwd()
+	os.Chdir(repo)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	// Start two run sessions (no worktree) sharing the same mounted workspace.
+	_, stderr1, code := runCLI(t, "run", "--yolo", "-b", "--name", name1,
+		"--proxy-profile", proxyProf)
+	if code != 0 {
+		t.Fatalf("run 1: exit %d\nstderr: %s", code, stderr1)
+	}
+
+	_, stderr2, code := runCLI(t, "run", "--yolo", "-b", "--name", name2,
+		"--proxy-profile", proxyProf)
+	if code != 0 {
+		t.Fatalf("run 2: exit %d\nstderr: %s", code, stderr2)
+	}
+
+	// Both containers should be running.
+	if !dockerContainerRunning(name1) {
+		t.Error("container 1 not running")
+	}
+	if !dockerContainerRunning(name2) {
+		t.Error("container 2 not running")
+	}
+
+	// Both should see workspace files.
+	out1, err := dockerExec(t, name1, "cat", "/workspace/shared.txt")
+	if err != nil {
+		t.Errorf("container 1 cat shared.txt failed: %v", err)
+	} else if !strings.Contains(out1, "SHARED_DATA") {
+		t.Errorf("container 1 shared.txt = %q, want 'SHARED_DATA'", out1)
+	}
+
+	out2, err := dockerExec(t, name2, "cat", "/workspace/shared.txt")
+	if err != nil {
+		t.Errorf("container 2 cat shared.txt failed: %v", err)
+	} else if !strings.Contains(out2, "SHARED_DATA") {
+		t.Errorf("container 2 shared.txt = %q, want 'SHARED_DATA'", out2)
+	}
+
+	// Both in sessions.json.
+	sessions := readSessionsJSON(t, xdgDir)
+	if findSession(sessions, name1) == nil {
+		t.Error("session 1 not in sessions.json")
+	}
+	if findSession(sessions, name2) == nil {
+		t.Error("session 2 not in sessions.json")
+	}
+
+	runCLI(t, "rm", name1)
+	runCLI(t, "rm", name2)
+}
+
+func TestE2E_ParallelWorkSessions(t *testing.T) {
+	xdgDir := setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	repo := setupGitRepo(t)
+
+	name1 := "e2e-par-work1"
+	name2 := "e2e-par-work2"
+	proxyProf := "e2e-par-work"
+	cleanupContainer(t, name1)
+	cleanupContainer(t, name2)
+	cleanupProxy(t, proxyProf)
+
+	origDir, _ := os.Getwd()
+	os.Chdir(repo)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	// Start first work session.
+	_, stderr1, code := runCLI(t, "work", "--yolo", "-b", "--name", name1,
+		"--proxy-profile", proxyProf)
+	if code != 0 {
+		t.Fatalf("work 1: exit %d\nstderr: %s", code, stderr1)
+	}
+
+	// Start second work session — this is the bug case (used to fail).
+	_, stderr2, code := runCLI(t, "work", "--yolo", "-b", "--name", name2,
+		"--proxy-profile", proxyProf)
+	if code != 0 {
+		t.Fatalf("work 2: exit %d\nstderr: %s", code, stderr2)
+	}
+
+	// Both containers should be running.
+	if !dockerContainerRunning(name1) {
+		t.Error("container 1 not running")
+	}
+	if !dockerContainerRunning(name2) {
+		t.Error("container 2 not running")
+	}
+
+	// Get branch names from sessions.
+	sessions := readSessionsJSON(t, xdgDir)
+	sess1 := findSession(sessions, name1)
+	sess2 := findSession(sessions, name2)
+	if sess1 == nil {
+		t.Fatal("session 1 not in sessions.json")
+	}
+	if sess2 == nil {
+		t.Fatal("session 2 not in sessions.json")
+	}
+	branch1, _ := sess1["branch"].(string)
+	branch2, _ := sess2["branch"].(string)
+	if branch1 == "" {
+		t.Fatal("branch1 is empty")
+	}
+	if branch2 == "" {
+		t.Fatal("branch2 is empty")
+	}
+	if branch1 == branch2 {
+		t.Errorf("both sessions have same branch %q — should be unique", branch1)
+	}
+
+	// Both branches should exist in the host repo simultaneously.
+	if !waitForBranch(t, repo, branch1, 15*time.Second) {
+		t.Errorf("branch %q not found in repo", branch1)
+	}
+	if !waitForBranch(t, repo, branch2, 15*time.Second) {
+		t.Errorf("branch %q not found in repo", branch2)
+	}
+
+	// Both containers should see workspace files via /workspace symlink.
+	out1, err := dockerExec(t, name1, "cat", "/workspace/README.md")
+	if err != nil {
+		t.Errorf("container 1 cat README.md failed: %v", err)
+	} else if !strings.Contains(out1, "E2E") {
+		t.Errorf("container 1 README.md = %q, want 'E2E'", out1)
+	}
+
+	out2, err := dockerExec(t, name2, "cat", "/workspace/README.md")
+	if err != nil {
+		t.Errorf("container 2 cat README.md failed: %v", err)
+	} else if !strings.Contains(out2, "E2E") {
+		t.Errorf("container 2 README.md = %q, want 'E2E'", out2)
+	}
+
+	// Both containers should be on the correct branch.
+	branchOut1, err := dockerExec(t, name1, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		t.Errorf("container 1 git rev-parse failed: %v", err)
+	} else if branchOut1 != branch1 {
+		t.Errorf("container 1 branch = %q, want %q", branchOut1, branch1)
+	}
+
+	branchOut2, err := dockerExec(t, name2, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		t.Errorf("container 2 git rev-parse failed: %v", err)
+	} else if branchOut2 != branch2 {
+		t.Errorf("container 2 branch = %q, want %q", branchOut2, branch2)
+	}
+
+	// /workspace should be a symlink to /worktrees/<branch>.
+	link1, err := dockerExec(t, name1, "readlink", "/workspace")
+	if err != nil {
+		t.Errorf("container 1 readlink /workspace failed: %v", err)
+	} else if link1 != "/worktrees/"+branch1 {
+		t.Errorf("container 1 /workspace symlink = %q, want %q", link1, "/worktrees/"+branch1)
+	}
+
+	link2, err := dockerExec(t, name2, "readlink", "/workspace")
+	if err != nil {
+		t.Errorf("container 2 readlink /workspace failed: %v", err)
+	} else if link2 != "/worktrees/"+branch2 {
+		t.Errorf("container 2 /workspace symlink = %q, want %q", link2, "/worktrees/"+branch2)
+	}
+
+	// Cleanup removes both branches.
+	runCLI(t, "rm", name1)
+	runCLI(t, "rm", name2)
+	if gitBranchExists(repo, branch1) {
+		t.Errorf("branch %q still exists after rm", branch1)
+	}
+	if gitBranchExists(repo, branch2) {
+		t.Errorf("branch %q still exists after rm", branch2)
+	}
+}
+
+func TestE2E_ParallelWorkWithWorkspace(t *testing.T) {
+	xdgDir := setupConfigDir(t)
+	requireDockerAndAuth(t)
+
+	// Create two separate git repos.
+	repoA := setupGitRepo(t)
+	os.WriteFile(filepath.Join(repoA, "marker-a.txt"), []byte("REPO_A"), 0o644)
+	execInDir := func(dir string, args ...string) {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+		}
+	}
+	execInDir(repoA, "add", "marker-a.txt")
+	execInDir(repoA, "commit", "-m", "add marker-a")
+
+	repoB := setupGitRepo(t)
+	os.WriteFile(filepath.Join(repoB, "marker-b.txt"), []byte("REPO_B"), 0o644)
+	execInDir(repoB, "add", "marker-b.txt")
+	execInDir(repoB, "commit", "-m", "add marker-b")
+
+	// Use repoA as cwd (primary repo for worktree).
+	origDir, _ := os.Getwd()
+	os.Chdir(repoA)
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	// Register workspace with both repos.
+	_, _, code := runCLI(t, "workspace", "add", "par-multi", repoA, repoB)
+	if code != 0 {
+		t.Fatal("workspace add failed")
+	}
+
+	name1 := "e2e-par-ws1"
+	name2 := "e2e-par-ws2"
+	proxyProf := "e2e-par-ws"
+	cleanupContainer(t, name1)
+	cleanupContainer(t, name2)
+	cleanupProxy(t, proxyProf)
+
+	// Start two work sessions with multi-repo workspace.
+	_, stderr1, code := runCLI(t, "work", "-W", "par-multi", "--yolo", "-b",
+		"--name", name1, "--proxy-profile", proxyProf)
+	if code != 0 {
+		t.Fatalf("work 1: exit %d\nstderr: %s", code, stderr1)
+	}
+
+	_, stderr2, code := runCLI(t, "work", "-W", "par-multi", "--yolo", "-b",
+		"--name", name2, "--proxy-profile", proxyProf)
+	if code != 0 {
+		t.Fatalf("work 2: exit %d\nstderr: %s", code, stderr2)
+	}
+
+	// Both containers should be running.
+	if !dockerContainerRunning(name1) {
+		t.Error("container 1 not running")
+	}
+	if !dockerContainerRunning(name2) {
+		t.Error("container 2 not running")
+	}
+
+	// Get branch names from sessions.
+	sessions := readSessionsJSON(t, xdgDir)
+	sess1 := findSession(sessions, name1)
+	sess2 := findSession(sessions, name2)
+	if sess1 == nil {
+		t.Fatal("session 1 not in sessions.json")
+	}
+	if sess2 == nil {
+		t.Fatal("session 2 not in sessions.json")
+	}
+	branch1, _ := sess1["branch"].(string)
+	branch2, _ := sess2["branch"].(string)
+
+	// Wait for branches to be created in both repos.
+	if !waitForBranch(t, repoA, branch1, 15*time.Second) {
+		t.Errorf("branch %q not found in repoA", branch1)
+	}
+	if !waitForBranch(t, repoA, branch2, 15*time.Second) {
+		t.Errorf("branch %q not found in repoA", branch2)
+	}
+	if !waitForBranch(t, repoB, branch1, 15*time.Second) {
+		t.Errorf("branch %q not found in repoB", branch1)
+	}
+	if !waitForBranch(t, repoB, branch2, 15*time.Second) {
+		t.Errorf("branch %q not found in repoB", branch2)
+	}
+
+	baseA := filepath.Base(repoA)
+	baseB := filepath.Base(repoB)
+
+	// Both containers see files from both repos.
+	out, err := dockerExec(t, name1, "cat", "/workspace/"+baseA+"/marker-a.txt")
+	if err != nil {
+		t.Errorf("container 1 cat marker-a.txt failed: %v", err)
+	} else if !strings.Contains(out, "REPO_A") {
+		t.Errorf("container 1 marker-a.txt = %q, want 'REPO_A'", out)
+	}
+
+	out, err = dockerExec(t, name1, "cat", "/workspace/"+baseB+"/marker-b.txt")
+	if err != nil {
+		t.Errorf("container 1 cat marker-b.txt failed: %v", err)
+	} else if !strings.Contains(out, "REPO_B") {
+		t.Errorf("container 1 marker-b.txt = %q, want 'REPO_B'", out)
+	}
+
+	out, err = dockerExec(t, name2, "cat", "/workspace/"+baseA+"/marker-a.txt")
+	if err != nil {
+		t.Errorf("container 2 cat marker-a.txt failed: %v", err)
+	} else if !strings.Contains(out, "REPO_A") {
+		t.Errorf("container 2 marker-a.txt = %q, want 'REPO_A'", out)
+	}
+
+	out, err = dockerExec(t, name2, "cat", "/workspace/"+baseB+"/marker-b.txt")
+	if err != nil {
+		t.Errorf("container 2 cat marker-b.txt failed: %v", err)
+	} else if !strings.Contains(out, "REPO_B") {
+		t.Errorf("container 2 marker-b.txt = %q, want 'REPO_B'", out)
+	}
+
+	// Cleanup.
+	runCLI(t, "rm", name1)
+	runCLI(t, "rm", name2)
+}

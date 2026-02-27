@@ -154,19 +154,32 @@ let
     # add can populate it. git handles existing empty directories.
     if [ -n "$WORKTREE_BRANCH" ] && [ "$USER_UID" -ne 0 ]; then
       ${chown} "$USER_UID:$USER_GID" /workspace
+      ${chown} "$USER_UID:$USER_GID" /worktrees
     fi
 
-    # Single-repo worktree: /mnt/repo → /workspace
-    if [ -n "$WORKTREE_BRANCH" ] && [ -d /mnt/repo ] && [ ! -e /workspace/.git ]; then
-      create_worktree /mnt/repo /workspace
+    # Single-repo worktree: /mnt/repo → /worktrees/<branch>, symlinked to /workspace
+    if [ -n "$WORKTREE_BRANCH" ] && [ -d /mnt/repo ] && [ ! -e "/worktrees/$WORKTREE_BRANCH/.git" ]; then
+      create_worktree /mnt/repo "/worktrees/$WORKTREE_BRANCH"
+      # Replace empty /workspace dir with symlink (ln -sfn won't replace a dir, so rmdir first)
+      rmdir /workspace 2>/dev/null || true
+      ${ln} -sfn "/worktrees/$WORKTREE_BRANCH" /workspace
+      # Re-enter /workspace so the shell cwd resolves through the new symlink;
+      # without this, the process cwd is the deleted directory inode.
+      cd /workspace
+      ${gitBin} config --global --add safe.directory /workspace
     fi
 
-    # Multi-repo worktrees: /mnt/repos/<name> → /workspace/<name>
+    # Multi-repo worktrees: /mnt/repos/<name> → /worktrees/<branch>/<name>, symlinked into /workspace/
     if [ -n "$WORKTREE_BRANCH" ] && [ -n "$WORKTREE_REPOS" ]; then
+      ${mkdir} -p "/worktrees/$WORKTREE_BRANCH"
+      if [ "$USER_UID" -ne 0 ]; then
+        ${chown} "$USER_UID:$USER_GID" "/worktrees/$WORKTREE_BRANCH"
+      fi
       IFS=',' read -r -a _repos <<< "$WORKTREE_REPOS"
       for _repo_name in "''${_repos[@]}"; do
         if [ -d "/mnt/repos/$_repo_name" ] && [ ! -e "/workspace/$_repo_name/.git" ]; then
-          create_worktree "/mnt/repos/$_repo_name" "/workspace/$_repo_name"
+          create_worktree "/mnt/repos/$_repo_name" "/worktrees/$WORKTREE_BRANCH/$_repo_name"
+          ${ln} -sfn "/worktrees/$WORKTREE_BRANCH/$_repo_name" "/workspace/$_repo_name"
         fi
       done
     fi
@@ -225,7 +238,7 @@ pkgs.dockerTools.buildLayeredImage {
 
   extraCommands = ''
     # Create required directories
-    mkdir -p workspace claude etc/claude-code tmp
+    mkdir -p workspace worktrees claude etc/claude-code tmp
     chmod 1777 tmp
 
     # NSS configuration so getent reads /etc/passwd and /etc/group
