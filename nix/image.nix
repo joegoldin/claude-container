@@ -184,6 +184,33 @@ let
       done
     fi
 
+    # --- Install extra packages ---
+    if [ -n "''${EXTRA_PACKAGES:-}" ]; then
+      echo "Installing extra packages: $EXTRA_PACKAGES"
+      IFS=',' read -ra PKGS <<< "$EXTRA_PACKAGES"
+      NIX_ARGS=()
+      for pkg in "''${PKGS[@]}"; do
+        pkg="$(echo "$pkg" | ${pkgs.coreutils}/bin/tr -d ' ')"
+        if [ -n "$pkg" ]; then
+          NIX_ARGS+=("nixpkgs#$pkg")
+        fi
+      done
+      if [ ''${#NIX_ARGS[@]} -gt 0 ]; then
+        if [ "$USER_NAME" = "root" ]; then
+          ${pkgs.nix}/bin/nix profile install --accept-flake-config "''${NIX_ARGS[@]}" 2>&1 || echo "Warning: some packages failed to install"
+        else
+          ${suExec} "$USER_NAME" ${pkgs.nix}/bin/nix profile install --accept-flake-config "''${NIX_ARGS[@]}" 2>&1 || echo "Warning: some packages failed to install"
+        fi
+        # Add nix profile bin to PATH for the exec'd process
+        if [ "$USER_NAME" = "root" ]; then
+          export PATH="/root/.nix-profile/bin:$PATH"
+        else
+          export PATH="/home/$USER_NAME/.nix-profile/bin:$PATH"
+        fi
+      fi
+    fi
+
+    # --- Exec ---
     if [ "$USER_UID" -eq 0 ]; then
       exec "$@"
     else
