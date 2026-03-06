@@ -303,9 +303,10 @@ func createSession(opts createOpts) error {
 			"cache.nixos.org",
 			"*.cache.nixos.org",
 			"channels.nixos.org",
+			"releases.nixos.org",
 			"github.com",
 			"*.github.com",
-			"raw.githubusercontent.com",
+			"*.githubusercontent.com",
 		)
 	}
 	proxyRules := prof.ProxyRules(proxyAllowDomains)

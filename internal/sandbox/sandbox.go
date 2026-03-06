@@ -40,7 +40,7 @@ var profiles = map[string]Profile{
 	},
 	"default": {
 		Name:        "default",
-		Description: "Yolo mode with network allowlist (GitHub, npm, PyPI). No permission prompts.",
+		Description: "Yolo mode with network allowlist (GitHub, npm, PyPI, Nix). No permission prompts.",
 		Yolo:        true,
 		AllowedDomains: []string{
 			"api.anthropic.com",
@@ -55,6 +55,10 @@ var profiles = map[string]Profile{
 			"pypi.org",
 			"*.pypi.org",
 			"files.pythonhosted.org",
+			"cache.nixos.org",
+			"*.cache.nixos.org",
+			"channels.nixos.org",
+			"releases.nixos.org",
 		},
 		AllowPerms: nil, // yolo — no permission rules
 		DenyPerms:  nil,
@@ -76,6 +80,10 @@ var profiles = map[string]Profile{
 			"pypi.org",
 			"*.pypi.org",
 			"files.pythonhosted.org",
+			"cache.nixos.org",
+			"*.cache.nixos.org",
+			"channels.nixos.org",
+			"releases.nixos.org",
 		},
 		AllowPerms: []string{
 			"Bash(git *)", "Bash(gh *)", "Bash(npm *)", "Bash(npx *)",
