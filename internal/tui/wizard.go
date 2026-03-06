@@ -19,6 +19,7 @@ const (
 	stepBranch    // pick base branch (only if "from existing")
 	stepProfile   // select sandbox profile
 	stepWorkspace // select workspace (skip if none defined)
+	stepPackages  // optional packages input
 	stepPrompt    // optional initial prompt
 	stepReview    // summary + confirm
 	stepDone
@@ -33,6 +34,7 @@ type WizardResult struct {
 	From       string
 	Profile    string
 	Workspace  string
+	Packages   string // comma-separated package names
 	Prompt     string
 	NoWorktree bool
 	Yolo       bool
@@ -145,6 +147,8 @@ func (m WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateProfile(key)
 		case stepWorkspace:
 			return m.updateWorkspace(key)
+		case stepPackages:
+			return m.updatePackages(msg)
 		case stepPrompt:
 			return m.updatePrompt(msg)
 		case stepReview:
@@ -153,7 +157,7 @@ func (m WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Forward to text input when active.
-	if m.step == stepName || m.step == stepPrompt {
+	if m.step == stepName || m.step == stepPackages || m.step == stepPrompt {
 		var cmd tea.Cmd
 		m.textInput, cmd = m.textInput.Update(msg)
 		return m, cmd
@@ -292,8 +296,8 @@ func (m WizardModel) updateProfile(key string) (tea.Model, tea.Cmd) {
 			m.step = stepWorkspace
 			m.setupWorkspaceStep()
 		} else {
-			m.step = stepPrompt
-			m.setupPromptStep()
+			m.step = stepPackages
+			m.setupPackagesStep()
 			return m, textinput.Blink
 		}
 	}
@@ -319,11 +323,27 @@ func (m WizardModel) updateWorkspace(key string) (tea.Model, tea.Cmd) {
 		} else {
 			m.result.Workspace = m.workspaceNames[m.cursor-1]
 		}
+		m.step = stepPackages
+		m.setupPackagesStep()
+		return m, textinput.Blink
+	}
+	return m, nil
+}
+
+func (m WizardModel) updatePackages(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "left":
+		return m.goBack()
+	case "enter":
+		m.result.Packages = strings.TrimSpace(m.textInput.Value())
 		m.step = stepPrompt
 		m.setupPromptStep()
 		return m, textinput.Blink
 	}
-	return m, nil
+
+	var cmd tea.Cmd
+	m.textInput, cmd = m.textInput.Update(msg)
+	return m, cmd
 }
 
 func (m WizardModel) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -383,6 +403,16 @@ func (m *WizardModel) setupWorkspaceStep() {
 		m.cursor = saved
 	} else {
 		m.cursor = 0
+	}
+}
+
+func (m *WizardModel) setupPackagesStep() {
+	m.textInput = textinput.New()
+	m.textInput.Placeholder = "(optional) e.g., rust,nodejs,python3"
+	m.textInput.Focus()
+	m.textInput.CharLimit = 500
+	if m.result.Packages != "" {
+		m.textInput.SetValue(m.result.Packages)
 	}
 }
 
@@ -477,6 +507,16 @@ func (m WizardModel) goBack() (tea.Model, tea.Cmd) {
 		m.setupProfileStep()
 		return m, nil
 
+	case stepPackages:
+		if len(m.workspaceNames) > 0 {
+			m.step = stepWorkspace
+			m.setupWorkspaceStep()
+		} else {
+			m.step = stepProfile
+			m.setupProfileStep()
+		}
+		return m, nil
+
 	case stepReview:
 		// Go back to stepPrompt.
 		m.step = stepPrompt
@@ -537,6 +577,14 @@ func (m WizardModel) View() string {
 		b.WriteString(m.renderWorkspaceStep())
 		b.WriteString("\n")
 		b.WriteString(dimStyle.Render("j/k navigate  enter select  \u2190 back  esc cancel"))
+
+	case stepPackages:
+		b.WriteString(titleStyle.Render("Packages"))
+		b.WriteString("\n\n")
+		b.WriteString("Extra packages to install (comma-separated nixpkgs names):\n")
+		b.WriteString(m.textInput.View())
+		b.WriteString("\n\n")
+		b.WriteString(dimStyle.Render("enter confirm  left back"))
 
 	case stepPrompt:
 		b.WriteString(titleStyle.Render("Initial Prompt"))
@@ -744,6 +792,10 @@ func (m WizardModel) renderReview() string {
 		b.WriteString(fmt.Sprintf("  %-12s %s\n", "Workspace:", "(current directory)"))
 	}
 
+	if m.result.Packages != "" {
+		b.WriteString(fmt.Sprintf("  %-12s %s\n", "Packages:", m.result.Packages))
+	}
+
 	if m.result.Prompt != "" {
 		// Truncate long prompts for display.
 		prompt := m.result.Prompt
@@ -791,6 +843,10 @@ func (m WizardModel) buildCLICommand() string {
 
 	if m.result.Workspace != "" {
 		parts = append(parts, "--workspace", m.result.Workspace)
+	}
+
+	if m.result.Packages != "" {
+		parts = append(parts, fmt.Sprintf("--packages %s", m.result.Packages))
 	}
 
 	if m.result.Prompt != "" {

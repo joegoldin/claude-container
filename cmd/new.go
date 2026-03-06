@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -96,6 +97,19 @@ var newCmd = &cobra.Command{
 			if resolvedWorkspace == "" {
 				resolvedWorkspace = newWorkspaceName
 			}
+			var wizPackages []string
+			if res.Packages != "" {
+				for _, p := range strings.Split(res.Packages, ",") {
+					p = strings.TrimSpace(p)
+					if p != "" {
+						wizPackages = append(wizPackages, p)
+					}
+				}
+			}
+			resolvedPackages := wizPackages
+			if len(newPackages) > 0 {
+				resolvedPackages = newPackages
+			}
 			return createSession(createOpts{
 				name:          res.Name,
 				worktree:      res.Worktree,
@@ -113,7 +127,7 @@ var newCmd = &cobra.Command{
 				denyCommands:  newDenyCommands,
 				proxyProfile:  newProxyProfile,
 				proxyPort:     newProxyPort,
-				packages:      newPackages,
+				packages:      resolvedPackages,
 			})
 		}
 
