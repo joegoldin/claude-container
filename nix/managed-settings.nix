@@ -11,6 +11,9 @@
   showTurnDuration = true;
   spinnerTipsEnabled = false;
 
+  # Instructions for Claude about the container environment
+  apiInstructions = "This container uses Nix for package management. Install software with: nix profile install nixpkgs#<package> (e.g., nix profile install nixpkgs#rustc nixpkgs#cargo). Search with: nix search nixpkgs <query>. List installed: nix profile list. Remove: nix profile remove <index>. Do not use apt-get, yum, brew, or other package managers.";
+
   sandbox = {
     enabled = true;
     autoAllowBashIfSandboxed = true;
@@ -29,8 +32,17 @@
       "pypi.org"
       "*.pypi.org"
       "files.pythonhosted.org"
+      "cache.nixos.org"
+      "*.cache.nixos.org"
+      "channels.nixos.org"
     ];
   };
+  permissions.allow = [
+    "Bash(nix profile install *)"
+    "Bash(nix profile remove *)"
+    "Bash(nix profile list *)"
+    "Bash(nix search *)"
+  ];
   permissions.deny = [
     "Read(/etc/shadow)"
     "Read(/etc/passwd)"
