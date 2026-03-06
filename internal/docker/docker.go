@@ -98,6 +98,7 @@ type RunOpts struct {
 	WorktreeBranch  string   // branch name — entrypoint creates worktree at /workspace
 	WorktreeFrom    string   // optional base branch for worktree
 	WorktreeRepos   []string // extra git repos: mounted at /mnt/repos/<basename>, worktrees at /workspace/<basename>
+	Packages        []string // extra nixpkgs to install at container start
 }
 
 // RunArgs returns the docker run command arguments for a persistent
@@ -178,6 +179,10 @@ func RunArgs(opts RunOpts, detached bool) []string {
 		"-e", fmt.Sprintf("USER_UID=%d", opts.UID),
 		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
 	)
+
+	if len(opts.Packages) > 0 {
+		args = append(args, "-e", "EXTRA_PACKAGES="+strings.Join(opts.Packages, ","))
+	}
 
 	// Mount host Claude credentials read-only for entrypoint to copy.
 	if opts.HostClaudeDir != "" {
@@ -278,6 +283,10 @@ func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
 		"-e", fmt.Sprintf("USER_UID=%d", opts.UID),
 		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
 	)
+
+	if len(opts.Packages) > 0 {
+		args = append(args, "-e", "EXTRA_PACKAGES="+strings.Join(opts.Packages, ","))
+	}
 
 	if opts.HostClaudeDir != "" {
 		args = append(args, "-v", opts.HostClaudeDir+":/mnt/claude-host:ro")
