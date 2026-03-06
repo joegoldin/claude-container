@@ -5,11 +5,14 @@ killed, and requests with no matching rule are held pending until resolved by
 the web dashboard.
 """
 
+import logging
 import threading
 import time
 from typing import Callable, Optional
 
 from claude_proxy.rules import RuleStore
+
+logger = logging.getLogger(__name__)
 
 
 class ProxyAddon:
@@ -37,37 +40,44 @@ class ProxyAddon:
         Checks the URL against the rule store. Allowed requests pass through,
         denied requests are killed, and unknown requests are held as pending.
         """
-        url = flow.request.pretty_url
-        action = self.store.match(url)
+        try:
+            url = flow.request.pretty_url
+            action = self.store.match(url)
 
-        if action == "allow":
-            return
-        if action == "deny":
-            flow.kill()
-            return
+            if action == "allow":
+                return
+            if action == "deny":
+                flow.kill()
+                return
 
-        # Unknown — intercept and hold the flow as pending
-        flow.intercept()
-        entry = {
-            "flow": flow,
-            "flow_id": flow.id,
-            "url": url,
-            "host": flow.request.host,
-            "time": time.time(),
-        }
+            # Unknown — intercept and hold the flow as pending
+            flow.intercept()
+            entry = {
+                "flow": flow,
+                "flow_id": flow.id,
+                "url": url,
+                "host": flow.request.host,
+                "time": time.time(),
+            }
 
-        with self._lock:
-            self.pending[flow.id] = entry
+            with self._lock:
+                self.pending[flow.id] = entry
 
-        if self.on_pending is not None:
-            self.on_pending(
-                {
-                    "flow_id": flow.id,
-                    "url": url,
-                    "host": flow.request.host,
-                    "time": entry["time"],
-                }
-            )
+            if self.on_pending is not None:
+                self.on_pending(
+                    {
+                        "flow_id": flow.id,
+                        "url": url,
+                        "host": flow.request.host,
+                        "time": entry["time"],
+                    }
+                )
+        except Exception:
+            logger.exception("error processing request, killing flow")
+            try:
+                flow.kill()
+            except Exception:
+                logger.exception("failed to kill flow after error")
 
     def resolve(
         self,

@@ -151,6 +151,26 @@ class TestProxyAddon:
         assert call_arg["flow_id"] == flow.id
         assert call_arg["url"] == "https://unknown.com/page"
 
+    def test_request_with_broken_flow_does_not_raise(self):
+        """A flow whose pretty_url raises is handled gracefully: no exception, not pending."""
+        store = RuleStore()
+        addon = ProxyAddon(store)
+
+        flow = MagicMock()
+        flow.id = "broken-flow"
+        # Make pretty_url raise an exception when accessed
+        type(flow.request).pretty_url = property(
+            lambda self: (_ for _ in ()).throw(RuntimeError("broken"))
+        )
+
+        # Should not raise
+        addon.request(flow)
+
+        # Flow should not be in pending
+        assert flow.id not in {p["flow_id"] for p in addon.get_pending()}
+        # Flow should have been killed
+        flow.kill.assert_called_once()
+
     def test_cleanup_timed_out(self):
         """Flows pending longer than hold_timeout are killed and removed."""
         store = RuleStore()
