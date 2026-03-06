@@ -180,6 +180,9 @@ func RunArgs(opts RunOpts, detached bool) []string {
 		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
 	)
 
+	// Persistent Nix store for runtime package installs.
+	args = append(args, "-v", "claude-nix-store:/nix/var")
+
 	if len(opts.Packages) > 0 {
 		args = append(args, "-e", "EXTRA_PACKAGES="+strings.Join(opts.Packages, ","))
 	}
@@ -283,6 +286,9 @@ func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
 		"-e", fmt.Sprintf("USER_UID=%d", opts.UID),
 		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
 	)
+
+	// Persistent Nix store for runtime package installs.
+	args = append(args, "-v", "claude-nix-store:/nix/var")
 
 	if len(opts.Packages) > 0 {
 		args = append(args, "-e", "EXTRA_PACKAGES="+strings.Join(opts.Packages, ","))
