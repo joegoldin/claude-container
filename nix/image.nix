@@ -36,7 +36,7 @@ let
 
     ENTRYPOINT_LOG="/tmp/entrypoint.log"
     log() {
-      echo "[entrypoint] $(${pkgs.coreutils}/bin/date '+%H:%M:%S') $*" | ${pkgs.coreutils}/bin/tee -a "$ENTRYPOINT_LOG"
+      echo "[entrypoint] $(${pkgs.coreutils}/bin/date '+%H:%M:%S') $*" | ${pkgs.coreutils}/bin/tee -a "$ENTRYPOINT_LOG" >&2
     }
 
     log "starting entrypoint"

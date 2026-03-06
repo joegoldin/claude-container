@@ -84,6 +84,18 @@ type containerResult struct {
 	Stderr string
 }
 
+// stripEntrypointLogs removes [entrypoint] log lines from output.
+// The entrypoint writes logs to stderr, but older images may write to stdout.
+func stripEntrypointLogs(s string) string {
+	var lines []string
+	for _, line := range strings.Split(s, "\n") {
+		if !strings.HasPrefix(line, "[entrypoint]") {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // runContainerOpts configures a single ephemeral container run.
 type runContainerOpts struct {
 	Workspace       string   // primary workspace mount
@@ -183,7 +195,7 @@ func TestIntegrationEntrypointUIDGID(t *testing.T) {
 		Command:   []string{"id"},
 	})
 
-	out := strings.TrimSpace(result.Stdout)
+	out := strings.TrimSpace(stripEntrypointLogs(result.Stdout))
 	wantUID := fmt.Sprintf("uid=%d", uid)
 	wantGID := fmt.Sprintf("gid=%d", gid)
 
@@ -206,7 +218,7 @@ func TestIntegrationEntrypointWorkingDir(t *testing.T) {
 		Command:   []string{"pwd"},
 	})
 
-	got := strings.TrimSpace(result.Stdout)
+	got := strings.TrimSpace(stripEntrypointLogs(result.Stdout))
 	if got != "/workspace" {
 		t.Errorf("pwd = %q, want /workspace", got)
 	}
@@ -228,7 +240,7 @@ func TestIntegrationEntrypointHomeSymlink(t *testing.T) {
 		Command:   []string{"sh", "-c", "readlink -f \"$HOME/.claude\""},
 	})
 
-	got := strings.TrimSpace(result.Stdout)
+	got := strings.TrimSpace(stripEntrypointLogs(result.Stdout))
 	if got != "/claude" {
 		t.Errorf("readlink $HOME/.claude = %q, want /claude", got)
 	}
@@ -246,8 +258,9 @@ func TestIntegrationBypassPermissionsAccepted(t *testing.T) {
 	})
 
 	var data map[string]any
-	if err := json.Unmarshal([]byte(result.Stdout), &data); err != nil {
-		t.Fatalf("invalid JSON in .claude.json: %v\nraw: %s", err, result.Stdout)
+	cleaned := stripEntrypointLogs(result.Stdout)
+	if err := json.Unmarshal([]byte(cleaned), &data); err != nil {
+		t.Fatalf("invalid JSON in .claude.json: %v\nraw: %s", err, cleaned)
 	}
 
 	accepted, ok := data["bypassPermissionsModeAccepted"].(bool)
@@ -270,7 +283,7 @@ func TestIntegrationConfigDirPermissions(t *testing.T) {
 		Command:   []string{"stat", "-c", "%u:%g", "/claude"},
 	})
 
-	got := strings.TrimSpace(result.Stdout)
+	got := strings.TrimSpace(stripEntrypointLogs(result.Stdout))
 	want := fmt.Sprintf("%d:%d", uid, gid)
 	if got != want {
 		t.Errorf("stat /claude = %q, want %q", got, want)
@@ -421,8 +434,9 @@ func TestIntegrationManagedSettingsReadable(t *testing.T) {
 	})
 
 	var settings map[string]any
-	if err := json.Unmarshal([]byte(result.Stdout), &settings); err != nil {
-		t.Fatalf("invalid JSON: %v\nraw: %s", err, result.Stdout)
+	cleaned := stripEntrypointLogs(result.Stdout)
+	if err := json.Unmarshal([]byte(cleaned), &settings); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, cleaned)
 	}
 
 	sb, ok := settings["sandbox"].(map[string]any)
@@ -461,8 +475,9 @@ func TestIntegrationProfileSettingsLow(t *testing.T) {
 	})
 
 	var settings map[string]any
-	if err := json.Unmarshal([]byte(result.Stdout), &settings); err != nil {
-		t.Fatalf("invalid JSON: %v\nraw: %s", err, result.Stdout)
+	cleaned := stripEntrypointLogs(result.Stdout)
+	if err := json.Unmarshal([]byte(cleaned), &settings); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, cleaned)
 	}
 
 	sb := settings["sandbox"].(map[string]any)
@@ -486,8 +501,9 @@ func TestIntegrationProfileSettingsHigh(t *testing.T) {
 	})
 
 	var settings map[string]any
-	if err := json.Unmarshal([]byte(result.Stdout), &settings); err != nil {
-		t.Fatalf("invalid JSON: %v\nraw: %s", err, result.Stdout)
+	cleaned := stripEntrypointLogs(result.Stdout)
+	if err := json.Unmarshal([]byte(cleaned), &settings); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, cleaned)
 	}
 
 	sb := settings["sandbox"].(map[string]any)
@@ -701,6 +717,7 @@ func TestIntegrationProxyContainerSetup(t *testing.T) {
 	skipIfProxyImageUnavailable(t)
 
 	profile := "docker-e2e"
+	httpproxy.Stop(profile) // clean up stale proxy from previous runs
 	configDir := makeConfigDir(t)
 	os.MkdirAll(filepath.Join(configDir, "proxy-profiles"), 0o755)
 
@@ -773,7 +790,7 @@ func TestIntegrationProxyContainerSetup(t *testing.T) {
 			ProxyCACertDir: caCertDir,
 			Command:        []string{"sh", "-c", "echo $SSL_CERT_FILE"},
 		})
-		got := strings.TrimSpace(result.Stdout)
+		got := strings.TrimSpace(stripEntrypointLogs(result.Stdout))
 		want := "/proxy-ca/mitmproxy-ca-cert.pem"
 		if got != want {
 			t.Errorf("SSL_CERT_FILE = %q, want %q", got, want)
@@ -854,6 +871,7 @@ type claudeProxyE2EResult struct {
 func runClaudeProxyE2E(t *testing.T, profile string, hnAction string) claudeProxyE2EResult {
 	t.Helper()
 
+	httpproxy.Stop(profile) // clean up stale proxy from previous runs
 	configDir := makeConfigDir(t)
 	os.MkdirAll(filepath.Join(configDir, "proxy-profiles"), 0o755)
 	workspace := makeTempDir(t)

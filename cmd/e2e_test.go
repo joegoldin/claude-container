@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/joegoldin/claude-container/internal/config"
 )
 
 // ---------------------------------------------------------------------------
@@ -161,9 +163,15 @@ func cleanupContainer(t *testing.T, name string) {
 	})
 }
 
-// cleanupProxy force-removes a proxy container and network in t.Cleanup.
+// cleanupProxy force-removes a proxy container and network both immediately
+// (to clean up stale resources from previous runs) and in t.Cleanup (to clean
+// up after this test).
 func cleanupProxy(t *testing.T, profile string) {
 	t.Helper()
+	// Immediate cleanup of stale resources from previous test runs.
+	exec.Command("docker", "rm", "-f", "claude-proxy_"+profile).Run()
+	exec.Command("docker", "network", "rm", "claude-proxy-net_"+profile).Run()
+	// Deferred cleanup after this test completes.
 	t.Cleanup(func() {
 		exec.Command("docker", "rm", "-f", "claude-proxy_"+profile).Run()
 		exec.Command("docker", "network", "rm", "claude-proxy-net_"+profile).Run()
@@ -456,17 +464,17 @@ func TestE2E_WorkspaceLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspaces.json not created: %v", err)
 	}
-	var wsMap map[string][]string
+	var wsMap map[string]config.Workspace
 	if err := json.Unmarshal(wsData, &wsMap); err != nil {
 		t.Fatalf("workspaces.json invalid JSON: %v", err)
 	}
-	if paths, ok := wsMap["my-work"]; !ok {
+	if ws, ok := wsMap["my-work"]; !ok {
 		t.Error("workspaces.json missing 'my-work'")
-	} else if len(paths) != 2 {
-		t.Errorf("workspaces.json has %d paths, want 2", len(paths))
+	} else if len(ws.Paths) != 2 {
+		t.Errorf("workspaces.json has %d paths, want 2", len(ws.Paths))
 	} else {
-		if paths[0] != dirA || paths[1] != dirB {
-			t.Errorf("workspace paths = %v, want [%s %s]", paths, dirA, dirB)
+		if ws.Paths[0] != dirA || ws.Paths[1] != dirB {
+			t.Errorf("workspace paths = %v, want [%s %s]", ws.Paths, dirA, dirB)
 		}
 	}
 

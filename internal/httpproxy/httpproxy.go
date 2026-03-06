@@ -145,8 +145,22 @@ func EnsureNetwork(profile string) error {
 }
 
 // RemoveNetwork removes the Docker network for the given profile.
+// It first disconnects any containers still attached to the network.
 func RemoveNetwork(profile string) error {
 	network := NetworkName(profile)
+
+	// Disconnect any containers still connected to the network so
+	// docker network rm succeeds (it refuses when endpoints exist).
+	inspect := exec.Command("docker", "network", "inspect", network,
+		"--format", "{{range .Containers}}{{.Name}} {{end}}")
+	if out, err := inspect.Output(); err == nil {
+		for _, name := range strings.Fields(strings.TrimSpace(string(out))) {
+			if name != "" {
+				exec.Command("docker", "network", "disconnect", "-f", network, name).Run()
+			}
+		}
+	}
+
 	cmd := exec.Command("docker", "network", "rm", network)
 	cmd.Stdout = nil
 	cmd.Stderr = nil

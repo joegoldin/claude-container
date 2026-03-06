@@ -25,10 +25,19 @@ func skipIfDockerUnavailable(t *testing.T) {
 	}
 }
 
+// cleanupStaleProxy removes any leftover proxy container and network from a
+// previous test run that may not have cleaned up properly.
+func cleanupStaleProxy(t *testing.T, profile string) {
+	t.Helper()
+	Stop(profile) // best-effort: removes container + network
+}
+
 func TestIntegrationProxyStartStop(t *testing.T) {
 	skipIfDockerUnavailable(t)
 
 	profile := "integration-test"
+	cleanupStaleProxy(t, profile)
+
 	opts := ProxyOpts{
 		Profile:       profile,
 		ConfigDir:     t.TempDir(),
@@ -76,6 +85,8 @@ func TestIntegrationProxyHealthEndpoint(t *testing.T) {
 	skipIfDockerUnavailable(t)
 
 	profile := "health-test"
+	cleanupStaleProxy(t, profile)
+
 	opts := ProxyOpts{
 		Profile:       profile,
 		ConfigDir:     t.TempDir(),
@@ -172,6 +183,7 @@ func TestIntegrationE2EProxyTraffic(t *testing.T) {
 	skipIfDockerUnavailable(t)
 
 	profile := "e2e-traffic"
+	cleanupStaleProxy(t, profile)
 	configDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(configDir, "proxy-profiles"), 0o755); err != nil {
 		t.Fatal(err)
@@ -237,6 +249,7 @@ func TestIntegrationE2EResolveWhileHeld(t *testing.T) {
 	skipIfDockerUnavailable(t)
 
 	profile := "e2e-resolve"
+	cleanupStaleProxy(t, profile)
 	configDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(configDir, "proxy-profiles"), 0o755); err != nil {
 		t.Fatal(err)
