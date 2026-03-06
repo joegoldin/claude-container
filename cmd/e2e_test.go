@@ -884,10 +884,16 @@ func TestE2E_ProfileLow(t *testing.T) {
 		t.Errorf("yolo = %v, want true (low implies yolo)", sess["yolo"])
 	}
 
-	// managed-settings has no permissions block (unrestricted).
+	// managed-settings has permissions with allToolsAllow (dontAsk mode).
 	settings := readManagedSettings(t, xdgDir)
-	if perms, ok := settings["permissions"]; ok && perms != nil {
-		t.Errorf("low profile should have no permissions, got: %v", perms)
+	perms, ok := settings["permissions"]
+	if !ok || perms == nil {
+		t.Fatal("low profile should have permissions block with allToolsAllow")
+	}
+	permsMap, _ := perms.(map[string]interface{})
+	allow, _ := permsMap["allow"].([]interface{})
+	if len(allow) == 0 {
+		t.Error("low profile should have non-empty allow list")
 	}
 
 	// Proxy rules are wildcard allow-all.
