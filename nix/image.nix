@@ -218,6 +218,7 @@ let
       file
       which
       python3Minimal
+      nix
     ])
     ++ extraPackages;
 
@@ -240,6 +241,16 @@ pkgs.dockerTools.buildLayeredImage {
     # Create required directories
     mkdir -p workspace worktrees claude etc/claude-code tmp
     chmod 1777 tmp
+
+    # Nix configuration for in-container package management
+    mkdir -p etc/nix
+    cat > etc/nix/nix.conf << 'NIXCONF'
+    experimental-features = nix-command flakes
+    sandbox = false
+    NIXCONF
+
+    # Create nix profile and var directories
+    mkdir -p nix/var/nix/profiles nix/var/nix/db nix/var/nix/gcroots
 
     # NSS configuration so getent reads /etc/passwd and /etc/group
     cat > etc/nsswitch.conf << 'EOF'
@@ -265,6 +276,7 @@ pkgs.dockerTools.buildLayeredImage {
       "PATH=${lib.makeBinPath pathPackages}:/usr/local/bin:/usr/bin:/bin"
       "SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt"
       "NIX_SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt"
+      "NIX_PATH=nixpkgs=${pkgs.path}"
     ];
   };
 }
