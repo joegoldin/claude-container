@@ -34,6 +34,13 @@ let
   entrypoint = pkgs.writeShellScript "entrypoint.sh" ''
     set -e
 
+    ENTRYPOINT_LOG="/tmp/entrypoint.log"
+    log() {
+      echo "[entrypoint] $(${pkgs.coreutils}/bin/date '+%H:%M:%S') $*" | ${pkgs.coreutils}/bin/tee -a "$ENTRYPOINT_LOG"
+    }
+
+    log "starting entrypoint"
+
     USER_UID=''${USER_UID:-1000}
     USER_GID=''${USER_GID:-1000}
 
@@ -44,6 +51,7 @@ let
     # a non-root user because that would change ownership of mounted dirs
     # to a subordinate UID on the host.
 
+    log "USER_UID=$USER_UID USER_GID=$USER_GID"
     if [ "$USER_UID" -eq 0 ]; then
       USER_NAME="root"
       USER_HOME="/root"
@@ -186,7 +194,24 @@ let
 
     # --- Install extra packages ---
     if [ -n "''${EXTRA_PACKAGES:-}" ]; then
-      echo "Installing extra packages: $EXTRA_PACKAGES"
+      log "extra packages requested: $EXTRA_PACKAGES"
+
+      # Fix nix store/var ownership so non-root users can install packages.
+      if [ "$USER_UID" -ne 0 ]; then
+        log "fixing /nix ownership for UID=$USER_UID"
+        ${chown} -R "$USER_UID:$USER_GID" /nix 2>/dev/null || true
+      fi
+
+      # Initialize nix database if needed (empty volume on first run).
+      if [ ! -f /nix/var/nix/db/db.sqlite ]; then
+        log "initializing nix database"
+        if [ "$USER_NAME" = "root" ]; then
+          ${pkgs.nix}/bin/nix-store --init 2>>"$ENTRYPOINT_LOG" || log "WARNING: nix-store --init failed"
+        else
+          ${suExec} "$USER_NAME" ${pkgs.nix}/bin/nix-store --init 2>>"$ENTRYPOINT_LOG" || log "WARNING: nix-store --init failed"
+        fi
+      fi
+
       IFS=',' read -ra PKGS <<< "$EXTRA_PACKAGES"
       NIX_ARGS=()
       for pkg in "''${PKGS[@]}"; do
@@ -196,10 +221,11 @@ let
         fi
       done
       if [ ''${#NIX_ARGS[@]} -gt 0 ]; then
+        log "installing: ''${NIX_ARGS[*]}"
         if [ "$USER_NAME" = "root" ]; then
-          ${pkgs.nix}/bin/nix profile install --accept-flake-config "''${NIX_ARGS[@]}" 2>&1 || echo "Warning: some packages failed to install"
+          ${pkgs.nix}/bin/nix profile install --accept-flake-config "''${NIX_ARGS[@]}" 2>>"$ENTRYPOINT_LOG" && log "install succeeded" || log "WARNING: some packages failed to install (see $ENTRYPOINT_LOG)"
         else
-          ${suExec} "$USER_NAME" ${pkgs.nix}/bin/nix profile install --accept-flake-config "''${NIX_ARGS[@]}" 2>&1 || echo "Warning: some packages failed to install"
+          ${suExec} "$USER_NAME" ${pkgs.nix}/bin/nix profile install --accept-flake-config "''${NIX_ARGS[@]}" 2>>"$ENTRYPOINT_LOG" && log "install succeeded" || log "WARNING: some packages failed to install (see $ENTRYPOINT_LOG)"
         fi
         # Add nix profile bin to PATH for the exec'd process
         if [ "$USER_NAME" = "root" ]; then
@@ -211,6 +237,8 @@ let
     fi
 
     # --- Exec ---
+    log "exec as $USER_NAME: $*"
+    log "PATH=$PATH"
     if [ "$USER_UID" -eq 0 ]; then
       exec "$@"
     else

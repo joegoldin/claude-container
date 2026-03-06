@@ -295,7 +295,20 @@ func createSession(opts createOpts) error {
 	if err != nil {
 		return err
 	}
-	proxyRules := prof.ProxyRules(opts.allowDomains)
+	// When packages are requested, auto-allow nix domains through the proxy
+	// so the entrypoint can download packages without manual approval.
+	proxyAllowDomains := opts.allowDomains
+	if len(opts.packages) > 0 {
+		proxyAllowDomains = append(proxyAllowDomains,
+			"cache.nixos.org",
+			"*.cache.nixos.org",
+			"channels.nixos.org",
+			"github.com",
+			"*.github.com",
+			"raw.githubusercontent.com",
+		)
+	}
+	proxyRules := prof.ProxyRules(proxyAllowDomains)
 	rulesPath := httpproxy.ProfileRulesPath(config.DefaultDir(), proxyProfile)
 	if err := os.MkdirAll(filepath.Dir(rulesPath), 0o755); err != nil {
 		return fmt.Errorf("create proxy rules dir: %w", err)
