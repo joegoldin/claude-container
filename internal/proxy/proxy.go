@@ -345,6 +345,10 @@ func Run(opts Opts) error {
 						overlayStop = renderOverlay(os.Stdout, "Stopping container...")
 						close(done)
 						return
+					case 'P':
+						if opts.StatusBar.ProxyPort > 0 {
+							openBrowser(httpproxy.DashboardURL(opts.StatusBar.ProxyPort))
+						}
 					case prefixKey:
 						ptmx.Write([]byte{prefixKey})
 					default:
@@ -507,17 +511,24 @@ func renderStatusBar(w io.Writer, width, height int, info StatusBarInfo, prefixA
 	}
 	if info.ProxyPort > 0 {
 		count := httpproxy.PendingCount(info.ProxyPort)
+		url := httpproxy.DashboardURL(info.ProxyPort)
 		if count > 0 {
-			parts = append(parts, fmt.Sprintf("[!] proxy: %d pending", count))
+			parts = append(parts, fmt.Sprintf("[!] %d pending %s", count, url))
 		} else if count == 0 {
-			parts = append(parts, "proxy")
+			// Show full URL or just port depending on available width.
+			// Estimate remaining space: ~40 chars for other parts + hints.
+			if width > 100 {
+				parts = append(parts, url)
+			} else {
+				parts = append(parts, fmt.Sprintf(":%d", info.ProxyPort))
+			}
 		}
 		// count == -1 means proxy unreachable, don't show anything
 	}
 
 	var hint string
 	if prefixActive {
-		hint = "d:detach  q:quit  ^B:literal"
+		hint = "d:detach  q:quit  P:proxy  ^B:literal"
 	} else {
 		hint = "^B d:detach q:quit"
 	}
@@ -538,6 +549,17 @@ func renderStatusBar(w io.Writer, width, height int, info StatusBarInfo, prefixA
 	// region here (inside save/restore) avoids the cursor-to-origin side effect
 	// that causes flashing during resize.
 	fmt.Fprintf(w, "\033[s\033[1;%dr\033[%d;1H\033[2K\033[7m%s\033[0m\033[u", height-1, height, bar)
+}
+
+// openBrowser opens a URL in the default browser using the platform-appropriate
+// command (xdg-open on Linux, open on macOS).
+func openBrowser(url string) {
+	// Try xdg-open first (Linux), then open (macOS), then sensible-browser.
+	for _, cmd := range []string{"xdg-open", "open", "sensible-browser"} {
+		if c := exec.Command(cmd, url); c.Start() == nil {
+			return
+		}
+	}
 }
 
 // renderOverlay clears the screen and shows a message at the top-left with a
