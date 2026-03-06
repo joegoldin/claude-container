@@ -39,6 +39,8 @@ type Session struct {
 	DenyPaths       []string  `json:"deny_paths,omitempty"`
 	AllowCommands   []string  `json:"allow_commands,omitempty"`
 	DenyCommands    []string  `json:"deny_commands,omitempty"`
+	AllowPerms      []string  `json:"allow_perms,omitempty"` // raw permission rules (e.g. "Bash(docker *)")
+	DenyPerms       []string  `json:"deny_perms,omitempty"`  // raw deny rules (e.g. "Read(/etc/**)")
 	Packages        []string  `json:"packages,omitempty"`
 	NetworkSandbox  string    `json:"network_sandbox,omitempty"` // deprecated: always "proxy"
 	ProxyProfile    string    `json:"proxy_profile,omitempty"`

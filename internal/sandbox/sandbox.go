@@ -20,6 +20,90 @@ type Profile struct {
 // ProfileOrder defines the display order of profiles from least to most restrictive.
 var ProfileOrder = []string{"low", "default", "med", "high"}
 
+// --- Domain allowlists ---
+
+// anthropicDomains are always needed for the Claude API itself.
+var anthropicDomains = []string{
+	"api.anthropic.com",
+	"statsig.anthropic.com",
+	"sentry.io",
+}
+
+// devEcosystemDomains covers GitHub, npm, PyPI, and Nix caches.
+var devEcosystemDomains = []string{
+	"github.com",
+	"*.github.com",
+	"*.githubusercontent.com",
+	"*.npmjs.org",
+	"registry.npmjs.org",
+	"registry.yarnpkg.com",
+	"pypi.org",
+	"*.pypi.org",
+	"files.pythonhosted.org",
+	"cache.nixos.org",
+	"*.cache.nixos.org",
+	"channels.nixos.org",
+	"releases.nixos.org",
+}
+
+// langDomains covers language-specific package registries beyond the basics.
+var langDomains = []string{
+	"static.rust-lang.org",
+}
+
+// standardDomains is anthropic + dev ecosystem (used by med profile).
+var standardDomains = concatStrings(anthropicDomains, devEcosystemDomains)
+
+// defaultDomains is standard + language-specific (used by default profile).
+var defaultDomains = concatStrings(standardDomains, langDomains)
+
+// --- Permission allowlists ---
+
+// allToolsAllow is the complete set of Claude Code tool permissions that
+// allows all tools without restriction. Used by profiles that run in dontAsk
+// mode but should not block any tool use.
+var allToolsAllow = []string{
+	"Bash",
+	"Read",
+	"Edit",
+	"Write",
+	"WebFetch",
+	"Grep",
+	"Glob",
+	"LS",
+	"MultiEdit",
+	"NotebookRead",
+	"NotebookEdit",
+	"TodoRead",
+	"TodoWrite",
+	"WebSearch",
+	"Agent",
+}
+
+// devToolsAllow permits common development commands and file operations.
+// More restrictive than allToolsAllow — only specific Bash commands are allowed.
+var devToolsAllow = []string{
+	"Bash(git *)", "Bash(gh *)", "Bash(npm *)",
+	"Bash(pip *)","Bash(cargo *)", "Bash(make *)",
+	"Bash(cd *)", "Bash(echo *)", "Bash(ls *)", "Bash(cat *)", "Bash(grep *)",
+	"Bash(find *)", "Bash(touch *)", "Bash(curl *)", "Bash(wget *)",
+	"Bash(mkdir *)", "Bash(rm *)", "Bash(cp *)", "Bash(mv *)", "Bash(sleep *)",
+	"Read",
+	"Edit",
+	"Write",
+	"WebFetch",
+	"Grep",
+	"Glob",
+	"LS",
+	"MultiEdit",
+	"NotebookRead",
+	"NotebookEdit",
+	"TodoRead",
+	"TodoWrite",
+	"WebSearch",
+	"Agent",
+}
+
 // ListProfiles returns all profiles in display order.
 func ListProfiles() []Profile {
 	result := make([]Profile, 0, len(ProfileOrder))
@@ -35,66 +119,23 @@ var profiles = map[string]Profile{
 		Description:    "Full access. No network restrictions, no permission prompts.",
 		Yolo:           true,
 		AllowedDomains: nil, // proxy: wildcard allow-all
-		AllowPerms:     nil,
+		AllowPerms:     allToolsAllow,
 		DenyPerms:      nil,
 	},
 	"default": {
-		Name:        "default",
-		Description: "Yolo mode with network allowlist (GitHub, npm, PyPI, Nix). No permission prompts.",
-		Yolo:        true,
-		AllowedDomains: []string{
-			"api.anthropic.com",
-			"statsig.anthropic.com",
-			"sentry.io",
-			"github.com",
-			"*.github.com",
-			"*.githubusercontent.com",
-			"*.npmjs.org",
-			"registry.npmjs.org",
-			"registry.yarnpkg.com",
-			"pypi.org",
-			"*.pypi.org",
-			"files.pythonhosted.org",
-			"cache.nixos.org",
-			"*.cache.nixos.org",
-			"channels.nixos.org",
-			"releases.nixos.org",
-		},
-		AllowPerms: nil, // yolo — no permission rules
-		DenyPerms:  nil,
+		Name:           "default",
+		Description:    "Full tool access with network allowlist (GitHub, npm, PyPI, Nix, Rust).",
+		Yolo:           true,
+		AllowedDomains: defaultDomains,
+		AllowPerms:     allToolsAllow,
+		DenyPerms:      nil,
 	},
 	"med": {
-		Name:        "med",
-		Description: "Permission prompts enabled. Network allowlist. Commands limited to dev tools. Sensitive paths denied.",
-		Yolo:        false,
-		AllowedDomains: []string{
-			"api.anthropic.com",
-			"statsig.anthropic.com",
-			"sentry.io",
-			"github.com",
-			"*.github.com",
-			"*.githubusercontent.com",
-			"*.npmjs.org",
-			"registry.npmjs.org",
-			"registry.yarnpkg.com",
-			"pypi.org",
-			"*.pypi.org",
-			"files.pythonhosted.org",
-			"cache.nixos.org",
-			"*.cache.nixos.org",
-			"channels.nixos.org",
-			"releases.nixos.org",
-		},
-		AllowPerms: []string{
-			"Bash(git *)", "Bash(gh *)", "Bash(npm *)", "Bash(npx *)",
-			"Bash(pip *)", "Bash(python *)", "Bash(node *)",
-			"Bash(cargo *)", "Bash(go *)", "Bash(make *)",
-			"Bash(cd *)", "Bash(echo *)", "Bash(ls *)", "Bash(cat *)", "Bash(grep *)",
-			"Bash(find *)", "Bash(touch *)", "Bash(curl *)", "Bash(wget *)",
-			"Bash(mkdir *)", "Bash(rm *)", "Bash(cp *)", "Bash(mv *)", "Bash(sleep *)",
-			"Read(/tmp/**)", "Write(**)", "Edit(**)",
-			"WebFetch(*)", "WebSearch(*)",
-		},
+		Name:           "med",
+		Description:    "Dev tools only. Network allowlist. Sensitive paths denied.",
+		Yolo:           false,
+		AllowedDomains: standardDomains,
+		AllowPerms:     devToolsAllow,
 		DenyPerms: []string{
 			"Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.gnupg/**)",
 			"Read(/etc/shadow)", "Read(/etc/passwd)",
@@ -104,7 +145,7 @@ var profiles = map[string]Profile{
 		Name:        "high",
 		Description: "Strict lockdown. API-only network. Read-only git. Workspace-only writes.",
 		Yolo:        false,
-		AllowedDomains: []string{"api.anthropic.com"},
+		AllowedDomains: anthropicDomains,
 		AllowPerms: []string{
 			"Bash(git status *)", "Bash(git diff *)", "Bash(git log *)",
 			"Bash(cd *)", "Bash(echo *)", "Bash(ls *)", "Bash(cat *)",
@@ -116,6 +157,19 @@ var profiles = map[string]Profile{
 			"Edit(//etc/**)", "Edit(//home/**)",
 		},
 	},
+}
+
+// concatStrings concatenates multiple string slices into one.
+func concatStrings(slices ...[]string) []string {
+	n := 0
+	for _, s := range slices {
+		n += len(s)
+	}
+	out := make([]string, 0, n)
+	for _, s := range slices {
+		out = append(out, s...)
+	}
+	return out
 }
 
 // GetProfile returns the profile with the given name, or an error if not found.
@@ -202,7 +256,43 @@ func (p Profile) ProxyRules(extraDomains []string) []map[string]any {
 // Permission allow/deny rules from the profile are merged with extraAllowPerms
 // and extraDenyPerms. Non-yolo profiles get defaultMode "dontAsk" so permissions
 // are enforced via the allow/deny lists without interactive prompts.
-func (p Profile) ManagedSettingsForProxy(httpProxyPort int, extraAllowPerms []string, extraDenyPerms []string) map[string]any {
+// defaultPackageNames are the tools available in every container by default.
+var defaultPackageNames = []string{
+	"bash", "coreutils", "git", "jq", "curl", "findutils", "grep", "sed",
+	"gawk", "ripgrep", "fd", "tree", "diffutils", "tar", "gzip", "less",
+	"file", "which", "python3", "nix",
+}
+
+// containerInstructions generates the apiInstructions string that tells
+// Claude what tools and packages are available in the container.
+func containerInstructions(extraPackages []string) string {
+	var b strings.Builder
+	b.WriteString("## Container Environment\n")
+	b.WriteString("You are running inside a Docker container managed by claude-container.\n\n")
+
+	b.WriteString("### Available Tools\n")
+	b.WriteString("Pre-installed: ")
+	b.WriteString(strings.Join(defaultPackageNames, ", "))
+	b.WriteString("\n")
+
+	if len(extraPackages) > 0 {
+		b.WriteString("Extra packages installed: ")
+		b.WriteString(strings.Join(extraPackages, ", "))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n### Installing More Software\n")
+	b.WriteString("This container uses Nix for package management:\n")
+	b.WriteString("- `nix profile install nixpkgs#<package>` to install (e.g., nixpkgs#rustc nixpkgs#cargo)\n")
+	b.WriteString("- `nix search nixpkgs <query>` to find packages\n")
+	b.WriteString("- `nix profile list` to see installed packages\n")
+	b.WriteString("- `nix profile remove <index>` to remove\n")
+	b.WriteString("Do not use apt-get, yum, brew, or other package managers — they are not available.\n")
+
+	return b.String()
+}
+
+func (p Profile) ManagedSettingsForProxy(httpProxyPort int, extraAllowPerms []string, extraDenyPerms []string, extraPackages []string) map[string]any {
 	settings := map[string]any{
 		"env": map[string]any{
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
@@ -212,6 +302,7 @@ func (p Profile) ManagedSettingsForProxy(httpProxyPort int, extraAllowPerms []st
 		"alwaysThinkingEnabled": true,
 		"showTurnDuration":      true,
 		"spinnerTipsEnabled":    false,
+		"apiInstructions":       containerInstructions(extraPackages),
 		"sandbox": map[string]any{
 			"enabled":                   true,
 			"autoAllowBashIfSandboxed":  true,

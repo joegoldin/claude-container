@@ -39,6 +39,8 @@ var (
 	newProxyPort      int
 	newAllowCommands  []string
 	newDenyCommands   []string
+	newAllowPerms     []string
+	newDenyPerms      []string
 	newPackages       []string
 )
 
@@ -60,6 +62,8 @@ type createOpts struct {
 	denyPaths     []string // --deny-path flag
 	allowCommands []string // --allow-command flag
 	denyCommands  []string // --deny-command flag
+	allowPerms    []string // --allow-perm flag (raw permission rules)
+	denyPerms     []string // --deny-perm flag (raw deny rules)
 	proxyProfile  string
 	proxyPort     int
 	packages      []string // --packages flag
@@ -110,6 +114,32 @@ var newCmd = &cobra.Command{
 			if len(newPackages) > 0 {
 				resolvedPackages = newPackages
 			}
+			var wizAllowPerms []string
+			if res.AllowPerms != "" {
+				for _, p := range strings.Split(res.AllowPerms, ",") {
+					p = strings.TrimSpace(p)
+					if p != "" {
+						wizAllowPerms = append(wizAllowPerms, p)
+					}
+				}
+			}
+			var wizDenyPerms []string
+			if res.DenyPerms != "" {
+				for _, p := range strings.Split(res.DenyPerms, ",") {
+					p = strings.TrimSpace(p)
+					if p != "" {
+						wizDenyPerms = append(wizDenyPerms, p)
+					}
+				}
+			}
+			resolvedAllowPerms := wizAllowPerms
+			if len(newAllowPerms) > 0 {
+				resolvedAllowPerms = newAllowPerms
+			}
+			resolvedDenyPerms := wizDenyPerms
+			if len(newDenyPerms) > 0 {
+				resolvedDenyPerms = newDenyPerms
+			}
 			return createSession(createOpts{
 				name:          res.Name,
 				worktree:      res.Worktree,
@@ -125,6 +155,8 @@ var newCmd = &cobra.Command{
 				denyPaths:     newDenyPaths,
 				allowCommands: newAllowCommands,
 				denyCommands:  newDenyCommands,
+				allowPerms:    resolvedAllowPerms,
+				denyPerms:     resolvedDenyPerms,
 				proxyProfile:  newProxyProfile,
 				proxyPort:     newProxyPort,
 				packages:      resolvedPackages,
@@ -148,6 +180,8 @@ var newCmd = &cobra.Command{
 			denyPaths:     newDenyPaths,
 			allowCommands: newAllowCommands,
 			denyCommands:  newDenyCommands,
+			allowPerms:    newAllowPerms,
+			denyPerms:     newDenyPerms,
 			proxyProfile:  newProxyProfile,
 			proxyPort:     newProxyPort,
 			packages:      newPackages,
@@ -172,6 +206,8 @@ func init() {
 	newCmd.Flags().StringArrayVar(&newDenyPaths, "deny-path", nil, "Add path to permissions deny list")
 	newCmd.Flags().StringArrayVar(&newAllowCommands, "allow-command", nil, "Add command pattern to allow list (e.g., 'docker *')")
 	newCmd.Flags().StringArrayVar(&newDenyCommands, "deny-command", nil, "Add command pattern to deny list (e.g., 'rm -rf *')")
+	newCmd.Flags().StringArrayVar(&newAllowPerms, "allow-perm", nil, "Add raw permission allow rule (e.g., 'Bash(docker *)', 'Read')")
+	newCmd.Flags().StringArrayVar(&newDenyPerms, "deny-perm", nil, "Add raw permission deny rule (e.g., 'Read(/etc/**)')")
 	newCmd.Flags().StringVar(&newProxyProfile, "proxy-profile", "default",
 		"Proxy rule profile name")
 	newCmd.Flags().IntVar(&newProxyPort, "proxy-port", 0,
@@ -388,22 +424,24 @@ func createSession(opts createOpts) error {
 		return err
 	}
 
-	// Build extra allow perms: env var commands (skip for high profile) + CLI flags.
+	// Build extra allow perms: env var commands (skip for high profile) + CLI flags + raw perms.
 	var extraAllowPerms []string
 	if profile != "high" {
 		extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(envExtraAllowCommands())...)
 	}
 	extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(opts.allowCommands)...)
+	extraAllowPerms = append(extraAllowPerms, opts.allowPerms...)
 
-	// Build extra deny perms: --deny-path as Read() rules + --deny-command as Bash() rules.
+	// Build extra deny perms: --deny-path as Read() rules + --deny-command as Bash() rules + raw deny perms.
 	var extraDenyPerms []string
 	for _, p := range opts.denyPaths {
 		extraDenyPerms = append(extraDenyPerms, fmt.Sprintf("Read(%s)", p))
 	}
 	extraDenyPerms = append(extraDenyPerms, wrapCommandPerms(opts.denyCommands)...)
+	extraDenyPerms = append(extraDenyPerms, opts.denyPerms...)
 
 	settingsJSON, err := json.MarshalIndent(
-		prof.ManagedSettingsForProxy(8080, extraAllowPerms, extraDenyPerms), "", "  ")
+		prof.ManagedSettingsForProxy(8080, extraAllowPerms, extraDenyPerms, opts.packages), "", "  ")
 	if err != nil {
 		return err
 	}
@@ -467,6 +505,8 @@ func createSession(opts createOpts) error {
 		DenyPaths:       opts.denyPaths,
 		AllowCommands:   opts.allowCommands,
 		DenyCommands:    opts.denyCommands,
+		AllowPerms:      opts.allowPerms,
+		DenyPerms:       opts.denyPerms,
 		Packages:        opts.packages,
 		ProxyProfile:    proxyProfile,
 		ProxyPort:       resolvedPort,

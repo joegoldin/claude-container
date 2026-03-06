@@ -105,15 +105,17 @@ func ensureRunning(store *config.Store, name string, sess *config.Session) error
 				extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(envExtraAllowCommands())...)
 			}
 			extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(sess.AllowCommands)...)
+			extraAllowPerms = append(extraAllowPerms, sess.AllowPerms...)
 
 			var extraDenyPerms []string
 			for _, p := range sess.DenyPaths {
 				extraDenyPerms = append(extraDenyPerms, fmt.Sprintf("Read(%s)", p))
 			}
 			extraDenyPerms = append(extraDenyPerms, wrapCommandPerms(sess.DenyCommands)...)
+			extraDenyPerms = append(extraDenyPerms, sess.DenyPerms...)
 
 			settingsJSON, _ := json.MarshalIndent(
-				prof.ManagedSettingsForProxy(8080, extraAllowPerms, extraDenyPerms), "", "  ")
+				prof.ManagedSettingsForProxy(8080, extraAllowPerms, extraDenyPerms, sess.Packages), "", "  ")
 			configDir := store.ClaudeConfigDir()
 			os.WriteFile(filepath.Join(configDir, "managed-settings.json"), settingsJSON, 0o644)
 		}

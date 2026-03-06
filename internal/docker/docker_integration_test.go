@@ -397,7 +397,7 @@ func writeManagedSettings(t *testing.T, configDir, profileName string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := p.ManagedSettingsForProxy(8080, nil, nil)
+	settings := p.ManagedSettingsForProxy(8080, nil, nil, nil)
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -865,7 +865,7 @@ func runClaudeProxyE2E(t *testing.T, profile string, hnAction string) claudeProx
 	if err != nil {
 		t.Fatal(err)
 	}
-	settingsJSON, err := json.MarshalIndent(medProfile.ManagedSettingsForProxy(8080, nil, nil), "", "  ")
+	settingsJSON, err := json.MarshalIndent(medProfile.ManagedSettingsForProxy(8080, nil, nil, nil), "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}

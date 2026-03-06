@@ -120,23 +120,49 @@ func Run(opts Opts) error {
 	var overlayStop func() // stops spinner from renderOverlay
 
 	// stdout proxy: docker pty -> host stdout.
-	// Also watches for Claude Code's workspace trust prompt and auto-accepts it.
+	// Watches for interactive prompts and auto-accepts them by sending Enter.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		buf := make([]byte, 4096)
 
-		// Detect the workspace trust prompt and auto-accept it.
-		// Only active during the first 30 seconds to avoid
-		// accidental triggers during normal operation.
-		// Uses a rolling buffer so detection works even if the
-		// needle is split across PTY reads. After detection,
-		// waits for the TUI to finish rendering before sending Enter.
-		const needle = "Itrustthisfolder"
+		// Build list of prompt patterns to auto-accept.
+		// Each pattern has a needle (string to detect in output after
+		// ANSI stripping), a response to send, a timeout, and whether
+		// it should keep scanning after first match (repeatable).
+		type autoAccept struct {
+			needle     string
+			response   []byte
+			deadline   <-chan time.Time
+			fired      bool
+			repeatable bool // if true, resets fired after match
+		}
+
+		// Always auto-accept the workspace trust prompt (first 30s).
+		// All needles are lowercase — matching is case-insensitive.
+		prompts := []*autoAccept{
+			{needle: "itrustthisfolder", response: []byte("\r"), deadline: time.After(30 * time.Second)},
+		}
+
+		// In yolo mode, also auto-accept common interactive prompts.
+		// These are repeatable since they can appear multiple times
+		// during a session. Needles are written without spaces because
+		// Claude Code's TUI inserts ANSI escape sequences between
+		// words — after stripANSI, "Do you want" → "Doyouwant".
+		if opts.StatusBar.Yolo {
+			yoloDeadline := time.After(24 * time.Hour)
+			prompts = append(prompts,
+				&autoAccept{needle: "doyouwanttoproceed", response: []byte("y\r"), deadline: yoloDeadline, repeatable: true},
+				&autoAccept{needle: "wouldyouliketoproceed", response: []byte("y\r"), deadline: yoloDeadline, repeatable: true},
+				&autoAccept{needle: "doyouapprove", response: []byte("y\r"), deadline: yoloDeadline, repeatable: true},
+				&autoAccept{needle: "pressanykeytocontinue", response: []byte("\r"), deadline: yoloDeadline, repeatable: true},
+				&autoAccept{needle: "pressentertocontinue", response: []byte("\r"), deadline: yoloDeadline, repeatable: true},
+				&autoAccept{needle: "doyouwanttoenablethis", response: []byte("y\r"), deadline: yoloDeadline, repeatable: true},
+			)
+		}
+
 		var ring [8192]byte
 		var ringLen int
-		scanning := true
-		scanDeadline := time.After(30 * time.Second)
 
 		for {
 			select {
@@ -148,14 +174,20 @@ func Run(opts Opts) error {
 			if n > 0 {
 				os.Stdout.Write(buf[:n])
 
-				if scanning {
-					select {
-					case <-scanDeadline:
-						scanning = false
-					default:
+				// Check if any prompts are still active.
+				anyActive := false
+				for _, p := range prompts {
+					if !p.fired {
+						select {
+						case <-p.deadline:
+							p.fired = true // expired
+						default:
+							anyActive = true
+						}
 					}
 				}
-				if scanning {
+
+				if anyActive {
 					// Append new data to ring buffer.
 					for i := 0; i < n; i++ {
 						if ringLen < len(ring) {
@@ -166,16 +198,46 @@ func Run(opts Opts) error {
 							ring[len(ring)-1] = buf[i]
 						}
 					}
-					// Strip ANSI escape sequences for matching.
+					// Strip ANSI escape sequences for matching. Needles
+				// are written without spaces (e.g. "Itrustthisfolder")
+				// because TUI rendering inserts ANSI codes between words
+				// which stripANSI removes, collapsing the text.
 					clean := stripANSI(ring[:ringLen])
-					if strings.Contains(string(clean), needle) {
-						scanning = false
-						// Wait for the TUI to finish rendering
-						// before sending Enter to accept.
-						go func() {
-							time.Sleep(100 * time.Millisecond)
-							ptmx.Write([]byte("\r"))
-						}()
+					cleanStr := strings.ToLower(string(clean))
+
+					for _, p := range prompts {
+						if p.fired {
+							continue
+						}
+						if strings.Contains(cleanStr, p.needle) {
+							if p.repeatable {
+								// Mark fired temporarily; reset after
+								// sending so it can match again later.
+								p.fired = true
+							} else {
+								p.fired = true
+							}
+							resp := p.response
+							repeatable := p.repeatable
+							pp := p
+							// Wait for the TUI to finish rendering
+							// before sending the response.
+							go func() {
+								time.Sleep(100 * time.Millisecond)
+								ptmx.Write(resp)
+								// Re-enable repeatable prompts after a
+								// cooldown to avoid double-firing on
+								// the same render.
+								if repeatable {
+									time.Sleep(2 * time.Second)
+									pp.fired = false
+								}
+							}()
+							// Reset ring buffer after match so we don't
+							// keep re-matching the same text.
+							ringLen = 0
+							break
+						}
 					}
 				}
 			}

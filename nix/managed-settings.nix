@@ -1,4 +1,5 @@
 # nix/managed-settings.nix
+# Baked-in fallback — overridden by Go-generated managed-settings.json at runtime.
 {
   env = {
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
@@ -10,9 +11,6 @@
   alwaysThinkingEnabled = true;
   showTurnDuration = true;
   spinnerTipsEnabled = false;
-
-  # Instructions for Claude about the container environment
-  apiInstructions = "This container uses Nix for package management. Install software with: nix profile install nixpkgs#<package> (e.g., nix profile install nixpkgs#rustc nixpkgs#cargo). Search with: nix search nixpkgs <query>. List installed: nix profile list. Remove: nix profile remove <index>. Do not use apt-get, yum, brew, or other package managers.";
 
   sandbox = {
     enabled = true;
@@ -37,11 +35,24 @@
       "channels.nixos.org"
     ];
   };
+
+  defaultMode = "dontAsk";
+
   permissions.allow = [
-    "Bash(nix profile install *)"
-    "Bash(nix profile remove *)"
-    "Bash(nix profile list *)"
-    "Bash(nix search *)"
+    "Bash"
+    "Read"
+    "Edit"
+    "Write"
+    "WebFetch"
+    "Grep"
+    "Glob"
+    "LS"
+    "MultiEdit"
+    "NotebookRead"
+    "NotebookEdit"
+    "TodoRead"
+    "TodoWrite"
+    "WebSearch"
   ];
   permissions.deny = [
     "Read(/etc/shadow)"

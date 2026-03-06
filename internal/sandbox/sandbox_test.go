@@ -24,7 +24,7 @@ func TestInvalidProfile(t *testing.T) {
 
 func TestManagedSettingsJSON(t *testing.T) {
 	p, _ := GetProfile("med")
-	settings := p.ManagedSettingsForProxy(8080, nil, nil)
+	settings := p.ManagedSettingsForProxy(8080, nil, nil, nil)
 	data, err := json.Marshal(settings)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
@@ -36,7 +36,7 @@ func TestManagedSettingsJSON(t *testing.T) {
 
 func TestOverrideAddsDenyPerm(t *testing.T) {
 	p, _ := GetProfile("med")
-	settings := p.ManagedSettingsForProxy(8080, nil, []string{"Bash(rm *)"})
+	settings := p.ManagedSettingsForProxy(8080, nil, []string{"Bash(rm *)"}, nil)
 	perms := settings["permissions"].(map[string]any)
 	deny := perms["deny"].([]string)
 	found := false
@@ -72,7 +72,7 @@ func TestYoloProfiles(t *testing.T) {
 func TestDontAskModeForAllProfiles(t *testing.T) {
 	for _, name := range []string{"low", "default", "med", "high"} {
 		p, _ := GetProfile(name)
-		settings := p.ManagedSettingsForProxy(8080, nil, nil)
+		settings := p.ManagedSettingsForProxy(8080, nil, nil, nil)
 		mode, ok := settings["defaultMode"].(string)
 		if !ok || mode != "dontAsk" {
 			t.Errorf("profile %q: defaultMode = %v, want dontAsk", name, settings["defaultMode"])
@@ -84,7 +84,7 @@ func TestDontAskModeForAllProfiles(t *testing.T) {
 
 func TestManagedSettingsForProxyWildcardDomains(t *testing.T) {
 	p, _ := GetProfile("med")
-	settings := p.ManagedSettingsForProxy(8080, nil, nil)
+	settings := p.ManagedSettingsForProxy(8080, nil, nil, nil)
 	sandbox := settings["sandbox"].(map[string]any)
 
 	network, ok := sandbox["network"].(map[string]any)
@@ -109,7 +109,7 @@ func TestManagedSettingsForProxyWildcardDomains(t *testing.T) {
 
 func TestManagedSettingsForProxyKeepsDenyPerms(t *testing.T) {
 	p, _ := GetProfile("med")
-	settings := p.ManagedSettingsForProxy(8080, nil, []string{"Bash(rm -rf *)"})
+	settings := p.ManagedSettingsForProxy(8080, nil, []string{"Bash(rm -rf *)"}, nil)
 	perms := settings["permissions"].(map[string]any)
 	deny := perms["deny"].([]string)
 
@@ -133,7 +133,7 @@ func TestManagedSettingsForProxyKeepsDenyPerms(t *testing.T) {
 
 func TestManagedSettingsForProxyLowProfile(t *testing.T) {
 	p, _ := GetProfile("low")
-	settings := p.ManagedSettingsForProxy(8080, nil, nil)
+	settings := p.ManagedSettingsForProxy(8080, nil, nil, nil)
 	sandbox := settings["sandbox"].(map[string]any)
 
 	if enabled, _ := sandbox["enabled"].(bool); !enabled {
@@ -145,29 +145,49 @@ func TestManagedSettingsForProxyLowProfile(t *testing.T) {
 		t.Errorf("proxy port = %d, want 8080", port)
 	}
 
-	if _, hasPerms := settings["permissions"]; hasPerms {
-		t.Error("low profile with no extra deny perms should not have permissions key")
+	// Low profile should have permissions.allow with all tools (for dontAsk mode).
+	perms, hasPerms := settings["permissions"].(map[string]any)
+	if !hasPerms {
+		t.Fatal("low profile should have permissions key with allToolsAllow")
+	}
+	allow, ok := perms["allow"].([]string)
+	if !ok || len(allow) == 0 {
+		t.Error("low profile should have non-empty permissions.allow")
+	}
+	// Should include bare tool names (no specifiers).
+	foundBash := false
+	for _, a := range allow {
+		if a == "Bash" {
+			foundBash = true
+		}
+	}
+	if !foundBash {
+		t.Errorf("low profile permissions.allow missing 'Bash': %v", allow)
 	}
 }
 
 func TestManagedSettingsForProxyDefaultProfile(t *testing.T) {
 	p, _ := GetProfile("default")
-	settings := p.ManagedSettingsForProxy(8080, nil, nil)
+	settings := p.ManagedSettingsForProxy(8080, nil, nil, nil)
 	sandbox := settings["sandbox"].(map[string]any)
 
 	if enabled, _ := sandbox["enabled"].(bool); !enabled {
 		t.Error("default profile sandbox should be enabled")
 	}
 
-	// Default profile is yolo — no permissions key.
-	if _, hasPerms := settings["permissions"]; hasPerms {
-		t.Error("default profile (yolo) should not have permissions key")
+	// Default profile has allToolsAllow for dontAsk mode.
+	perms, hasPerms := settings["permissions"].(map[string]any)
+	if !hasPerms {
+		t.Fatal("default profile should have permissions key with allToolsAllow")
+	}
+	allow, ok := perms["allow"].([]string)
+	if !ok || len(allow) == 0 {
+		t.Error("default profile should have non-empty permissions.allow")
 	}
 
-	// All profiles get dontAsk mode (needed for rootless Docker where
-	// --dangerously-skip-permissions cannot be used).
-	mode, ok := settings["defaultMode"].(string)
-	if !ok || mode != "dontAsk" {
+	// All profiles get dontAsk mode.
+	mode, ok2 := settings["defaultMode"].(string)
+	if !ok2 || mode != "dontAsk" {
 		t.Errorf("default profile: defaultMode = %v, want dontAsk", settings["defaultMode"])
 	}
 }
@@ -248,15 +268,28 @@ func TestProxyRulesHigh(t *testing.T) {
 	p, _ := GetProfile("high")
 	rules := p.ProxyRules(nil)
 
-	if len(rules) != 1 {
-		t.Fatalf("high profile: got %d rules, want 1", len(rules))
+	// High profile uses anthropicDomains (api.anthropic.com, statsig, sentry).
+	if len(rules) != len(anthropicDomains) {
+		t.Fatalf("high profile: got %d rules, want %d", len(rules), len(anthropicDomains))
 	}
-	re := regexp.MustCompile(rules[0]["pattern"].(string))
-	if !re.MatchString("https://api.anthropic.com/v1/messages") {
-		t.Error("high profile rule should match api.anthropic.com")
+
+	// Should match api.anthropic.com but not github.com.
+	matchedAPI := false
+	matchedGH := false
+	for _, r := range rules {
+		re := regexp.MustCompile(r["pattern"].(string))
+		if re.MatchString("https://api.anthropic.com/v1/messages") {
+			matchedAPI = true
+		}
+		if re.MatchString("https://github.com/") {
+			matchedGH = true
+		}
 	}
-	if re.MatchString("https://github.com/") {
-		t.Error("high profile rule should not match github.com")
+	if !matchedAPI {
+		t.Error("high profile rules should match api.anthropic.com")
+	}
+	if matchedGH {
+		t.Error("high profile rules should not match github.com")
 	}
 }
 
@@ -264,8 +297,9 @@ func TestProxyRulesExtraDomains(t *testing.T) {
 	p, _ := GetProfile("high")
 	rules := p.ProxyRules([]string{"custom.api.com"})
 
-	if len(rules) != 2 {
-		t.Fatalf("got %d rules, want 2 (anthropic + custom)", len(rules))
+	wantCount := len(anthropicDomains) + 1
+	if len(rules) != wantCount {
+		t.Fatalf("got %d rules, want %d (anthropic + custom)", len(rules), wantCount)
 	}
 
 	matched := false
@@ -326,7 +360,7 @@ func TestDomainToRegex(t *testing.T) {
 
 func TestMedPermissionsAllow(t *testing.T) {
 	p, _ := GetProfile("med")
-	settings := p.ManagedSettingsForProxy(8080, nil, nil)
+	settings := p.ManagedSettingsForProxy(8080, nil, nil, nil)
 	perms := settings["permissions"].(map[string]any)
 
 	allow, ok := perms["allow"].([]string)
@@ -334,7 +368,7 @@ func TestMedPermissionsAllow(t *testing.T) {
 		t.Fatal("med profile should have permissions.allow")
 	}
 
-	wantRules := []string{"Bash(git *)", "Bash(npm *)", "Bash(curl *)", "Write(**)", "Edit(**)"}
+	wantRules := []string{"Bash(git *)", "Bash(npm *)", "Bash(curl *)", "Write", "Edit"}
 	for _, want := range wantRules {
 		found := false
 		for _, a := range allow {
@@ -351,7 +385,7 @@ func TestMedPermissionsAllow(t *testing.T) {
 
 func TestHighPermissionsDeny(t *testing.T) {
 	p, _ := GetProfile("high")
-	settings := p.ManagedSettingsForProxy(8080, nil, nil)
+	settings := p.ManagedSettingsForProxy(8080, nil, nil, nil)
 	perms := settings["permissions"].(map[string]any)
 
 	deny, ok := perms["deny"].([]string)
@@ -376,7 +410,7 @@ func TestHighPermissionsDeny(t *testing.T) {
 
 func TestHighPermissionsAllow(t *testing.T) {
 	p, _ := GetProfile("high")
-	settings := p.ManagedSettingsForProxy(8080, nil, nil)
+	settings := p.ManagedSettingsForProxy(8080, nil, nil, nil)
 	perms := settings["permissions"].(map[string]any)
 
 	allow, ok := perms["allow"].([]string)
@@ -411,7 +445,7 @@ func TestHighPermissionsAllow(t *testing.T) {
 func TestExtraAllowPermsAdded(t *testing.T) {
 	p, _ := GetProfile("med")
 	extra := []string{"Bash(docker *)", "Bash(kubectl *)"}
-	settings := p.ManagedSettingsForProxy(8080, extra, nil)
+	settings := p.ManagedSettingsForProxy(8080, extra, nil, nil)
 	perms := settings["permissions"].(map[string]any)
 	allow := perms["allow"].([]string)
 
@@ -446,7 +480,7 @@ func TestExtraAllowAndDenyPerms(t *testing.T) {
 	p, _ := GetProfile("med")
 	extraAllow := []string{"Bash(docker *)"}
 	extraDeny := []string{"Bash(rm -rf *)"}
-	settings := p.ManagedSettingsForProxy(8080, extraAllow, extraDeny)
+	settings := p.ManagedSettingsForProxy(8080, extraAllow, extraDeny, nil)
 	perms := settings["permissions"].(map[string]any)
 
 	allow := perms["allow"].([]string)
@@ -475,17 +509,32 @@ func TestExtraAllowAndDenyPerms(t *testing.T) {
 func TestExtraAllowPermsOnYoloProfile(t *testing.T) {
 	p, _ := GetProfile("default")
 	extra := []string{"Bash(docker *)"}
-	settings := p.ManagedSettingsForProxy(8080, extra, nil)
+	settings := p.ManagedSettingsForProxy(8080, extra, nil, nil)
 
-	// Yolo profiles normally have no permissions block, but adding extra
-	// allow perms should create one.
+	// Default profile has allToolsAllow; adding extra perms should merge.
 	perms, ok := settings["permissions"].(map[string]any)
 	if !ok {
-		t.Fatal("yolo profile with extra allow perms should have permissions block")
+		t.Fatal("default profile should have permissions block")
 	}
 	allow := perms["allow"].([]string)
-	if len(allow) != 1 || allow[0] != "Bash(docker *)" {
-		t.Errorf("allow = %v, want [Bash(docker *)]", allow)
+	foundExtra := false
+	for _, a := range allow {
+		if a == "Bash(docker *)" {
+			foundExtra = true
+		}
+	}
+	if !foundExtra {
+		t.Errorf("extra perm Bash(docker *) not found in allow: %v", allow)
+	}
+	// Should also contain the base allToolsAllow entries.
+	foundBash := false
+	for _, a := range allow {
+		if a == "Bash" {
+			foundBash = true
+		}
+	}
+	if !foundBash {
+		t.Errorf("base allToolsAllow 'Bash' not found in allow: %v", allow)
 	}
 }
 

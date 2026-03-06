@@ -174,7 +174,7 @@ func runTask() error {
 	}
 	extraDenyPerms = append(extraDenyPerms, wrapCommandPerms(taskDenyCommands)...)
 	settingsJSON, err := json.MarshalIndent(
-		prof.ManagedSettingsForProxy(8080, extraAllowPerms, extraDenyPerms), "", "  ")
+		prof.ManagedSettingsForProxy(8080, extraAllowPerms, extraDenyPerms, nil), "", "  ")
 	if err != nil {
 		return err
 	}

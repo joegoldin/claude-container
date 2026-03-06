@@ -19,8 +19,9 @@ const (
 	stepBranch    // pick base branch (only if "from existing")
 	stepProfile   // select sandbox profile
 	stepWorkspace // select workspace (skip if none defined)
-	stepPackages  // optional packages input
-	stepPrompt    // optional initial prompt
+	stepPackages    // optional packages input
+	stepPermissions // optional custom permission rules
+	stepPrompt      // optional initial prompt
 	stepReview    // summary + confirm
 	stepDone
 )
@@ -35,6 +36,8 @@ type WizardResult struct {
 	Profile    string
 	Workspace  string
 	Packages   string // comma-separated package names
+	AllowPerms string // comma-separated allow permission rules
+	DenyPerms  string // comma-separated deny permission rules
 	Prompt     string
 	NoWorktree bool
 	Yolo       bool
@@ -149,6 +152,8 @@ func (m WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateWorkspace(key)
 		case stepPackages:
 			return m.updatePackages(msg)
+		case stepPermissions:
+			return m.updatePermissions(msg)
 		case stepPrompt:
 			return m.updatePrompt(msg)
 		case stepReview:
@@ -157,7 +162,7 @@ func (m WizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Forward to text input when active.
-	if m.step == stepName || m.step == stepPackages || m.step == stepPrompt {
+	if m.step == stepName || m.step == stepPackages || m.step == stepPermissions || m.step == stepPrompt {
 		var cmd tea.Cmd
 		m.textInput, cmd = m.textInput.Update(msg)
 		return m, cmd
@@ -336,6 +341,22 @@ func (m WizardModel) updatePackages(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.goBack()
 	case "enter":
 		m.result.Packages = strings.TrimSpace(m.textInput.Value())
+		m.step = stepPermissions
+		m.setupPermissionsStep()
+		return m, textinput.Blink
+	}
+
+	var cmd tea.Cmd
+	m.textInput, cmd = m.textInput.Update(msg)
+	return m, cmd
+}
+
+func (m WizardModel) updatePermissions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "left":
+		return m.goBack()
+	case "enter":
+		m.result.AllowPerms = strings.TrimSpace(m.textInput.Value())
 		m.step = stepPrompt
 		m.setupPromptStep()
 		return m, textinput.Blink
@@ -413,6 +434,16 @@ func (m *WizardModel) setupPackagesStep() {
 	m.textInput.CharLimit = 500
 	if m.result.Packages != "" {
 		m.textInput.SetValue(m.result.Packages)
+	}
+}
+
+func (m *WizardModel) setupPermissionsStep() {
+	m.textInput = textinput.New()
+	m.textInput.Placeholder = "(optional) e.g., Bash(docker *),Read(/etc/**)"
+	m.textInput.Focus()
+	m.textInput.CharLimit = 1000
+	if m.result.AllowPerms != "" {
+		m.textInput.SetValue(m.result.AllowPerms)
 	}
 }
 
@@ -517,6 +548,18 @@ func (m WizardModel) goBack() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case stepPermissions:
+		// Go back to stepPackages.
+		m.step = stepPackages
+		m.setupPackagesStep()
+		return m, textinput.Blink
+
+	case stepPrompt:
+		// Go back to stepPermissions.
+		m.step = stepPermissions
+		m.setupPermissionsStep()
+		return m, textinput.Blink
+
 	case stepReview:
 		// Go back to stepPrompt.
 		m.step = stepPrompt
@@ -584,6 +627,16 @@ func (m WizardModel) View() string {
 		b.WriteString("Extra packages to install (comma-separated nixpkgs names):\n")
 		b.WriteString(m.textInput.View())
 		b.WriteString("\n\n")
+		b.WriteString(dimStyle.Render("enter confirm  left back"))
+
+	case stepPermissions:
+		b.WriteString(titleStyle.Render("Extra Permissions"))
+		b.WriteString("\n\n")
+		b.WriteString("Additional allow permission rules (comma-separated):\n")
+		b.WriteString(m.textInput.View())
+		b.WriteString("\n\n")
+		b.WriteString(dimStyle.Render("e.g., Bash(docker *), Read(/secrets/**)"))
+		b.WriteString("\n")
 		b.WriteString(dimStyle.Render("enter confirm  left back"))
 
 	case stepPrompt:
@@ -796,6 +849,14 @@ func (m WizardModel) renderReview() string {
 		b.WriteString(fmt.Sprintf("  %-12s %s\n", "Packages:", m.result.Packages))
 	}
 
+	if m.result.AllowPerms != "" {
+		b.WriteString(fmt.Sprintf("  %-12s %s\n", "Allow:", m.result.AllowPerms))
+	}
+
+	if m.result.DenyPerms != "" {
+		b.WriteString(fmt.Sprintf("  %-12s %s\n", "Deny:", m.result.DenyPerms))
+	}
+
 	if m.result.Prompt != "" {
 		// Truncate long prompts for display.
 		prompt := m.result.Prompt
@@ -847,6 +908,24 @@ func (m WizardModel) buildCLICommand() string {
 
 	if m.result.Packages != "" {
 		parts = append(parts, fmt.Sprintf("--packages %s", m.result.Packages))
+	}
+
+	if m.result.AllowPerms != "" {
+		for _, perm := range strings.Split(m.result.AllowPerms, ",") {
+			perm = strings.TrimSpace(perm)
+			if perm != "" {
+				parts = append(parts, "--allow-perm", perm)
+			}
+		}
+	}
+
+	if m.result.DenyPerms != "" {
+		for _, perm := range strings.Split(m.result.DenyPerms, ",") {
+			perm = strings.TrimSpace(perm)
+			if perm != "" {
+				parts = append(parts, "--deny-perm", perm)
+			}
+		}
 	}
 
 	if m.result.Prompt != "" {
