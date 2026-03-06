@@ -39,6 +39,7 @@ type Session struct {
 	DenyPaths       []string  `json:"deny_paths,omitempty"`
 	AllowCommands   []string  `json:"allow_commands,omitempty"`
 	DenyCommands    []string  `json:"deny_commands,omitempty"`
+	Packages        []string  `json:"packages,omitempty"`
 	NetworkSandbox  string    `json:"network_sandbox,omitempty"` // deprecated: always "proxy"
 	ProxyProfile    string    `json:"proxy_profile,omitempty"`
 	ProxyPort       int       `json:"proxy_port,omitempty"`

@@ -38,6 +38,7 @@ var (
 	newProxyPort      int
 	newAllowCommands  []string
 	newDenyCommands   []string
+	newPackages       []string
 )
 
 // createOpts holds the resolved options for creating a new session.
@@ -60,6 +61,7 @@ type createOpts struct {
 	denyCommands  []string // --deny-command flag
 	proxyProfile  string
 	proxyPort     int
+	packages      []string // --packages flag
 }
 
 var newCmd = &cobra.Command{
@@ -111,6 +113,7 @@ var newCmd = &cobra.Command{
 				denyCommands:  newDenyCommands,
 				proxyProfile:  newProxyProfile,
 				proxyPort:     newProxyPort,
+				packages:      newPackages,
 			})
 		}
 
@@ -133,6 +136,7 @@ var newCmd = &cobra.Command{
 			denyCommands:  newDenyCommands,
 			proxyProfile:  newProxyProfile,
 			proxyPort:     newProxyPort,
+			packages:      newPackages,
 		})
 	},
 }
@@ -158,6 +162,7 @@ func init() {
 		"Proxy rule profile name")
 	newCmd.Flags().IntVar(&newProxyPort, "proxy-port", 0,
 		"Dashboard port on host (0 = auto-assign)")
+	newCmd.Flags().StringSliceVar(&newPackages, "packages", nil, "Comma-separated nixpkgs to install (e.g., rust,nodejs)")
 	rootCmd.AddCommand(newCmd)
 }
 
@@ -393,6 +398,7 @@ func createSession(opts createOpts) error {
 		ExtraWorkspaces: extraWorkspaces,
 		ProxyProfile:    proxyProfile,
 		ProxyCACertDir:  httpproxy.CACertDir(config.DefaultDir()),
+		Packages:        opts.packages,
 	}
 
 	// When using worktree mode, pass repo info so the container entrypoint
@@ -433,6 +439,7 @@ func createSession(opts createOpts) error {
 		DenyPaths:       opts.denyPaths,
 		AllowCommands:   opts.allowCommands,
 		DenyCommands:    opts.denyCommands,
+		Packages:        opts.packages,
 		ProxyProfile:    proxyProfile,
 		ProxyPort:       resolvedPort,
 	}
