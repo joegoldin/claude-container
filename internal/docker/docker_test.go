@@ -155,17 +155,20 @@ func TestRunArgsVolumeMounts(t *testing.T) {
 			volumeCount++
 		}
 	}
-	if volumeCount != 2 {
-		t.Errorf("RunArgs has %d volume mounts, want 2", volumeCount)
+	if volumeCount != 3 {
+		t.Errorf("RunArgs has %d volume mounts, want 3", volumeCount)
 	}
 
-	// Verify both specific mounts are present.
+	// Verify specific mounts are present.
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "/projects/myapp:/workspace") {
 		t.Errorf("RunArgs missing workspace volume mount in %v", args)
 	}
 	if !strings.Contains(joined, "/home/user/.claude-config:/claude") {
 		t.Errorf("RunArgs missing config volume mount in %v", args)
+	}
+	if !strings.Contains(joined, "claude-nix-store:/nix/var") {
+		t.Errorf("RunArgs missing nix store volume mount in %v", args)
 	}
 }
 
