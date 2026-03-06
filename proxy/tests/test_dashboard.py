@@ -1,6 +1,8 @@
 """Tests for the dashboard REST API endpoints."""
 
+import asyncio
 import json
+import threading
 import time
 from unittest.mock import MagicMock
 
@@ -8,7 +10,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from claude_proxy.addon import ProxyAddon
-from claude_proxy.dashboard import app, configure
+from claude_proxy.dashboard import app, configure, on_pending_request, set_dashboard_loop
 from claude_proxy.rules import RuleStore
 
 
@@ -211,3 +213,68 @@ class TestWebSocket:
             assert data["type"] == "init"
             assert "pending" in data["data"]
             assert "rules" in data["data"]
+
+
+class TestOnPendingRequestCrossThread:
+    """Verify on_pending_request works when called from a non-asyncio thread."""
+
+    def test_on_pending_request_from_foreign_thread(self):
+        """Simulate the mitmproxy thread calling on_pending_request.
+
+        The mitmproxy worker thread has no running asyncio loop. The fix stores
+        the dashboard's event loop and uses call_soon_threadsafe to schedule
+        the broadcast coroutine on that loop.
+        """
+        from claude_proxy import dashboard as _dashboard_mod
+
+        # 1. Create a dedicated event loop to act as the dashboard's loop.
+        loop = asyncio.new_event_loop()
+        set_dashboard_loop(loop)
+
+        # 2. Monkey-patch broadcast to capture calls.
+        received: list[dict] = []
+        _original_broadcast = _dashboard_mod.broadcast
+
+        async def _capturing_broadcast(message: dict) -> None:
+            received.append(message)
+
+        _dashboard_mod.broadcast = _capturing_broadcast
+
+        try:
+            # 3. Call on_pending_request from a plain thread (no asyncio loop).
+            info = {"flow_id": "cross-thread-1", "url": "https://example.com"}
+            call_done = threading.Event()
+            error_in_thread: list[Exception] = []
+
+            def worker():
+                try:
+                    on_pending_request(info)
+                except Exception as exc:
+                    error_in_thread.append(exc)
+                finally:
+                    call_done.set()
+
+            t = threading.Thread(target=worker)
+            t.start()
+            call_done.wait(timeout=5)
+            t.join(timeout=5)
+
+            assert not error_in_thread, f"on_pending_request raised: {error_in_thread}"
+
+            # 4. Run the loop to process the call_soon_threadsafe callback
+            #    and the resulting task.  run_until_complete drives the loop
+            #    until the given coroutine finishes, which also drains any
+            #    pending callbacks (including create_task from call_soon_threadsafe).
+            async def _drain():
+                # Yield control so the task created by call_soon_threadsafe runs.
+                await asyncio.sleep(0)
+
+            loop.run_until_complete(_drain())
+
+            assert len(received) == 1
+            assert received[0]["type"] == "pending"
+            assert received[0]["data"]["flow_id"] == "cross-thread-1"
+        finally:
+            _dashboard_mod.broadcast = _original_broadcast
+            loop.close()
+            set_dashboard_loop(None)

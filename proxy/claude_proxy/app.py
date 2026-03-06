@@ -16,7 +16,7 @@ from mitmproxy import options
 from mitmproxy.tools.dump import DumpMaster
 
 from claude_proxy.addon import ProxyAddon
-from claude_proxy.dashboard import app, configure, on_pending_request
+from claude_proxy.dashboard import app, configure, on_pending_request, set_dashboard_loop
 from claude_proxy.rules import RuleStore
 
 logger = logging.getLogger(__name__)
@@ -58,12 +58,17 @@ def parse_args() -> argparse.Namespace:
 
 def _start_dashboard(port: int) -> None:
     """Run the Starlette dashboard via uvicorn in a daemon thread."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    set_dashboard_loop(loop)
+
     config = uvicorn.Config(
         app,
         host="0.0.0.0",
         port=port,
         log_level="info",
         access_log=False,
+        loop="none",  # Use the loop we already created
     )
     server = uvicorn.Server(config)
     server.run()

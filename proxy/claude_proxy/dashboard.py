@@ -27,6 +27,13 @@ _addon: Optional[ProxyAddon] = None
 _store: Optional[RuleStore] = None
 _profile_path: Optional[str] = None
 _ws_clients: set[WebSocket] = set()
+_dashboard_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def set_dashboard_loop(loop: Optional[asyncio.AbstractEventLoop]) -> None:
+    """Register the dashboard's asyncio event loop for cross-thread scheduling."""
+    global _dashboard_loop
+    _dashboard_loop = loop
 
 
 def configure(addon: ProxyAddon, store: RuleStore, profile_path: str) -> None:
@@ -54,13 +61,21 @@ async def broadcast(message: dict) -> None:
 
 def on_pending_request(info: dict) -> None:
     """Callback for addon -- schedules broadcast to WS clients."""
+    msg = {"type": "pending", "data": info}
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(broadcast({"type": "pending", "data": info}))
+        loop.create_task(broadcast(msg))
     except RuntimeError:
         # No running event loop (e.g. called from mitmproxy thread).
-        # Find the dashboard's loop and schedule there.
-        pass
+        # Schedule on the dashboard's loop via call_soon_threadsafe.
+        if _dashboard_loop is not None and not _dashboard_loop.is_closed():
+            _dashboard_loop.call_soon_threadsafe(
+                _dashboard_loop.create_task, broadcast(msg)
+            )
+        else:
+            logger.warning(
+                "on_pending_request: no dashboard loop available, notification dropped"
+            )
 
 
 # --- Route handlers ---
