@@ -29,6 +29,90 @@
   const tabs = document.querySelectorAll(".tab");
   const views = document.querySelectorAll(".view");
 
+  // Add Rule form refs
+  const addRuleInput = document.getElementById("add-rule-input");
+  const addRulePreset = document.getElementById("add-rule-preset");
+  const addRuleDuration = document.getElementById("add-rule-duration");
+  const addRuleBtn = document.getElementById("add-rule-btn");
+  const typeBtns = document.querySelectorAll(".type-btn");
+  let selectedType = "allow";
+
+  // --- Type toggle ---
+  typeBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      typeBtns.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      selectedType = btn.getAttribute("data-type");
+    });
+  });
+
+  // --- Preset change handler ---
+  addRulePreset.addEventListener("change", () => {
+    const preset = addRulePreset.value;
+    if (preset === "subdomain") {
+      addRuleInput.placeholder = "Enter hostname (e.g. api.example.com)";
+    } else if (preset === "base_domain") {
+      addRuleInput.placeholder = "Enter domain (e.g. example.com)";
+    } else {
+      addRuleInput.placeholder = "Enter regex pattern...";
+    }
+  });
+
+  // --- Add rule submit ---
+  async function submitAddRule() {
+    const rawValue = addRuleInput.value.trim();
+    if (!rawValue) {
+      addRuleInput.focus();
+      return;
+    }
+
+    const preset = addRulePreset.value;
+    let pattern;
+    if (preset === "subdomain") {
+      pattern = patternSubdomain(rawValue);
+    } else if (preset === "base_domain") {
+      pattern = patternBaseDomain(rawValue);
+    } else {
+      pattern = rawValue;
+    }
+
+    const durationKey = addRuleDuration.value;
+    const durationSec = DURATIONS[durationKey] || 0;
+    const expiresAt =
+      durationSec > 0 ? Math.floor(Date.now() / 1000) + durationSec : null;
+
+    const label =
+      (selectedType === "allow" ? "Allow " : "Deny ") + rawValue;
+
+    try {
+      const resp = await fetch("/api/rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: selectedType,
+          pattern: pattern,
+          label: label,
+          expires_at: expiresAt,
+          source: "manual",
+        }),
+      });
+      if (resp.ok) {
+        addRuleInput.value = "";
+      }
+    } catch (err) {
+      console.error("Failed to add rule:", err);
+    }
+  }
+
+  addRuleBtn.addEventListener("click", submitAddRule);
+
+  addRuleInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submitAddRule();
+    }
+  });
+
   // --- Tab navigation ---
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {

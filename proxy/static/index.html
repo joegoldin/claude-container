@@ -23,6 +23,44 @@
         </section>
 
         <section id="rules-view" class="view">
+            <div class="add-rule-form">
+                <h3>Add Rule</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Type</label>
+                        <div class="type-toggle">
+                            <button class="type-btn active" data-type="allow">Allow</button>
+                            <button class="type-btn" data-type="deny">Deny</button>
+                        </div>
+                    </div>
+                    <div class="form-group-grow">
+                        <label>Pattern</label>
+                        <div class="add-rule-pattern-row">
+                            <select id="add-rule-preset">
+                                <option value="custom">Custom regex</option>
+                                <option value="subdomain">Subdomain</option>
+                                <option value="base_domain">Base domain</option>
+                            </select>
+                            <input type="text" id="add-rule-input" placeholder="Enter regex pattern...">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Duration</label>
+                        <select id="add-rule-duration">
+                            <option value="forever">Forever</option>
+                            <option value="15min">15 minutes</option>
+                            <option value="1hr">1 hour</option>
+                            <option value="1day">1 day</option>
+                            <option value="1week">1 week</option>
+                            <option value="1month">1 month</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>&nbsp;</label>
+                        <button class="btn btn-add" id="add-rule-btn">Add</button>
+                    </div>
+                </div>
+            </div>
             <div id="rules-table-wrap">
                 <table id="rules-table">
                     <thead>

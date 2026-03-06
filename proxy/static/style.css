@@ -295,6 +295,133 @@ select:focus {
     color: #fff;
 }
 
+/* Add Rule form */
+.add-rule-form {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.add-rule-form h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 16px;
+}
+
+.form-row {
+    display: flex;
+    gap: 16px;
+    align-items: flex-end;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-group-grow {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+}
+
+.form-group label,
+.form-group-grow label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.type-toggle {
+    display: flex;
+    gap: 0;
+}
+
+.type-btn {
+    padding: 8px 16px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.type-btn:first-child {
+    border-radius: var(--radius) 0 0 var(--radius);
+    border-right: none;
+}
+
+.type-btn:last-child {
+    border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.type-btn.active[data-type="allow"] {
+    background: var(--accent-green);
+    border-color: var(--accent-green);
+    color: #fff;
+}
+
+.type-btn.active[data-type="deny"] {
+    background: var(--accent-red);
+    border-color: var(--accent-red);
+    color: #fff;
+}
+
+.add-rule-pattern-row {
+    display: flex;
+    gap: 8px;
+}
+
+.add-rule-pattern-row select {
+    flex-shrink: 0;
+    max-width: none;
+    width: auto;
+}
+
+.add-rule-pattern-row input {
+    flex: 1;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+}
+
+.add-rule-pattern-row input:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+}
+
+.btn-add {
+    padding: 8px 24px;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--accent-blue);
+    color: #fff;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.btn-add:hover {
+    background: #3a8fc0;
+}
+
 /* Rules table */
 #rules-table-wrap {
     overflow-x: auto;
@@ -434,6 +561,14 @@ select:focus {
     }
 
     .pattern-options {
+        flex-direction: column;
+    }
+
+    .form-row {
+        flex-direction: column;
+    }
+
+    .add-rule-pattern-row {
         flex-direction: column;
     }
 }
