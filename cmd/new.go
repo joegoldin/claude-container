@@ -212,7 +212,7 @@ func init() {
 		"Proxy rule profile name")
 	newCmd.Flags().IntVar(&newProxyPort, "proxy-port", 0,
 		"Dashboard port on host (0 = auto-assign)")
-	newCmd.Flags().StringSliceVar(&newPackages, "packages", nil, "Comma-separated nixpkgs to install (e.g., rust,nodejs)")
+	newCmd.Flags().StringSliceVar(&newPackages, "packages", nil, "Comma-separated nixpkgs to install (e.g., rustup,bun)")
 	rootCmd.AddCommand(newCmd)
 }
 
