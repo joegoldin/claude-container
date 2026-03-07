@@ -19,6 +19,7 @@ type ProxyOpts struct {
 	Profile       string
 	ConfigDir     string // base config dir (~/.config/claude-container)
 	DashboardPort int    // host port for dashboard (default 8081)
+	ForceRestart  bool   // stop and restart even if already running (picks up new rules)
 }
 
 // ContainerName returns the Docker container name for the given proxy profile.
@@ -174,6 +175,19 @@ func RemoveNetwork(profile string) error {
 // Returns true if a new container was started, the resolved dashboard port,
 // and any error.
 func EnsureRunning(opts ProxyOpts) (started bool, port int, err error) {
+	if opts.ForceRestart && IsRunning(opts.Profile) {
+		// Stop existing proxy so it restarts with fresh rules.
+		name := ContainerName(opts.Profile)
+		stop := exec.Command("docker", "stop", name)
+		stop.Stdout = nil
+		stop.Stderr = nil
+		stop.Run()
+		rm := exec.Command("docker", "rm", "-f", name)
+		rm.Stdout = nil
+		rm.Stderr = nil
+		rm.Run()
+	}
+
 	if IsRunning(opts.Profile) {
 		// Proxy already running — discover its port.
 		existingPort := GetDashboardPort(opts.Profile)

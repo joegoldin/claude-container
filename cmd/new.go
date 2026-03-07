@@ -364,6 +364,7 @@ func createSession(opts createOpts) error {
 		Profile:       proxyProfile,
 		ConfigDir:     config.DefaultDir(),
 		DashboardPort: opts.proxyPort,
+		ForceRestart:  true, // always restart so proxy picks up fresh rules
 	})
 	if err != nil {
 		return fmt.Errorf("start proxy: %w", err)
