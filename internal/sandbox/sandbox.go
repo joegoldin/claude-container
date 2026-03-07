@@ -44,6 +44,8 @@ var devEcosystemDomains = []string{
 	"*.cache.nixos.org",
 	"channels.nixos.org",
 	"releases.nixos.org",
+	"devenv.cachix.org",
+	"*.cachix.org",
 }
 
 // langDomains covers language-specific package registries beyond the basics.
@@ -84,7 +86,8 @@ var allToolsAllow = []string{
 // More restrictive than allToolsAllow — only specific Bash commands are allowed.
 var devToolsAllow = []string{
 	"Bash(git *)", "Bash(gh *)", "Bash(npm *)",
-	"Bash(pip *)","Bash(cargo *)", "Bash(make *)",
+	"Bash(pip *)", "Bash(cargo *)", "Bash(make *)",
+	"Bash(nix *)", "Bash(devenv *)", "Bash(direnv *)", "Bash(cachix *)",
 	"Bash(cd *)", "Bash(echo *)", "Bash(ls *)", "Bash(cat *)", "Bash(grep *)",
 	"Bash(find *)", "Bash(touch *)", "Bash(curl *)", "Bash(wget *)",
 	"Bash(mkdir *)", "Bash(rm *)", "Bash(cp *)", "Bash(mv *)", "Bash(sleep *)",
@@ -260,7 +263,7 @@ func (p Profile) ProxyRules(extraDomains []string) []map[string]any {
 var defaultPackageNames = []string{
 	"bash", "coreutils", "git", "jq", "curl", "findutils", "grep", "sed",
 	"gawk", "ripgrep", "fd", "tree", "diffutils", "tar", "gzip", "less",
-	"file", "which", "python3", "nix",
+	"file", "which", "python3", "nix", "devenv", "cachix", "direnv",
 }
 
 // containerInstructions generates the apiInstructions string that tells
@@ -288,6 +291,11 @@ func containerInstructions(extraPackages []string) string {
 	b.WriteString("- `nix profile list` to see installed packages\n")
 	b.WriteString("- `nix profile remove <index>` to remove\n")
 	b.WriteString("Do not use apt-get, yum, brew, or other package managers — they are not available.\n")
+	b.WriteString("\n### Devenv Support\n")
+	b.WriteString("devenv is pre-installed for declarative dev environments. If the workspace has a devenv.nix:\n")
+	b.WriteString("- `devenv shell` to enter the dev environment\n")
+	b.WriteString("- `devenv up` to start processes defined in devenv.nix\n")
+	b.WriteString("- direnv is configured to auto-activate .envrc files in /workspace\n")
 
 	return b.String()
 }

@@ -134,6 +134,25 @@ let
 
     export SHELL=${bash}/bin/bash
 
+    # --- direnv setup ---
+    # Enable direnv hook so devenv.nix / .envrc files auto-activate.
+    BASHRC="$HOME/.bashrc"
+    if ! ${pkgs.gnugrep}/bin/grep -q 'direnv hook' "$BASHRC" 2>/dev/null; then
+      echo 'eval "$(${pkgs.direnv}/bin/direnv hook bash)"' >> "$BASHRC"
+    fi
+    # Allow .envrc files in /workspace automatically.
+    ${mkdir} -p "$HOME/.config/direnv"
+    if [ ! -f "$HOME/.config/direnv/direnv.toml" ]; then
+      cat > "$HOME/.config/direnv/direnv.toml" << 'DIRENVCONF'
+    [whitelist]
+    prefix = ["/workspace"]
+    DIRENVCONF
+    fi
+    if [ "$USER_UID" -ne 0 ]; then
+      ${chown} -R "$USER_UID:$USER_GID" "$HOME/.config/direnv" 2>/dev/null || true
+      ${chown} "$USER_UID:$USER_GID" "$BASHRC" 2>/dev/null || true
+    fi
+
     # --- Worktree setup ---
     # Helper: create a worktree from a repo dir to a target dir.
     create_worktree() {
@@ -274,6 +293,9 @@ let
       which
       python3Minimal
       nix
+      devenv
+      cachix
+      direnv
     ])
     ++ extraPackages;
 
@@ -302,6 +324,9 @@ pkgs.dockerTools.buildLayeredImage {
     cat > etc/nix/nix.conf << 'NIXCONF'
     experimental-features = nix-command flakes
     sandbox = false
+    accept-flake-config = true
+    substituters = https://cache.nixos.org https://devenv.cachix.org
+    trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=
     NIXCONF
 
     # Create nix profile and var directories
