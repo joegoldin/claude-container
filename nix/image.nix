@@ -211,25 +211,25 @@ let
       done
     fi
 
+    # --- Nix store setup ---
+    # Make nix store writable so devenv, nix profile install, etc. work.
+    if [ "$USER_UID" -ne 0 ]; then
+      ${chown} -R "$USER_UID:$USER_GID" /nix 2>/dev/null || true
+    fi
+
+    # Initialize nix database if needed (empty volume on first run).
+    if [ ! -f /nix/var/nix/db/db.sqlite ]; then
+      log "initializing nix database"
+      if [ "$USER_NAME" = "root" ]; then
+        ${pkgs.nix}/bin/nix-store --init 2>>"$ENTRYPOINT_LOG" || log "WARNING: nix-store --init failed"
+      else
+        ${suExec} "$USER_NAME" ${pkgs.nix}/bin/nix-store --init 2>>"$ENTRYPOINT_LOG" || log "WARNING: nix-store --init failed"
+      fi
+    fi
+
     # --- Install extra packages ---
     if [ -n "''${EXTRA_PACKAGES:-}" ]; then
       log "extra packages requested: $EXTRA_PACKAGES"
-
-      # Fix nix store/var ownership so non-root users can install packages.
-      if [ "$USER_UID" -ne 0 ]; then
-        log "fixing /nix ownership for UID=$USER_UID"
-        ${chown} -R "$USER_UID:$USER_GID" /nix 2>/dev/null || true
-      fi
-
-      # Initialize nix database if needed (empty volume on first run).
-      if [ ! -f /nix/var/nix/db/db.sqlite ]; then
-        log "initializing nix database"
-        if [ "$USER_NAME" = "root" ]; then
-          ${pkgs.nix}/bin/nix-store --init 2>>"$ENTRYPOINT_LOG" || log "WARNING: nix-store --init failed"
-        else
-          ${suExec} "$USER_NAME" ${pkgs.nix}/bin/nix-store --init 2>>"$ENTRYPOINT_LOG" || log "WARNING: nix-store --init failed"
-        fi
-      fi
 
       IFS=',' read -ra PKGS <<< "$EXTRA_PACKAGES"
       NIX_ARGS=()
