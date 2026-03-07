@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
+	"github.com/joegoldin/claude-container/internal/httpproxy"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
 	"github.com/joegoldin/claude-container/internal/proxy"
 	"github.com/joegoldin/claude-container/internal/tui"
@@ -52,17 +54,25 @@ var rootCmd = &cobra.Command{
 					}
 				} else if sess != nil {
 					// Container gone — recreate with resume or continue.
+					proxyProfile := sess.ProxyProfile
+					if proxyProfile == "" {
+						proxyProfile = "default"
+					}
 					runOpts := docker.RunOpts{
-						Name:           attachName,
-						Workspace:      sess.WorktreePath,
-						ConfigDir:      store.ClaudeConfigDir(),
-						HostClaudeDir:  config.HostClaudeDir(),
-						HostClaudeJSON: config.HostClaudeJSON(),
-						UID:            docker.ContainerUID(),
-						GID:            docker.ContainerGID(),
-						Yolo:           sess.Yolo,
-						Resume:         sess.ResumeID,
-						Continue:       sess.ResumeID == "",
+						Name:            attachName,
+						Workspace:       sess.WorktreePath,
+						ConfigDir:       store.ClaudeConfigDir(),
+						HostClaudeDir:   config.HostClaudeDir(),
+						HostClaudeJSON:  config.HostClaudeJSON(),
+						UID:             docker.ContainerUID(),
+						GID:             docker.ContainerGID(),
+						Yolo:            sess.Yolo,
+						Resume:          sess.ResumeID,
+						Continue:        sess.ResumeID == "",
+						ExtraWorkspaces: sess.ExtraWorkspaces,
+						ProxyProfile:    proxyProfile,
+						ProxyCACertDir:  httpproxy.CACertDir(config.DefaultDir()),
+						Packages:        sess.Packages,
 					}
 					startCmd := exec.Command("docker", docker.RunArgs(runOpts, true)...)
 					startCmd.Stderr = os.Stderr
@@ -76,15 +86,17 @@ var rootCmd = &cobra.Command{
 				branch := ""
 				yolo := false
 				autoRemove := false
+				proxyPort := 0
 				if sess != nil {
 					branch = sess.Branch
 					yolo = sess.Yolo
 					autoRemove = sess.AutoRemove
+					proxyPort = sess.ProxyPort
 				}
 				_ = proxy.Run(proxy.Opts{
 					DockerArgs:    []string{"attach", containerName},
 					ContainerName: containerName,
-					StatusBar:     proxy.StatusBarInfo{Name: attachName, Branch: branch, Yolo: yolo},
+					StatusBar:     proxy.StatusBarInfo{Name: attachName, Branch: branch, Yolo: yolo, ProxyPort: proxyPort},
 					AutoRemove:    autoRemove,
 					Cleanup:       func(_ string) { removeSession(store, attachName) },
 				})
@@ -129,6 +141,36 @@ var rootCmd = &cobra.Command{
 					os.Chdir(origDir)
 					continue
 				}
+
+				// Parse wizard result fields into slices.
+				var wizPackages []string
+				if res.Packages != "" {
+					for _, p := range strings.Split(res.Packages, ",") {
+						p = strings.TrimSpace(p)
+						if p != "" {
+							wizPackages = append(wizPackages, p)
+						}
+					}
+				}
+				var wizAllowPerms []string
+				if res.AllowPerms != "" {
+					for _, p := range strings.Split(res.AllowPerms, ",") {
+						p = strings.TrimSpace(p)
+						if p != "" {
+							wizAllowPerms = append(wizAllowPerms, p)
+						}
+					}
+				}
+				var wizDenyPerms []string
+				if res.DenyPerms != "" {
+					for _, p := range strings.Split(res.DenyPerms, ",") {
+						p = strings.TrimSpace(p)
+						if p != "" {
+							wizDenyPerms = append(wizDenyPerms, p)
+						}
+					}
+				}
+
 				// From dashboard, always create in background mode so we
 				// return to the dashboard loop. Then auto-attach unless
 				// the user pressed ctrl+b in the wizard.
@@ -142,6 +184,9 @@ var rootCmd = &cobra.Command{
 					background: true, // dashboard manages attach
 					profile:    res.Profile,
 					workspace:  res.Workspace,
+					packages:   wizPackages,
+					allowPerms: wizAllowPerms,
+					denyPerms:  wizDenyPerms,
 				}); err != nil {
 					fmt.Fprintln(os.Stderr, "error:", err)
 					os.Chdir(origDir)
