@@ -242,9 +242,9 @@ let
       if [ ''${#NIX_ARGS[@]} -gt 0 ]; then
         log "installing: ''${NIX_ARGS[*]}"
         if [ "$USER_NAME" = "root" ]; then
-          ${pkgs.nix}/bin/nix profile install --accept-flake-config "''${NIX_ARGS[@]}" 2>>"$ENTRYPOINT_LOG" && log "install succeeded" || log "WARNING: some packages failed to install (see $ENTRYPOINT_LOG)"
+          ${pkgs.nix}/bin/nix profile install --accept-flake-config "''${NIX_ARGS[@]}" 2>&1 | ${pkgs.coreutils}/bin/tee -a "$ENTRYPOINT_LOG" >&2 && log "install succeeded" || log "WARNING: some packages failed to install (see $ENTRYPOINT_LOG)"
         else
-          ${suExec} "$USER_NAME" ${pkgs.nix}/bin/nix profile install --accept-flake-config "''${NIX_ARGS[@]}" 2>>"$ENTRYPOINT_LOG" && log "install succeeded" || log "WARNING: some packages failed to install (see $ENTRYPOINT_LOG)"
+          ${suExec} "$USER_NAME" ${pkgs.nix}/bin/nix profile install --accept-flake-config "''${NIX_ARGS[@]}" 2>&1 | ${pkgs.coreutils}/bin/tee -a "$ENTRYPOINT_LOG" >&2 && log "install succeeded" || log "WARNING: some packages failed to install (see $ENTRYPOINT_LOG)"
         fi
         # Add nix profile bin to PATH for the exec'd process
         if [ "$USER_NAME" = "root" ]; then
