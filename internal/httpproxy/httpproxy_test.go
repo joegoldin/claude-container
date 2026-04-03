@@ -1,10 +1,14 @@
 package httpproxy
 
 import (
+	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProxyContainerName(t *testing.T) {
@@ -224,5 +228,72 @@ func TestGetDashboardPortNoContainer(t *testing.T) {
 	port := GetDashboardPort("nonexistent-profile")
 	if port != 0 {
 		t.Errorf("expected 0 for nonexistent container, got %d", port)
+	}
+}
+
+func TestWaitForProxyReady_Success(t *testing.T) {
+	// Start a simple HTTP server to simulate the proxy dashboard.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	err = WaitForProxyReady(port, 5*time.Second)
+	if err != nil {
+		t.Errorf("expected success, got: %v", err)
+	}
+}
+
+func TestWaitForProxyReady_Timeout(t *testing.T) {
+	// Use a port with nothing listening — should time out.
+	port, err := FindAvailablePort()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = WaitForProxyReady(port, 1*time.Second)
+	if err == nil {
+		t.Error("expected timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected timeout message, got: %v", err)
+	}
+}
+
+func TestWaitForProxyReady_DelayedStart(t *testing.T) {
+	// Start server after a delay to simulate proxy startup time.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	// Close immediately so nothing is listening at first.
+	ln.Close()
+
+	// Start listening after 500ms.
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		ln2, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			return
+		}
+		defer ln2.Close()
+		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+		})}
+		srv.Serve(ln2)
+	}()
+
+	err = WaitForProxyReady(port, 5*time.Second)
+	if err != nil {
+		t.Errorf("expected success after delayed start, got: %v", err)
 	}
 }

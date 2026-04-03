@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -233,7 +234,32 @@ func EnsureRunning(opts ProxyOpts) (started bool, port int, err error) {
 		return false, 0, fmt.Errorf("httpproxy: failed to start proxy: %s: %w", stderr.String(), err)
 	}
 
+	// Wait for the proxy to be ready before returning, so that containers
+	// started immediately after can reach the network through the proxy.
+	if err := WaitForProxyReady(dashboardPort, 30*time.Second); err != nil {
+		return false, 0, err
+	}
+
 	return true, dashboardPort, nil
+}
+
+// WaitForProxyReady polls the proxy dashboard on the given port until it
+// responds to an HTTP request, or until the timeout expires.
+func WaitForProxyReady(port int, timeout time.Duration) error {
+	client := &http.Client{Timeout: 2 * time.Second}
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/pending", port)
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(url)
+		if err == nil {
+			resp.Body.Close()
+			return nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	return fmt.Errorf("httpproxy: timed out waiting for proxy to be ready on port %d", port)
 }
 
 // Stop stops the proxy container for the given profile and removes the network.
