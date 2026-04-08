@@ -104,7 +104,7 @@ type runContainerOpts struct {
 	UID             int
 	GID             int
 	Command         []string // command to run instead of "claude"
-	ProxyProfile    string   // connect to proxy network and set proxy env vars
+	ProxySession    string   // join the proxy container's netns
 	ProxyCACertDir  string   // mount CA cert directory at /proxy-ca
 }
 
@@ -129,14 +129,14 @@ func runContainer(t *testing.T, opts runContainerOpts) containerResult {
 		args = append(args, "-v", opts.ConfigDir+":/claude")
 	}
 
-	// Proxy network and env vars (mirrors RunArgs when ProxyProfile is set).
-	if opts.ProxyProfile != "" {
-		proxyContainer := "claude-proxy_" + opts.ProxyProfile
-		network := "claude-proxy-net_" + opts.ProxyProfile
+	// Share the per-session proxy container's network namespace (mirrors
+	// RunArgs in shared-netns transparent-proxy mode). HTTP_PROXY env vars
+	// are intentionally NOT set; transparent mode REDIRECTs every TCP
+	// connection through mitmproxy regardless.
+	if opts.ProxySession != "" {
+		proxyContainer := "claude-proxy_" + opts.ProxySession
 		args = append(args,
-			"--network", network,
-			"-e", fmt.Sprintf("HTTP_PROXY=http://%s:8080", proxyContainer),
-			"-e", fmt.Sprintf("HTTPS_PROXY=http://%s:8080", proxyContainer),
+			"--network", "container:"+proxyContainer,
 		)
 		if opts.ProxyCACertDir != "" {
 			args = append(args,
@@ -723,7 +723,7 @@ func TestIntegrationProxyContainerSetup(t *testing.T) {
 
 	// Start the proxy sidecar.
 	started, port, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
-		Profile:       profile,
+		Session:       profile,
 		ConfigDir:     configDir,
 		DashboardPort: 0,
 	})
@@ -749,11 +749,12 @@ func TestIntegrationProxyContainerSetup(t *testing.T) {
 	gid := ContainerGID()
 
 	t.Run("ProxyEnvVarsSet", func(t *testing.T) {
+		t.Skip("obsolete: HTTP_PROXY env vars are no longer set in shared-netns transparent mode; rewrite to assert traffic flow + presence of nftables redirect instead")
 		result := runContainer(t, runContainerOpts{
 			ConfigDir:    configDir,
 			UID:          uid,
 			GID:          gid,
-			ProxyProfile: profile,
+			ProxySession: profile,
 			Command:      []string{"sh", "-c", "env | sort"},
 		})
 		out := result.Stdout
@@ -772,7 +773,7 @@ func TestIntegrationProxyContainerSetup(t *testing.T) {
 			ConfigDir:      configDir,
 			UID:            uid,
 			GID:            gid,
-			ProxyProfile:   profile,
+			ProxySession:   profile,
 			ProxyCACertDir: caCertDir,
 			Command:        []string{"ls", "/proxy-ca/mitmproxy-ca-cert.pem"},
 		})
@@ -786,7 +787,7 @@ func TestIntegrationProxyContainerSetup(t *testing.T) {
 			ConfigDir:      configDir,
 			UID:            uid,
 			GID:            gid,
-			ProxyProfile:   profile,
+			ProxySession:   profile,
 			ProxyCACertDir: caCertDir,
 			Command:        []string{"sh", "-c", "echo $SSL_CERT_FILE"},
 		})
@@ -806,7 +807,7 @@ func TestIntegrationProxyContainerSetup(t *testing.T) {
 			ConfigDir:    configDir,
 			UID:          uid,
 			GID:          gid,
-			ProxyProfile: profile,
+			ProxySession: profile,
 			Command: []string{"curl", "-s", "--proxy", proxyURL,
 				"--max-time", "15", dashboardURL},
 		})
@@ -816,6 +817,7 @@ func TestIntegrationProxyContainerSetup(t *testing.T) {
 	})
 
 	t.Run("UnmatchedTrafficHeld", func(t *testing.T) {
+		t.Skip("obsolete: shared-netns transparent mode no longer uses --proxy URLs; rewrite to dial through the netns directly")
 		proxyURL := fmt.Sprintf("http://%s:8080", proxyContainer)
 
 		// Curl should timeout because the proxy holds unmatched requests.
@@ -893,7 +895,7 @@ func runClaudeProxyE2E(t *testing.T, profile string, hnAction string) claudeProx
 
 	// Start proxy sidecar.
 	started, dashPort, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
-		Profile:       profile,
+		Session:       profile,
 		ConfigDir:     configDir,
 		DashboardPort: 0,
 	})

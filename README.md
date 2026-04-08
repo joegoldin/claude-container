@@ -25,7 +25,7 @@ claude-container work -b -p "migrate the config from YAML to TOML" &
 claude-container task -p "explain the authentication flow" > auth-docs.md
 
 # Interactive session with network proxy for approval-based internet access
-claude-container run --proxy-profile=work --profile=med
+claude-container run --preset=work --profile=med
 ```
 
 ## SYNOPSIS
@@ -132,7 +132,7 @@ Flags:
       --profile string              Sandbox profile: low, default, med, high (default "default")
   -p, --prompt string               Initial prompt to send to Claude
       --proxy-port int              Dashboard port on host (0 = auto-assign)
-      --proxy-profile string        Proxy rule profile name (default "default")
+      --preset string               Seed proxy rules from a saved preset name
       --rm                          Auto-remove session when it exits
   -W, --workspace string            Named workspace from workspaces.json
       --yolo                        Skip permission prompts
@@ -161,7 +161,7 @@ Flags:
       --profile string              Sandbox profile: low, default, med, high (default "default")
   -p, --prompt string               Initial prompt to send to Claude
       --proxy-port int              Dashboard port on host (0 = auto-assign)
-      --proxy-profile string        Proxy rule profile name (default "default")
+      --preset string               Seed proxy rules from a saved preset name
       --rm                          Auto-remove session when it exits
   -W, --workspace string            Named workspace from workspaces.json
       --yolo                        Skip permission prompts
@@ -191,7 +191,7 @@ Flags:
       --profile string              Sandbox profile: low, default, med, high (default "default")
   -p, --prompt string               Task prompt (required)
       --proxy-port int              Dashboard port on host (0 = auto-assign)
-      --proxy-profile string        Proxy rule profile name (default "default")
+      --preset string               Seed proxy rules from a saved preset name
   -W, --workspace string            Named workspace from workspaces.json
 ```
 
@@ -224,7 +224,7 @@ Flags:
       --profile string              Sandbox profile: low, default, med, high (default "default")
   -p, --prompt string               Initial prompt to send to Claude
       --proxy-port int              Dashboard port on host (0 = auto-assign)
-      --proxy-profile string        Proxy rule profile name (default "default")
+      --preset string               Seed proxy rules from a saved preset name
       --rm                          Auto-remove session when it exits
   -W, --workspace string            Named workspace from workspaces.json
       --worktree string             Create worktree on new branch
@@ -483,19 +483,31 @@ claude-container run --profile=high --allow-domain=github.com
 
 ## NETWORK PROXY
 
-Every session runs behind an HTTP/HTTPS proxy sidecar (mitmproxy). The proxy
-intercepts all outbound traffic and enforces domain-based allow/deny rules.
-Requests to unknown domains are held until you approve or deny them via a web
-dashboard.
+Every session runs behind its own per-session HTTP/HTTPS proxy sidecar
+(mitmproxy in transparent mode). The proxy intercepts ALL outbound TCP
+traffic — not just HTTP — and enforces allow/deny rules. Unknown
+requests are held until you approve or deny them via a web dashboard.
 
 ### How it works
 
-1. A proxy container starts on a dedicated Docker network
-2. The Claude container joins that network with `HTTP_PROXY`/`HTTPS_PROXY` set
-3. The proxy's mitmproxy CA certificate is mounted for HTTPS interception
-4. Outbound requests are matched against rules; unknown requests are held
-5. The web dashboard shows held requests with browser notifications
-6. Approved/denied patterns are saved as rules for future requests
+1. A per-session proxy container starts on a dedicated Docker network
+2. The Claude container joins that container's network namespace via
+   `--network container:claude-proxy_<session>` — it has no NIC of its own
+3. The proxy entrypoint installs an nftables ruleset in the shared netns:
+   default-deny on output; REDIRECT every TCP connection (from any uid
+   other than mitmproxy) to mitmproxy's transparent listener; drop QUIC
+4. mitmproxy reads `SO_ORIGINAL_DST` to recover the real destination,
+   MITMs HTTPS using its CA cert, and falls back to raw TCP for non-HTTP
+   protocols (SSH, raw TCP, etc.)
+5. HTTP rules match URLs; raw TCP rules match a synthetic `tcp://host:port`
+6. Unknown flows are held; the dashboard shows them with browser
+   notifications and you approve or deny them
+
+`HTTP_PROXY` / `HTTPS_PROXY` env vars are NOT set inside the container.
+Transparent mode makes them redundant and removes the only client opt-in
+that previously allowed bypass. There is no escape hatch: every TCP
+packet a process in the Claude container emits hits the nftables rule
+first.
 
 ### Default allowed domains by profile
 
@@ -522,29 +534,47 @@ Use `--allow-domain` to pre-allow additional domains:
 claude-container run --profile=high --allow-domain=github.com --allow-domain=npmjs.org
 ```
 
-### Proxy profiles
+### Per-session proxies and presets
 
-The proxy profile (`--proxy-profile`) determines which rule set and proxy
-container to use. This is separate from the sandbox profile.
+Each session owns its own proxy sidecar, network namespace, and rules
+file. They are not shared. When the session is removed (`claude-container
+rm`), the proxy and its state are torn down with it.
+
+The optional `--preset <name>` flag seeds a new session's proxy with
+rules from a saved preset file. Sandbox-profile-derived rules are then
+layered on top, so a preset and the profile defaults coexist.
 
 ```sh
-# Different proxy profiles for different contexts
-claude-container run --proxy-profile=work
-claude-container run --proxy-profile=personal --proxy-port=9090
+# Start with a saved preset of allow/deny rules
+claude-container new --preset work
+
+# No preset — sandbox profile defaults only
+claude-container run --profile=high
 ```
 
-    --proxy-profile string      Rule profile name (default "default")
+    --preset string             Seed proxy rules from a saved preset name
     --proxy-port int            Dashboard port on host (0 = auto-assign)
 
-Proxy containers are named by profile, not by session. Multiple sessions
-with the same `--proxy-profile` share a single proxy process and rule set.
-Rules added in one session are immediately visible to all sessions sharing
-that profile. The proxy is stopped only when the last session using it is
-removed.
+Preset files live at:
 
-Rules persist across sessions in:
+    ~/.config/claude-container/proxy-presets/<name>.json
 
-    ~/.config/claude-container/proxy-profiles/profiles/<profile>.json
+You can save the live rules of any running session as a preset by
+clicking **Export** in the dashboard's Rules tab — the file downloads
+through the browser, and you drop it into `proxy-presets/` to make it
+available as a `--preset` argument. **Import** in the same tab uploads a
+JSON file and replaces the current session's rules with its contents
+(replace-only; no merge in v1, no undo).
+
+The mitmproxy CA cert is shared across all per-session proxies so
+Claude containers don't need to re-trust a new cert per session:
+
+    ~/.config/claude-container/proxy-shared/ca/mitmproxy-ca-cert.pem
+
+Per-session live state lives at:
+
+    ~/.config/claude-container/proxy-state/<session>/rules.json
+    ~/.config/claude-container/proxy-state/<session>/dashboard-token
 
 ## ENVIRONMENT
 
@@ -653,8 +683,11 @@ The nix package wraps the binary with `git` and `docker` on PATH and sets
     ~/.config/claude-container/claude-config/        shared Claude Code config
     ~/.config/claude-container/claude-config/.credentials.json   auth credentials
     ~/.config/claude-container/loaded-image          image load marker
-    ~/.config/claude-container/proxy-profiles/         proxy rule profiles
-    ~/.config/claude-container/proxy-profiles/ca/      mitmproxy CA certificates
+    ~/.config/claude-container/proxy-presets/<name>.json
+                                                     saved rule presets (load with --preset)
+    ~/.config/claude-container/proxy-state/<session>/
+                                                     per-session live rules + dashboard token
+    ~/.config/claude-container/proxy-shared/ca/      mitmproxy CA cert (shared across sessions)
 
 ## EXAMPLES
 
@@ -755,10 +788,10 @@ claude-container gc --all
 # Log out (remove credentials)
 claude-container gc --auth
 
-# Run with proxy-based network control
-claude-container run --proxy-profile=work
+# Run with proxy seeded from a saved preset
+claude-container run --preset=work
 
-# Share proxy rules across sessions
-claude-container run --proxy-profile=work
-claude-container run --proxy-profile=work -p "another task"
+# Each session gets its own proxy; save a preset by clicking Export in the
+# dashboard, then load it into a future session with --preset.
+claude-container run --preset=work -p "another task"
 ```

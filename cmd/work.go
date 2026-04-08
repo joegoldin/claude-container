@@ -20,8 +20,8 @@ var (
 	workProfile      string
 	workAllowDomains []string
 	workDenyPaths    []string
-	workProxyProfile   string
-	workProxyPort      int
+	workProxyPreset string
+	workProxyPort   int
 	workAllowCommands  []string
 	workDenyCommands   []string
 )
@@ -55,8 +55,8 @@ var workCmd = &cobra.Command{
 			denyPaths:     workDenyPaths,
 			allowCommands: workAllowCommands,
 			denyCommands:  workDenyCommands,
-			proxyProfile:  workProxyProfile,
-			proxyPort:     workProxyPort,
+			proxySeedPreset: workProxyPreset,
+			proxyPort:       workProxyPort,
 		})
 	},
 }
@@ -75,8 +75,8 @@ func init() {
 	workCmd.Flags().StringArrayVar(&workDenyPaths, "deny-path", nil, "Add path to permissions deny list")
 	workCmd.Flags().StringArrayVar(&workAllowCommands, "allow-command", nil, "Add command pattern to allow list (e.g., 'docker *')")
 	workCmd.Flags().StringArrayVar(&workDenyCommands, "deny-command", nil, "Add command pattern to deny list (e.g., 'rm -rf *')")
-	workCmd.Flags().StringVar(&workProxyProfile, "proxy-profile", "default",
-		"Proxy rule profile name")
+	workCmd.Flags().StringVar(&workProxyPreset, "preset", "",
+		"Seed the proxy with rules from a saved preset name")
 	workCmd.Flags().IntVar(&workProxyPort, "proxy-port", 0,
 		"Dashboard port on host (0 = auto-assign)")
 	rootCmd.AddCommand(workCmd)

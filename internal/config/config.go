@@ -43,7 +43,7 @@ type Session struct {
 	DenyPerms       []string  `json:"deny_perms,omitempty"`  // raw deny rules (e.g. "Read(/etc/**)")
 	Packages        []string  `json:"packages,omitempty"`
 	NetworkSandbox  string    `json:"network_sandbox,omitempty"` // deprecated: always "proxy"
-	ProxyProfile    string    `json:"proxy_profile,omitempty"`
+	ProxySeedPreset string    `json:"proxy_seed_preset,omitempty"`
 	ProxyPort       int       `json:"proxy_port,omitempty"`
 }
 

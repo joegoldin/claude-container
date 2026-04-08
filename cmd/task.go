@@ -101,11 +101,10 @@ func runTask() error {
 		return err
 	}
 
-	// Proxy setup.
-	proxyProfile := taskProxyProfile
-	if proxyProfile == "" {
-		proxyProfile = "default"
-	}
+	// Per-session proxy setup. taskProxyProfile, when set, names a saved
+	// preset to seed the rules file from. (Flag name is legacy; semantics
+	// are the same as `claude new --preset`.)
+	seedPreset := taskProxyProfile
 	if !httpproxy.ImageExists() {
 		tarball := os.Getenv("CLAUDE_PROXY_IMAGE_TARBALL")
 		if tarball != "" {
@@ -125,20 +124,19 @@ func runTask() error {
 		return err
 	}
 	proxyRules := prof.ProxyRules(taskAllowDomains)
-	rulesPath := httpproxy.ProfileRulesPath(config.DefaultDir(), proxyProfile)
-	if err := os.MkdirAll(filepath.Dir(rulesPath), 0o755); err != nil {
-		return fmt.Errorf("create proxy rules dir: %w", err)
-	}
 	rulesJSON, err := json.MarshalIndent(proxyRules, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal proxy rules: %w", err)
 	}
-	if err := os.WriteFile(rulesPath, rulesJSON, 0o644); err != nil {
+	if err := httpproxy.EnsureSessionRules(config.DefaultDir(), name, seedPreset); err != nil {
+		return fmt.Errorf("seed proxy rules: %w", err)
+	}
+	if err := httpproxy.AppendSessionRules(config.DefaultDir(), name, rulesJSON); err != nil {
 		return fmt.Errorf("write proxy rules: %w", err)
 	}
 
 	_, resolvedPort, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
-		Profile:       proxyProfile,
+		Session:       name,
 		ConfigDir:     config.DefaultDir(),
 		DashboardPort: taskProxyPort,
 	})
@@ -192,7 +190,7 @@ func runTask() error {
 		GID:             docker.ContainerGID(),
 		Prompt:          taskPrompt,
 		ExtraWorkspaces: extraWorkspaces,
-		ProxyProfile:       proxyProfile,
+		ProxyEnabled:       true,
 		ProxyCACertDir:     httpproxy.CACertDir(config.DefaultDir()),
 		ProxyDashboardPort: resolvedPort,
 	}
@@ -212,7 +210,7 @@ func runTask() error {
 		DenyPaths:       taskDenyPaths,
 		AllowCommands:   taskAllowCommands,
 		DenyCommands:    taskDenyCommands,
-		ProxyProfile:    proxyProfile,
+		ProxySeedPreset: seedPreset,
 		ProxyPort:       resolvedPort,
 	}
 	if err := store.Save(sess); err != nil {

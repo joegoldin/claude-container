@@ -553,7 +553,7 @@ func TestE2E_RunBackground(t *testing.T) {
 
 	// CREATE session in background.
 	stdout, stderr, code := runCLI(t, "run", "--yolo", "-b", "--name", name,
-		"--proxy-profile", proxyProf, "-p", "echo hi")
+		"--preset", proxyProf, "-p", "echo hi")
 	if code != 0 {
 		t.Fatalf("run -b: exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
@@ -674,7 +674,7 @@ func TestE2E_WorkSession(t *testing.T) {
 	t.Cleanup(func() { os.Chdir(origDir) })
 
 	stdout, stderr, code := runCLI(t, "work", "--yolo", "-b", "--name", name,
-		"--proxy-profile", proxyProf)
+		"--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("work: exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
@@ -757,7 +757,7 @@ func TestE2E_WorkFromBranch(t *testing.T) {
 	t.Cleanup(func() { os.Chdir(origDir) })
 
 	_, stderr, code := runCLI(t, "work", "--from", mainBranch, "--yolo", "-b", "--name", name,
-		"--proxy-profile", proxyProf)
+		"--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("work --from: exit %d\nstderr: %s", code, stderr)
 	}
@@ -800,7 +800,7 @@ func TestE2E_ProfileHigh(t *testing.T) {
 	cleanupProxy(t, proxyProf)
 
 	_, stderr, code := runCLI(t, "run", "--profile=high", "--allow-domain=github.com",
-		"--proxy-profile", proxyProf, "-b", "--name", name)
+		"--preset", proxyProf, "-b", "--name", name)
 	if code != 0 {
 		t.Fatalf("run --profile=high: exit %d\nstderr: %s", code, stderr)
 	}
@@ -874,7 +874,7 @@ func TestE2E_ProfileLow(t *testing.T) {
 	cleanupProxy(t, proxyProf)
 
 	_, stderr, code := runCLI(t, "run", "--profile=low",
-		"--proxy-profile", proxyProf, "-b", "--name", name)
+		"--preset", proxyProf, "-b", "--name", name)
 	if code != 0 {
 		t.Fatalf("run --profile=low: exit %d\nstderr: %s", code, stderr)
 	}
@@ -929,7 +929,7 @@ func TestE2E_AllowCommands(t *testing.T) {
 	cleanupProxy(t, proxyProf)
 
 	_, stderr, code := runCLI(t, "run", "--allow-command=docker *",
-		"--proxy-profile", proxyProf, "-b", "--name", name, "--yolo")
+		"--preset", proxyProf, "-b", "--name", name, "--yolo")
 	if code != 0 {
 		t.Fatalf("run --allow-command: exit %d\nstderr: %s", code, stderr)
 	}
@@ -981,7 +981,7 @@ func TestE2E_DenyPath(t *testing.T) {
 	cleanupProxy(t, proxyProf)
 
 	_, stderr, code := runCLI(t, "run", "--deny-path=/etc/passwd",
-		"--proxy-profile", proxyProf, "-b", "--name", name, "--yolo")
+		"--preset", proxyProf, "-b", "--name", name, "--yolo")
 	if code != 0 {
 		t.Fatalf("run --deny-path: exit %d\nstderr: %s", code, stderr)
 	}
@@ -1043,7 +1043,7 @@ func TestE2E_NamedWorkspace(t *testing.T) {
 	cleanupProxy(t, proxyProf)
 
 	_, stderr, code := runCLI(t, "run", "-W", "my-work",
-		"--proxy-profile", proxyProf, "-b", "--name", name, "--yolo")
+		"--preset", proxyProf, "-b", "--name", name, "--yolo")
 	if code != 0 {
 		t.Fatalf("run -W: exit %d\nstderr: %s", code, stderr)
 	}
@@ -1083,7 +1083,7 @@ func TestE2E_AdHocMounts(t *testing.T) {
 	cleanupProxy(t, proxyProf)
 
 	_, stderr, code := runCLI(t, "run", "-w", dirA, "-w", dirB,
-		"--proxy-profile", proxyProf, "-b", "--name", name, "--yolo")
+		"--preset", proxyProf, "-b", "--name", name, "--yolo")
 	if code != 0 {
 		t.Fatalf("run -w: exit %d\nstderr: %s", code, stderr)
 	}
@@ -1118,7 +1118,7 @@ func TestE2E_EphemeralSession(t *testing.T) {
 	cleanupProxy(t, proxyProf)
 
 	_, stderr, code := runCLI(t, "run", "--rm", "--yolo",
-		"--proxy-profile", proxyProf, "-b", "--name", name)
+		"--preset", proxyProf, "-b", "--name", name)
 	if code != 0 {
 		t.Fatalf("run --rm: exit %d\nstderr: %s", code, stderr)
 	}
@@ -1150,7 +1150,7 @@ func TestE2E_GarbageCollect(t *testing.T) {
 	cleanupProxy(t, proxyProf)
 
 	_, stderr, code := runCLI(t, "run", "--yolo",
-		"--proxy-profile", proxyProf, "-b", "--name", name)
+		"--preset", proxyProf, "-b", "--name", name)
 	if code != 0 {
 		t.Fatalf("run: exit %d, stderr=%s", code, stderr)
 	}
@@ -1207,7 +1207,7 @@ func TestE2E_ProxyProfile(t *testing.T) {
 	cleanupContainer(t, name)
 	cleanupProxy(t, proxyProf)
 
-	stdout, stderr, code := runCLI(t, "run", "--proxy-profile="+proxyProf,
+	stdout, stderr, code := runCLI(t, "run", "--preset="+proxyProf,
 		"-b", "--name", name, "--yolo")
 	if code != 0 {
 		t.Fatalf("run --proxy-profile: exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
@@ -1277,7 +1277,7 @@ func TestE2E_SharedProxy(t *testing.T) {
 	cleanupProxy(t, proxyProf)
 
 	// First session starts the proxy.
-	stdout1, _, code := runCLI(t, "run", "--proxy-profile="+proxyProf,
+	stdout1, _, code := runCLI(t, "run", "--preset="+proxyProf,
 		"-b", "--name", name1, "--yolo")
 	if code != 0 {
 		t.Fatalf("run 1: exit %d", code)
@@ -1287,7 +1287,7 @@ func TestE2E_SharedProxy(t *testing.T) {
 	}
 
 	// Second session reuses proxy.
-	stdout2, _, code := runCLI(t, "run", "--proxy-profile="+proxyProf,
+	stdout2, _, code := runCLI(t, "run", "--preset="+proxyProf,
 		"-b", "--name", name2, "--yolo")
 	if code != 0 {
 		t.Fatalf("run 2: exit %d", code)
@@ -1325,7 +1325,7 @@ func TestE2E_NewWithFlags(t *testing.T) {
 	t.Cleanup(func() { os.Chdir(origDir) })
 
 	stdout, stderr, code := runCLI(t, "new", "--name", name, "--worktree", "feature-auth",
-		"--yolo", "--proxy-profile", proxyProf, "-b")
+		"--yolo", "--preset", proxyProf, "-b")
 	if code != 0 {
 		t.Fatalf("new: exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
@@ -1422,7 +1422,7 @@ func TestE2E_WorkWithWorkspace(t *testing.T) {
 	cleanupProxy(t, proxyProf)
 
 	stdout, stderr, code := runCLI(t, "work", "-W", "multi-wt", "--yolo", "-b",
-		"--name", name, "--proxy-profile", proxyProf)
+		"--name", name, "--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("work -W: exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
@@ -1521,7 +1521,7 @@ func TestE2E_RunFilePermissions(t *testing.T) {
 	t.Cleanup(func() { os.Chdir(origDir) })
 
 	_, stderr, code := runCLI(t, "run", "--yolo", "-b", "--name", name,
-		"--proxy-profile", proxyProf)
+		"--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("run -b: exit %d\nstderr: %s", code, stderr)
 	}
@@ -1600,7 +1600,7 @@ func TestE2E_WorktreeFilePermissions(t *testing.T) {
 	t.Cleanup(func() { os.Chdir(origDir) })
 
 	_, stderr, code := runCLI(t, "work", "--yolo", "-b", "--name", name,
-		"--proxy-profile", proxyProf)
+		"--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("work -b: exit %d\nstderr: %s", code, stderr)
 	}
@@ -1679,7 +1679,7 @@ func TestE2E_MountFilePermissions(t *testing.T) {
 	cleanupProxy(t, proxyProf)
 
 	_, stderr, code := runCLI(t, "run", "--yolo", "-b", "--name", name,
-		"--proxy-profile", proxyProf, "-w", mountDir)
+		"--preset", proxyProf, "-w", mountDir)
 	if code != 0 {
 		t.Fatalf("run -b -w: exit %d\nstderr: %s", code, stderr)
 	}
@@ -1750,7 +1750,7 @@ func TestLive_TaskPong(t *testing.T) {
 
 	stdout, stderr, code := runCLIInDirWithTimeout(t, repo, 5*time.Minute,
 		"task", "-p", "Respond with exactly the word PONG and nothing else.",
-		"--name", name, "--proxy-profile", proxyProf, "--max-turns", "1")
+		"--name", name, "--preset", proxyProf, "--max-turns", "1")
 
 	if code != 0 {
 		t.Fatalf("task exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
@@ -1793,7 +1793,7 @@ func TestLive_TaskReadsFile(t *testing.T) {
 
 	stdout, stderr, code := runCLIInDirWithTimeout(t, repo, 5*time.Minute,
 		"task", "-p", "Read the file magic.txt in the current directory and respond with its exact contents, nothing else.",
-		"--name", name, "--proxy-profile", proxyProf, "--max-turns", "3")
+		"--name", name, "--preset", proxyProf, "--max-turns", "3")
 
 	if code != 0 {
 		t.Fatalf("task exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
@@ -1815,7 +1815,7 @@ func TestLive_TaskMaxTurns(t *testing.T) {
 
 	stdout, stderr, code := runCLIInDirWithTimeout(t, repo, 5*time.Minute,
 		"task", "-p", "Respond with exactly the word TURNS_OK and nothing else.",
-		"--name", name, "--proxy-profile", proxyProf, "--max-turns", "1")
+		"--name", name, "--preset", proxyProf, "--max-turns", "1")
 
 	if code != 0 {
 		t.Fatalf("task --max-turns=1 exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
@@ -1837,7 +1837,7 @@ func TestLive_TaskKeep(t *testing.T) {
 
 	stdout, stderr, code := runCLIInDirWithTimeout(t, repo, 5*time.Minute,
 		"task", "-p", "Respond with exactly the word KEPT and nothing else.",
-		"--name", name, "--proxy-profile", proxyProf, "--keep", "--max-turns", "1")
+		"--name", name, "--preset", proxyProf, "--keep", "--max-turns", "1")
 
 	if code != 0 {
 		t.Fatalf("task --keep exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
@@ -1880,7 +1880,7 @@ func TestLive_TaskWithMounts(t *testing.T) {
 	// Extra workspaces become /workspace/<basename>/ inside the container.
 	stdout, stderr, code := runCLIInDirWithTimeout(t, repo, 5*time.Minute,
 		"task", "-p", "Read the file /workspace/extra-mount/mounted-sentinel.txt and respond with its exact contents, nothing else.",
-		"--name", name, "--proxy-profile", proxyProf, "-w", mountDir, "--max-turns", "3")
+		"--name", name, "--preset", proxyProf, "-w", mountDir, "--max-turns", "3")
 
 	if code != 0 {
 		t.Fatalf("task -w mount exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
@@ -1908,7 +1908,7 @@ func TestLive_RunContainerLive(t *testing.T) {
 	t.Cleanup(func() { os.Chdir(origDir) })
 
 	_, stderr, code := runCLI(t, "run", "--yolo", "-b", "--name", name,
-		"--proxy-profile", proxyProf)
+		"--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("run -b: exit %d\nstderr: %s", code, stderr)
 	}
@@ -1971,7 +1971,7 @@ func TestLive_WorkContainerLive(t *testing.T) {
 	t.Cleanup(func() { os.Chdir(origDir) })
 
 	_, stderr, code := runCLI(t, "work", "--yolo", "-b", "--name", name,
-		"--proxy-profile", proxyProf)
+		"--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("work -b: exit %d\nstderr: %s", code, stderr)
 	}
@@ -2020,7 +2020,7 @@ func TestLive_NewContainerLive(t *testing.T) {
 	t.Cleanup(func() { os.Chdir(origDir) })
 
 	_, stderr, code := runCLI(t, "new", "--name", name, "--worktree", "live-branch",
-		"--yolo", "--proxy-profile", proxyProf, "-b")
+		"--yolo", "--preset", proxyProf, "-b")
 	if code != 0 {
 		t.Fatalf("new -b: exit %d\nstderr: %s", code, stderr)
 	}
@@ -2097,7 +2097,7 @@ func TestLive_WorkWithWorkspaceLive(t *testing.T) {
 	cleanupProxy(t, proxyProf)
 
 	_, stderr, code := runCLI(t, "work", "-W", "live-multi", "--yolo", "-b",
-		"--name", name, "--proxy-profile", proxyProf)
+		"--name", name, "--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("work -W: exit %d\nstderr: %s", code, stderr)
 	}
@@ -2172,13 +2172,13 @@ func TestE2E_ParallelRunSessions(t *testing.T) {
 
 	// Start two run sessions (no worktree) sharing the same mounted workspace.
 	_, stderr1, code := runCLI(t, "run", "--yolo", "-b", "--name", name1,
-		"--proxy-profile", proxyProf)
+		"--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("run 1: exit %d\nstderr: %s", code, stderr1)
 	}
 
 	_, stderr2, code := runCLI(t, "run", "--yolo", "-b", "--name", name2,
-		"--proxy-profile", proxyProf)
+		"--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("run 2: exit %d\nstderr: %s", code, stderr2)
 	}
@@ -2238,14 +2238,14 @@ func TestE2E_ParallelWorkSessions(t *testing.T) {
 
 	// Start first work session.
 	_, stderr1, code := runCLI(t, "work", "--yolo", "-b", "--name", name1,
-		"--proxy-profile", proxyProf)
+		"--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("work 1: exit %d\nstderr: %s", code, stderr1)
 	}
 
 	// Start second work session — this is the bug case (used to fail).
 	_, stderr2, code := runCLI(t, "work", "--yolo", "-b", "--name", name2,
-		"--proxy-profile", proxyProf)
+		"--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("work 2: exit %d\nstderr: %s", code, stderr2)
 	}
@@ -2386,13 +2386,13 @@ func TestE2E_ParallelWorkWithWorkspace(t *testing.T) {
 
 	// Start two work sessions with multi-repo workspace.
 	_, stderr1, code := runCLI(t, "work", "-W", "par-multi", "--yolo", "-b",
-		"--name", name1, "--proxy-profile", proxyProf)
+		"--name", name1, "--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("work 1: exit %d\nstderr: %s", code, stderr1)
 	}
 
 	_, stderr2, code := runCLI(t, "work", "-W", "par-multi", "--yolo", "-b",
-		"--name", name2, "--proxy-profile", proxyProf)
+		"--name", name2, "--preset", proxyProf)
 	if code != 0 {
 		t.Fatalf("work 2: exit %d\nstderr: %s", code, stderr2)
 	}

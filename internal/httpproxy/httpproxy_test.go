@@ -47,7 +47,7 @@ func TestNetworkName(t *testing.T) {
 
 func TestRunArgs(t *testing.T) {
 	opts := ProxyOpts{
-		Profile:       "default",
+		Session:       "default",
 		ConfigDir:     "/home/user/.config/claude-container",
 		DashboardPort: 8081,
 	}
@@ -71,8 +71,9 @@ func TestRunArgs(t *testing.T) {
 		{"network", "--network claude-proxy-net_default"},
 		{"NET_ADMIN cap", "--cap-add NET_ADMIN"},
 		{"dashboard port", "-p 8081:8081"},
-		{"config volume", "-v /home/user/.config/claude-container/proxy-profiles:/config"},
-		{"profile env", "-e PROXY_PROFILE=default"},
+		{"session state volume", "-v /home/user/.config/claude-container/proxy-state/default:/config"},
+		{"shared CA volume", "-v /home/user/.config/claude-container/proxy-shared/ca:/config/ca"},
+		{"session env", "-e PROXY_SESSION=default"},
 		{"image tag", "claude-proxy:test"},
 	}
 
@@ -189,7 +190,7 @@ func TestDashboardURL(t *testing.T) {
 func TestCACertDir(t *testing.T) {
 	configDir := "/home/user/.config/claude-container"
 	got := CACertDir(configDir)
-	want := filepath.Join(configDir, "proxy-profiles", "ca")
+	want := filepath.Join(configDir, "proxy-shared", "ca")
 	if got != want {
 		t.Errorf("CACertDir(%q) = %q, want %q", configDir, got, want)
 	}

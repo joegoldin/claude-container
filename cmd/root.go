@@ -54,10 +54,13 @@ var rootCmd = &cobra.Command{
 					}
 				} else if sess != nil {
 					// Container gone — recreate with resume or continue.
-					proxyProfile := sess.ProxyProfile
-					if proxyProfile == "" {
-						proxyProfile = "default"
-					}
+					// Make sure the per-session proxy is up first.
+					_ = httpproxy.EnsureSessionRules(config.DefaultDir(), attachName, sess.ProxySeedPreset)
+					_, _, _ = httpproxy.EnsureRunning(httpproxy.ProxyOpts{
+						Session:       attachName,
+						ConfigDir:     config.DefaultDir(),
+						DashboardPort: sess.ProxyPort,
+					})
 					runOpts := docker.RunOpts{
 						Name:            attachName,
 						Workspace:       sess.WorktreePath,
@@ -70,7 +73,7 @@ var rootCmd = &cobra.Command{
 						Resume:          sess.ResumeID,
 						Continue:        sess.ResumeID == "",
 						ExtraWorkspaces: sess.ExtraWorkspaces,
-						ProxyProfile:       proxyProfile,
+						ProxyEnabled:       true,
 						ProxyCACertDir:     httpproxy.CACertDir(config.DefaultDir()),
 						ProxyDashboardPort: sess.ProxyPort,
 						Packages:           sess.Packages,

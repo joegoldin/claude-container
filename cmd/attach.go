@@ -67,13 +67,14 @@ var attachCmd = &cobra.Command{
 // ensureRunning makes sure the container for the given session is running,
 // starting or recreating it as needed.
 func ensureRunning(store *config.Store, name string, sess *config.Session) error {
-	// Always ensure proxy is running.
-	proxyProfile := sess.ProxyProfile
-	if proxyProfile == "" {
-		proxyProfile = "default"
+	// Always ensure the per-session proxy is running. Rules file is only
+	// seeded if it doesn't already exist; user-added rules accumulated in
+	// a previous attach are preserved.
+	if err := httpproxy.EnsureSessionRules(config.DefaultDir(), name, sess.ProxySeedPreset); err != nil {
+		return fmt.Errorf("seed proxy rules: %w", err)
 	}
 	_, resolvedPort, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
-		Profile:       proxyProfile,
+		Session:       name,
 		ConfigDir:     config.DefaultDir(),
 		DashboardPort: sess.ProxyPort,
 	})
@@ -137,7 +138,7 @@ func ensureRunning(store *config.Store, name string, sess *config.Session) error
 			Resume:          sess.ResumeID,
 			Continue:        sess.ResumeID == "",
 			ExtraWorkspaces: sess.ExtraWorkspaces,
-			ProxyProfile:       proxyProfile,
+			ProxyEnabled:       true,
 			ProxyCACertDir:     httpproxy.CACertDir(config.DefaultDir()),
 			ProxyDashboardPort: sess.ProxyPort,
 			Packages:           sess.Packages,

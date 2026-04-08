@@ -364,13 +364,15 @@ func TestRunArgsProxyNetwork(t *testing.T) {
 		ConfigDir:      "/tmp/config",
 		UID:            1000,
 		GID:            1000,
-		ProxyProfile:   "myprofile",
+		ProxyEnabled:   true,
 		ProxyCACertDir: "/tmp/ca",
 	}, false)
 
 	joined := strings.Join(args, " ")
 
-	if !strings.Contains(joined, "--network container:claude-proxy_myprofile") {
+	// The proxy container is named after the SESSION (opts.Name), not a
+	// separate profile string — each session owns its own sidecar.
+	if !strings.Contains(joined, "--network container:claude-proxy_test-session") {
 		t.Errorf("missing shared-netns flag in %v", args)
 	}
 	if strings.Contains(joined, "HTTP_PROXY") {

@@ -92,7 +92,6 @@ type RunOpts struct {
 	Continue        bool
 	Resume          string   // claude --resume <id>
 	ExtraWorkspaces []string // additional folders mounted as /workspace/<basename>
-	ProxyProfile       string // proxy profile name (for network/env args)
 	ProxyCACertDir     string // path to mitmproxy CA cert directory
 	ProxyDashboardPort int    // host-side dashboard port, surfaced to hooks so they can tell the user where to open the browser
 	RepoPath        string   // host repo path, mounted at /mnt/repo for worktree creation
@@ -100,6 +99,10 @@ type RunOpts struct {
 	WorktreeFrom    string   // optional base branch for worktree
 	WorktreeRepos   []string // extra git repos: mounted at /mnt/repos/<basename>, worktrees at /workspace/<basename>
 	Packages        []string // extra nixpkgs to install at container start
+	// ProxyEnabled is true when this container should join the per-session
+	// proxy's network namespace. The proxy container is named after the
+	// session (opts.Name), not after a profile.
+	ProxyEnabled bool
 }
 
 // RunArgs returns the docker run command arguments for a persistent
@@ -156,16 +159,16 @@ func RunArgs(opts RunOpts, detached bool) []string {
 	}
 
 	// When proxy is enabled, add network and proxy env vars.
-	if opts.ProxyProfile != "" {
-		// Share the proxy container's network namespace. The proxy entrypoint
-		// installs nftables rules in this netns that REDIRECT every TCP
-		// connection to mitmproxy's transparent listener and default-deny
+	if opts.ProxyEnabled {
+		// Share the per-session proxy container's network namespace. The proxy
+		// entrypoint installs nftables rules in this netns that REDIRECT every
+		// TCP connection to mitmproxy's transparent listener and default-deny
 		// everything else (UDP, raw sockets, QUIC). The Claude container has
 		// no NIC of its own and no way to bypass the firewall. HTTP_PROXY env
 		// vars are intentionally not set: transparent mode makes them moot.
 		// `--network container:` is mutually exclusive with `--network`/`-p`,
 		// which is fine because Claude containers don't publish ports.
-		proxyContainer := "claude-proxy_" + opts.ProxyProfile
+		proxyContainer := "claude-proxy_" + opts.Name
 		args = append(args,
 			"--network", "container:"+proxyContainer,
 			// Dashboard lives on loopback inside the shared netns. Mutating
@@ -279,16 +282,16 @@ func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
 		args = append(args, "-v", ws+":/workspace/"+base)
 	}
 
-	if opts.ProxyProfile != "" {
-		// Share the proxy container's network namespace. The proxy entrypoint
-		// installs nftables rules in this netns that REDIRECT every TCP
-		// connection to mitmproxy's transparent listener and default-deny
+	if opts.ProxyEnabled {
+		// Share the per-session proxy container's network namespace. The proxy
+		// entrypoint installs nftables rules in this netns that REDIRECT every
+		// TCP connection to mitmproxy's transparent listener and default-deny
 		// everything else (UDP, raw sockets, QUIC). The Claude container has
 		// no NIC of its own and no way to bypass the firewall. HTTP_PROXY env
 		// vars are intentionally not set: transparent mode makes them moot.
 		// `--network container:` is mutually exclusive with `--network`/`-p`,
 		// which is fine because Claude containers don't publish ports.
-		proxyContainer := "claude-proxy_" + opts.ProxyProfile
+		proxyContainer := "claude-proxy_" + opts.Name
 		args = append(args,
 			"--network", "container:"+proxyContainer,
 			// Dashboard lives on loopback inside the shared netns. Mutating

@@ -130,6 +130,78 @@
 
   addRuleBtn.addEventListener("click", submitAddRule);
 
+  // --- Export / Import preset ---
+  // Export downloads the live rules as a JSON file. Import POSTs an
+  // uploaded JSON file to /api/rules/import which REPLACES the rule
+  // store. We confirm before replacing because there's no undo.
+  const exportBtn = document.getElementById("export-rules-btn");
+  const importBtn = document.getElementById("import-rules-btn");
+  const importFile = document.getElementById("import-rules-file");
+
+  if (exportBtn) {
+    exportBtn.addEventListener("click", async () => {
+      try {
+        const resp = await fetch("/api/rules");
+        if (!resp.ok) throw new Error("export failed: " + resp.status);
+        const data = await resp.json();
+        const blob = new Blob([JSON.stringify(data, null, 2)], {
+          type: "application/json",
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        a.href = url;
+        a.download = `claude-proxy-rules-${ts}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert("Export failed: " + err.message);
+      }
+    });
+  }
+
+  if (importBtn && importFile) {
+    importBtn.addEventListener("click", () => importFile.click());
+    importFile.addEventListener("change", async () => {
+      const file = importFile.files && importFile.files[0];
+      if (!file) return;
+      if (
+        !confirm(
+          "Replace ALL current rules with the contents of " +
+            file.name +
+            "? This cannot be undone."
+        )
+      ) {
+        importFile.value = "";
+        return;
+      }
+      try {
+        const text = await file.text();
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch (err) {
+          throw new Error("not valid JSON: " + err.message);
+        }
+        const resp = await fetch("/api/rules/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(parsed),
+        });
+        if (!resp.ok) {
+          const body = await resp.text();
+          throw new Error("server rejected: " + body);
+        }
+      } catch (err) {
+        alert("Import failed: " + err.message);
+      } finally {
+        importFile.value = "";
+      }
+    });
+  }
+
   addRuleInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();

@@ -156,6 +156,43 @@ async def add_rule(request: Request) -> JSONResponse:
     return JSONResponse({"id": rule_id}, status_code=201)
 
 
+async def import_rules(request: Request) -> JSONResponse:
+    """Replace the entire rule store with the uploaded JSON list.
+
+    Body: a JSON array of rule objects in the same shape as
+    `GET /api/rules` returns. The replacement is atomic from the API's
+    point of view: the new rules are validated by the RuleStore loader
+    via Rule.from_dict before any change is committed.
+
+    Auth-token gated. Replace-only in v1; merge mode is not supported.
+    """
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    if _store is None:
+        return JSONResponse({"error": "not configured"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "body must be a JSON array"}, status_code=400)
+    if not isinstance(body, list):
+        return JSONResponse({"error": "body must be a JSON array"}, status_code=400)
+
+    # Build Rule objects up front so a malformed entry rejects the whole
+    # import without leaving the store half-replaced.
+    from claude_proxy.rules import Rule  # local import avoids cycles
+    try:
+        new_rules = [Rule.from_dict(d) for d in body]
+    except Exception as exc:
+        return JSONResponse({"error": f"invalid rule: {exc}"}, status_code=400)
+
+    # Replace under the store's lock by writing to a sibling list and swapping.
+    with _store._lock:  # noqa: SLF001 — dashboard is the privileged surface
+        _store._rules = new_rules  # noqa: SLF001
+    _save_profile()
+    await broadcast({"type": "rules_changed", "data": _store.list_rules()})
+    return JSONResponse({"ok": True, "imported": len(new_rules)})
+
+
 async def delete_rule(request: Request) -> JSONResponse:
     """Remove a rule by id."""
     if not _check_auth(request):
@@ -283,6 +320,7 @@ routes = [
     Route("/api/pending", get_pending),
     Route("/api/rules", get_rules, methods=["GET"]),
     Route("/api/rules", add_rule, methods=["POST"]),
+    Route("/api/rules/import", import_rules, methods=["POST"]),
     Route("/api/rules/{rule_id}", delete_rule, methods=["DELETE"]),
     Route("/api/resolve", resolve_pending, methods=["POST"]),
     WebSocketRoute("/ws", websocket_endpoint),

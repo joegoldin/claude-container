@@ -27,9 +27,9 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Claude HTTP/HTTPS Proxy")
     parser.add_argument(
-        "--profile",
+        "--session",
         default="default",
-        help="Profile name for rule persistence (default: default)",
+        help="Session name (used in log lines and as a state-file label)",
     )
     parser.add_argument(
         "--config-dir",
@@ -82,19 +82,19 @@ def _start_dashboard(port: int) -> None:
 
 async def run_proxy(args: argparse.Namespace) -> None:
     """Set up and run the proxy and dashboard."""
-    # 1. Create profile directory
-    profile_dir = os.path.join(args.config_dir, "profiles")
-    os.makedirs(profile_dir, exist_ok=True)
-    profile_path = os.path.join(profile_dir, f"{args.profile}.json")
+    # 1. Live rules file lives at <config_dir>/rules.json. The Go side
+    # populates it before starting this process via EnsureSessionRules
+    # (preset seed) and AppendSessionRules (sandbox-derived rules).
+    rules_path = os.path.join(args.config_dir, "rules.json")
 
     # 2. Load or create RuleStore
     store = RuleStore()
-    if os.path.exists(profile_path):
+    if os.path.exists(rules_path):
         try:
-            store.load(profile_path)
-            logger.info("Loaded rules from %s", profile_path)
+            store.load(rules_path)
+            logger.info("Loaded rules from %s", rules_path)
         except Exception:
-            logger.exception("Failed to load rules from %s, starting fresh", profile_path)
+            logger.exception("Failed to load rules from %s, starting fresh", rules_path)
 
     # 3. Create ProxyAddon
     addon = ProxyAddon(
@@ -108,7 +108,7 @@ async def run_proxy(args: argparse.Namespace) -> None:
     # Claude container — which never sees /config — cannot approve its own
     # held requests.
     token = secrets.token_urlsafe(32)
-    token_path = os.path.join(args.config_dir, f"dashboard-token-{args.profile}")
+    token_path = os.path.join(args.config_dir, "dashboard-token")
     with open(token_path, "w") as f:
         f.write(token)
     os.chmod(token_path, 0o600)
@@ -116,7 +116,7 @@ async def run_proxy(args: argparse.Namespace) -> None:
     logger.info("Dashboard auth token written to %s", token_path)
 
     # 5. Configure dashboard with dependencies
-    configure(addon, store, profile_path)
+    configure(addon, store, rules_path)
 
     # 5. Start dashboard in background daemon thread
     dashboard_thread = threading.Thread(

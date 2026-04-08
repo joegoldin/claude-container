@@ -39,7 +39,7 @@ func TestIntegrationProxyStartStop(t *testing.T) {
 	cleanupStaleProxy(t, profile)
 
 	opts := ProxyOpts{
-		Profile:       profile,
+		Session:       profile,
 		ConfigDir:     t.TempDir(),
 		DashboardPort: 18081,
 	}
@@ -88,7 +88,7 @@ func TestIntegrationProxyHealthEndpoint(t *testing.T) {
 	cleanupStaleProxy(t, profile)
 
 	opts := ProxyOpts{
-		Profile:       profile,
+		Session:       profile,
 		ConfigDir:     t.TempDir(),
 		DashboardPort: 18082,
 	}
@@ -190,7 +190,7 @@ func TestIntegrationE2EProxyTraffic(t *testing.T) {
 	}
 
 	opts := ProxyOpts{
-		Profile:       profile,
+		Session:       profile,
 		ConfigDir:     configDir,
 		DashboardPort: 0, // auto-assign random port
 	}
@@ -256,7 +256,7 @@ func TestIntegrationE2EResolveWhileHeld(t *testing.T) {
 	}
 
 	opts := ProxyOpts{
-		Profile:       profile,
+		Session:       profile,
 		ConfigDir:     configDir,
 		DashboardPort: 0,
 	}

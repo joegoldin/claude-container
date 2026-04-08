@@ -19,8 +19,8 @@ var (
 	runProfile      string
 	runAllowDomains []string
 	runDenyPaths    []string
-	runProxyProfile   string
-	runProxyPort      int
+	runProxyPreset string
+	runProxyPort   int
 	runAllowCommands  []string
 	runDenyCommands   []string
 )
@@ -53,8 +53,8 @@ var runCmd = &cobra.Command{
 			denyPaths:     runDenyPaths,
 			allowCommands: runAllowCommands,
 			denyCommands:  runDenyCommands,
-			proxyProfile:  runProxyProfile,
-			proxyPort:     runProxyPort,
+			proxySeedPreset: runProxyPreset,
+			proxyPort:       runProxyPort,
 		})
 	},
 }
@@ -72,8 +72,8 @@ func init() {
 	runCmd.Flags().StringArrayVar(&runDenyPaths, "deny-path", nil, "Add path to permissions deny list")
 	runCmd.Flags().StringArrayVar(&runAllowCommands, "allow-command", nil, "Add command pattern to allow list (e.g., 'docker *')")
 	runCmd.Flags().StringArrayVar(&runDenyCommands, "deny-command", nil, "Add command pattern to deny list (e.g., 'rm -rf *')")
-	runCmd.Flags().StringVar(&runProxyProfile, "proxy-profile", "default",
-		"Proxy rule profile name")
+	runCmd.Flags().StringVar(&runProxyPreset, "preset", "",
+		"Seed the proxy with rules from a saved preset name")
 	runCmd.Flags().IntVar(&runProxyPort, "proxy-port", 0,
 		"Dashboard port on host (0 = auto-assign)")
 	rootCmd.AddCommand(runCmd)

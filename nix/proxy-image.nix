@@ -21,7 +21,7 @@ let
 
   entrypoint = pkgs.writeShellScript "proxy-entrypoint.sh" ''
     set -e
-    PROXY_PROFILE=''${PROXY_PROFILE:-default}
+    PROXY_SESSION=''${PROXY_SESSION:-default}
 
     # Make sure /config (host bind mount) is writable by the mitmproxy uid.
     # The proxy needs to write the CA dir, the dashboard token, and the
@@ -109,7 +109,7 @@ let
     # ----- Run mitmproxy as the dedicated uid -----
     exec ${pkgs.su-exec}/bin/su-exec ${proxyUid}:${proxyGid} \
       ${python}/bin/python -m claude_proxy.app \
-        --profile "$PROXY_PROFILE" \
+        --session "$PROXY_SESSION" \
         --config-dir /config \
         --proxy-port 8080 \
         --dashboard-port 8081 \

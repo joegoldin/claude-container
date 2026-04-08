@@ -5,6 +5,7 @@ import (
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
+	"github.com/joegoldin/claude-container/internal/httpproxy"
 	"github.com/spf13/cobra"
 )
 
@@ -17,8 +18,7 @@ var stopCmd = &cobra.Command{
 		name := args[0]
 
 		store := config.NewStore(config.DefaultDir())
-		sess, err := store.Get(name)
-		if err != nil {
+		if _, err := store.Get(name); err != nil {
 			return fmt.Errorf("session %q not found", name)
 		}
 
@@ -28,9 +28,11 @@ var stopCmd = &cobra.Command{
 			}
 		}
 
-		// Clean up proxy if this was the last session using it.
-		if sess.ProxyProfile != "" {
-			proxyCleanupIfUnused(store, sess.ProxyProfile, name)
+		// Each session owns its own proxy sidecar — tear it down too.
+		// Best-effort: failing to remove the network shouldn't block the
+		// stop, but we surface it.
+		if err := httpproxy.Stop(name); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: stop proxy: %v\n", err)
 		}
 
 		fmt.Println("Session stopped. Worktree preserved.")

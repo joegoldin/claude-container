@@ -23,6 +23,13 @@
         </section>
 
         <section id="rules-view" class="view">
+            <div class="rules-toolbar">
+                <button class="btn btn-secondary" id="export-rules-btn"
+                    title="Download current rules as JSON (use as a preset on another session)">Export</button>
+                <button class="btn btn-secondary" id="import-rules-btn"
+                    title="Replace current rules with an uploaded JSON file (preset). Existing rules will be lost.">Import</button>
+                <input type="file" id="import-rules-file" accept="application/json,.json" hidden>
+            </div>
             <div class="add-rule-form">
                 <h3>Add Rule</h3>
                 <div class="form-row">

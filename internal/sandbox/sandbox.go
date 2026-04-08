@@ -375,11 +375,17 @@ func (p Profile) ManagedSettingsForProxy(httpProxyPort int, extraAllowPerms []st
 	// dashboard is also auth-token-gated, but the deny rule short-circuits
 	// the obvious shell paths so failures surface as permission errors
 	// instead of silently authenticating.
+	// Block any attempt to talk to the dashboard from inside the container.
+	// In shared-netns mode the dashboard lives on loopback, so the deny
+	// patterns target localhost rather than the old proxy container hostname.
+	// The dashboard is also auth-token-gated; this just makes shell-level
+	// failures surface as permission errors instead of silent rejects.
 	deny = append(deny,
-		"Bash(*claude-proxy*)",
+		"Bash(*127.0.0.1:8081*)",
+		"Bash(*localhost:8081*)",
 		"Bash(*api/resolve*)",
 		"Bash(*api/rules*)",
-		"WebFetch(domain:claude-proxy_*)",
+		"Bash(*api/import*)",
 	)
 	perms["deny"] = deny
 

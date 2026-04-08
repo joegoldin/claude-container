@@ -52,28 +52,14 @@ func removeSession(store *config.Store, name string) {
 		fmt.Fprintf(os.Stderr, "warning: delete session: %v\n", err)
 	}
 
-	// Clean up proxy if this was the last session using it.
-	if sess != nil && sess.ProxyProfile != "" {
-		proxyCleanupIfUnused(store, sess.ProxyProfile, name)
+	// Tear down the per-session proxy and delete its state directory.
+	// Sessions don't share proxies, so this is unconditional.
+	if err := httpproxy.Stop(name); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: stop proxy: %v\n", err)
 	}
-}
-
-// proxyCleanupIfUnused stops the proxy for the given profile if no other
-// sessions are using it.
-func proxyCleanupIfUnused(store *config.Store, profile string, excludeSession string) {
-	if profile == "" {
-		return
+	if err := httpproxy.RemoveSessionState(config.DefaultDir(), name); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: remove proxy state: %v\n", err)
 	}
-	for _, s := range store.List() {
-		if s.Name == excludeSession {
-			continue
-		}
-		if s.ProxyProfile == profile {
-			return // another session uses this proxy
-		}
-	}
-	// No other sessions — stop proxy
-	httpproxy.Stop(profile)
 }
 
 // saveResumeID parses the container logs for a Claude resume session ID

@@ -35,8 +35,8 @@ var (
 	newProfile       string
 	newAllowDomains  []string
 	newDenyPaths     []string
-	newProxyProfile   string
-	newProxyPort      int
+	newProxyPreset string // --preset
+	newProxyPort   int
 	newAllowCommands  []string
 	newDenyCommands   []string
 	newAllowPerms     []string
@@ -64,8 +64,8 @@ type createOpts struct {
 	denyCommands  []string // --deny-command flag
 	allowPerms    []string // --allow-perm flag (raw permission rules)
 	denyPerms     []string // --deny-perm flag (raw deny rules)
-	proxyProfile  string
-	proxyPort     int
+	proxySeedPreset string // optional preset to seed proxy rules from
+	proxyPort       int
 	packages      []string // --packages flag
 }
 
@@ -157,8 +157,8 @@ var newCmd = &cobra.Command{
 				denyCommands:  newDenyCommands,
 				allowPerms:    resolvedAllowPerms,
 				denyPerms:     resolvedDenyPerms,
-				proxyProfile:  newProxyProfile,
-				proxyPort:     newProxyPort,
+				proxySeedPreset: newProxyPreset,
+				proxyPort:       newProxyPort,
 				packages:      resolvedPackages,
 			})
 		}
@@ -182,8 +182,8 @@ var newCmd = &cobra.Command{
 			denyCommands:  newDenyCommands,
 			allowPerms:    newAllowPerms,
 			denyPerms:     newDenyPerms,
-			proxyProfile:  newProxyProfile,
-			proxyPort:     newProxyPort,
+			proxySeedPreset: newProxyPreset,
+			proxyPort:       newProxyPort,
 			packages:      newPackages,
 		})
 	},
@@ -208,8 +208,12 @@ func init() {
 	newCmd.Flags().StringArrayVar(&newDenyCommands, "deny-command", nil, "Add command pattern to deny list (e.g., 'rm -rf *')")
 	newCmd.Flags().StringArrayVar(&newAllowPerms, "allow-perm", nil, "Add raw permission allow rule (e.g., 'Bash(docker *)', 'Read')")
 	newCmd.Flags().StringArrayVar(&newDenyPerms, "deny-perm", nil, "Add raw permission deny rule (e.g., 'Read(/etc/**)')")
-	newCmd.Flags().StringVar(&newProxyProfile, "proxy-profile", "default",
-		"Proxy rule profile name")
+	// --preset seeds the per-session proxy with rules from a saved JSON
+	// file at <configDir>/proxy-presets/<name>.json. Empty = blank slate
+	// (sandbox-profile rules still apply on top). --proxy-profile is the
+	// legacy flag name kept for backwards compatibility; same semantics.
+	newCmd.Flags().StringVar(&newProxyPreset, "preset", "",
+		"Seed the proxy with rules from a saved preset name")
 	newCmd.Flags().IntVar(&newProxyPort, "proxy-port", 0,
 		"Dashboard port on host (0 = auto-assign)")
 	newCmd.Flags().StringSliceVar(&newPackages, "packages", nil, "Comma-separated nixpkgs to install (e.g., rustup,bun)")
@@ -307,11 +311,11 @@ func createSession(opts createOpts) error {
 		return err
 	}
 
-	// Start proxy sidecar (always).
-	proxyProfile := opts.proxyProfile
-	if proxyProfile == "" {
-		proxyProfile = "default"
-	}
+	// Start the per-session proxy sidecar (always). Each session owns its
+	// own proxy container, network namespace, rules file, and dashboard
+	// token. The optional preset name seeds the rules file with a saved
+	// JSON snapshot before sandbox-derived rules are layered on top.
+	seedPreset := opts.proxySeedPreset
 	if !httpproxy.ImageExists() {
 		tarball := os.Getenv("CLAUDE_PROXY_IMAGE_TARBALL")
 		if tarball != "" {
@@ -346,22 +350,24 @@ func createSession(opts createOpts) error {
 		)
 	}
 	proxyRules := prof.ProxyRules(proxyAllowDomains)
-	rulesPath := httpproxy.ProfileRulesPath(config.DefaultDir(), proxyProfile)
-	if err := os.MkdirAll(filepath.Dir(rulesPath), 0o755); err != nil {
-		return fmt.Errorf("create proxy rules dir: %w", err)
-	}
 	rulesJSON, err := json.MarshalIndent(proxyRules, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal proxy rules: %w", err)
 	}
-	if err := os.WriteFile(rulesPath, rulesJSON, 0o644); err != nil {
+
+	// Seed from preset (or create empty rules file). Then layer the
+	// sandbox-profile-derived rules on top so both apply.
+	if err := httpproxy.EnsureSessionRules(config.DefaultDir(), name, seedPreset); err != nil {
+		return fmt.Errorf("seed proxy rules: %w", err)
+	}
+	if err := httpproxy.AppendSessionRules(config.DefaultDir(), name, rulesJSON); err != nil {
 		return fmt.Errorf("write proxy rules: %w", err)
 	}
 
 	var resolvedPort int
 	var started bool
 	started, resolvedPort, err = httpproxy.EnsureRunning(httpproxy.ProxyOpts{
-		Profile:       proxyProfile,
+		Session:       name,
 		ConfigDir:     config.DefaultDir(),
 		DashboardPort: opts.proxyPort,
 		ForceRestart:  true, // always restart so proxy picks up fresh rules
@@ -369,16 +375,14 @@ func createSession(opts createOpts) error {
 	if err != nil {
 		return fmt.Errorf("start proxy: %w", err)
 	}
-	if err := httpproxy.WaitForDashboardToken(config.DefaultDir(), proxyProfile, 30*time.Second); err != nil {
+	if err := httpproxy.WaitForDashboardToken(config.DefaultDir(), name, 30*time.Second); err != nil {
 		return err
 	}
-	dashURL := httpproxy.DashboardURLWithToken(config.DefaultDir(), proxyProfile, resolvedPort)
+	dashURL := httpproxy.DashboardURLWithToken(config.DefaultDir(), name, resolvedPort)
 	if started {
-		fmt.Printf("Proxy started for profile %q — dashboard at %s\n",
-			proxyProfile, dashURL)
+		fmt.Printf("Proxy started for session %q — dashboard at %s\n", name, dashURL)
 	} else {
-		fmt.Printf("Reusing proxy for profile %q — dashboard at %s\n",
-			proxyProfile, dashURL)
+		fmt.Printf("Reusing proxy for session %q — dashboard at %s\n", name, dashURL)
 	}
 	if err := httpproxy.WaitForCACert(config.DefaultDir()); err != nil {
 		return err
@@ -467,7 +471,7 @@ func createSession(opts createOpts) error {
 		Prompt:          opts.prompt,
 		Continue:        opts.cont,
 		ExtraWorkspaces: extraWorkspaces,
-		ProxyProfile:       proxyProfile,
+		ProxyEnabled:       true,
 		ProxyCACertDir:     httpproxy.CACertDir(config.DefaultDir()),
 		ProxyDashboardPort: resolvedPort,
 		Packages:           opts.packages,
@@ -514,7 +518,7 @@ func createSession(opts createOpts) error {
 		AllowPerms:      opts.allowPerms,
 		DenyPerms:       opts.denyPerms,
 		Packages:        opts.packages,
-		ProxyProfile:    proxyProfile,
+		ProxySeedPreset: seedPreset,
 		ProxyPort:       resolvedPort,
 	}
 	if err := store.Save(sess); err != nil {

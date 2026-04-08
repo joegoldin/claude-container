@@ -422,6 +422,28 @@ select:focus {
     background: #3a8fc0;
 }
 
+.rules-toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    justify-content: flex-end;
+}
+
+.btn-secondary {
+    padding: 6px 14px;
+    border: 1px solid var(--text-muted);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.btn-secondary:hover {
+    background: var(--bg-input);
+    color: var(--text-primary);
+}
+
 /* Rules table */
 #rules-table-wrap {
     overflow-x: auto;

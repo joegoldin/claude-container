@@ -1,11 +1,19 @@
-// Package httpproxy manages the HTTP/HTTPS proxy sidecar container lifecycle.
-// Proxy containers are named by profile (not session), allowing multiple
-// Claude sessions to share one proxy via the same --proxy-profile.
+// Package httpproxy manages the per-session HTTP/HTTPS proxy sidecar
+// container lifecycle. Each Claude session gets its own proxy sidecar that
+// owns the network namespace the Claude container joins via
+// `--network container:`. The proxy installs a default-deny nftables ruleset
+// in that netns and REDIRECTs all TCP through mitmproxy in transparent mode.
+//
+// "Preset" is a separate concept: a saved JSON file of allow/deny rules that
+// can be loaded as the initial state of a session's proxy. Presets live
+// under <configDir>/proxy-presets/ and are seed-only — once a session
+// starts, its rules diverge from the preset.
 package httpproxy
 
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -15,26 +23,161 @@ import (
 	"time"
 )
 
-// ProxyOpts holds options for starting a proxy sidecar.
+// ProxyOpts holds options for starting a per-session proxy sidecar.
 type ProxyOpts struct {
-	Profile       string
+	Session       string // session name; identifies the per-session proxy
 	ConfigDir     string // base config dir (~/.config/claude-container)
-	DashboardPort int    // host port for dashboard (default 8081)
+	DashboardPort int    // host port for dashboard (default: pick free)
 	ForceRestart  bool   // stop and restart even if already running (picks up new rules)
 }
 
-// ContainerName returns the Docker container name for the given proxy profile.
-func ContainerName(profile string) string {
-	return "claude-proxy_" + profile
+// ContainerName returns the Docker container name for the given session.
+func ContainerName(session string) string {
+	return "claude-proxy_" + session
 }
 
-// NetworkName returns the Docker network name for the given proxy profile.
-func NetworkName(profile string) string {
-	return "claude-proxy-net_" + profile
+// NetworkName returns the Docker network name for the given session.
+func NetworkName(session string) string {
+	return "claude-proxy-net_" + session
+}
+
+// SessionStateDir returns the per-session proxy state directory on the host.
+// Holds the live rules file, dashboard token, and (via a sub-mount) the
+// shared CA dir at runtime.
+func SessionStateDir(configDir, session string) string {
+	return filepath.Join(configDir, "proxy-state", session)
+}
+
+// SharedCADir returns the host directory where the mitmproxy CA cert lives.
+// One CA is shared across every session's proxy so containers don't need
+// to re-trust a new cert per session.
+func SharedCADir(configDir string) string {
+	return filepath.Join(configDir, "proxy-shared", "ca")
+}
+
+// CACertDir is kept for backwards compatibility; it returns the shared CA
+// directory used by all per-session proxies.
+func CACertDir(configDir string) string {
+	return SharedCADir(configDir)
+}
+
+// PresetDir returns the host directory where saved rule presets live.
+func PresetDir(configDir string) string {
+	return filepath.Join(configDir, "proxy-presets")
+}
+
+// PresetPath returns the full path to a named preset JSON file.
+func PresetPath(configDir, preset string) string {
+	return filepath.Join(PresetDir(configDir), preset+".json")
+}
+
+// SessionRulesPath returns the path to a session's live rules file.
+func SessionRulesPath(configDir, session string) string {
+	return filepath.Join(SessionStateDir(configDir, session), "rules.json")
+}
+
+// EnsureSessionRules makes sure the session's live rules file exists. If it
+// is missing and a seed preset name is provided, the preset is copied in
+// from <configDir>/proxy-presets/<name>.json. If no preset matches, an
+// empty rules file is created.
+func EnsureSessionRules(configDir, session, seedPreset string) error {
+	stateDir := SessionStateDir(configDir, session)
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return fmt.Errorf("httpproxy: create session state dir: %w", err)
+	}
+
+	rulesPath := SessionRulesPath(configDir, session)
+	if _, err := os.Stat(rulesPath); err == nil {
+		return nil // already populated
+	}
+
+	if seedPreset != "" {
+		if data, err := os.ReadFile(PresetPath(configDir, seedPreset)); err == nil {
+			return os.WriteFile(rulesPath, data, 0o644)
+		}
+	}
+
+	// No preset (or no match) — start with an empty rule list.
+	return os.WriteFile(rulesPath, []byte("[]\n"), 0o644)
+}
+
+// AppendSessionRules appends the given rules (already-encoded JSON value
+// list) to the session's rules file. The file is created if missing.
+// Both the existing file and the new value must contain a JSON array of
+// rule objects. Used by `claude new` to layer sandbox-profile-derived
+// rules on top of an optional preset seed.
+func AppendSessionRules(configDir, session string, newRulesJSON []byte) error {
+	rulesPath := SessionRulesPath(configDir, session)
+	if err := os.MkdirAll(filepath.Dir(rulesPath), 0o755); err != nil {
+		return err
+	}
+	existing, err := os.ReadFile(rulesPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	existingTrim := strings.TrimSpace(string(existing))
+	newTrim := strings.TrimSpace(string(newRulesJSON))
+
+	// Strip the wrapping `[` `]` of each side and concatenate.
+	stripBrackets := func(s string) string {
+		s = strings.TrimSpace(s)
+		s = strings.TrimPrefix(s, "[")
+		s = strings.TrimSuffix(s, "]")
+		return strings.TrimSpace(s)
+	}
+	left := stripBrackets(existingTrim)
+	right := stripBrackets(newTrim)
+
+	var merged string
+	switch {
+	case left == "" && right == "":
+		merged = "[]"
+	case left == "":
+		merged = "[" + right + "]"
+	case right == "":
+		merged = "[" + left + "]"
+	default:
+		merged = "[" + left + ",\n" + right + "]"
+	}
+	return os.WriteFile(rulesPath, []byte(merged+"\n"), 0o644)
+}
+
+// SavePreset writes the given session's current rules JSON to a named
+// preset file under proxy-presets/. The preset file overwrites any existing
+// file with the same name.
+func SavePreset(configDir, session, preset string) error {
+	src := SessionRulesPath(configDir, session)
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("httpproxy: read session rules: %w", err)
+	}
+	if err := os.MkdirAll(PresetDir(configDir), 0o755); err != nil {
+		return fmt.Errorf("httpproxy: create preset dir: %w", err)
+	}
+	return os.WriteFile(PresetPath(configDir, preset), data, 0o644)
+}
+
+// ImportPresetFile copies a JSON file from an arbitrary path on the host
+// into the preset directory under the given name.
+func ImportPresetFile(configDir, srcPath, preset string) error {
+	in, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(PresetDir(configDir), 0o755); err != nil {
+		return err
+	}
+	out, err := os.Create(PresetPath(configDir, preset))
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
 
 // ImageTag returns the proxy Docker image tag.
-// Reads from CLAUDE_PROXY_IMAGE_TAG env var, defaulting to "claude-proxy:latest".
 func ImageTag() string {
 	if tag := os.Getenv("CLAUDE_PROXY_IMAGE_TAG"); tag != "" {
 		return tag
@@ -50,10 +193,10 @@ func ImageExists() bool {
 	return cmd.Run() == nil
 }
 
-// IsRunning returns true if the proxy container for the given profile is
+// IsRunning returns true if the proxy container for the given session is
 // currently running.
-func IsRunning(profile string) bool {
-	name := ContainerName(profile)
+func IsRunning(session string) bool {
+	name := ContainerName(session)
 	cmd := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", name)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -64,10 +207,10 @@ func IsRunning(profile string) bool {
 	return strings.TrimSpace(buf.String()) == "true"
 }
 
-// Exists returns true if a proxy container for the given profile exists
+// Exists returns true if a proxy container for the given session exists
 // (running or stopped).
-func Exists(profile string) bool {
-	name := ContainerName(profile)
+func Exists(session string) bool {
+	name := ContainerName(session)
 	cmd := exec.Command("docker", "inspect", name)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -76,10 +219,15 @@ func Exists(profile string) bool {
 
 // RunArgs returns the docker run command arguments for a proxy sidecar
 // container. The container is created with --rm and -d (detached, auto-remove).
+//
+// Two host directories are bind-mounted:
+//   - the per-session state dir at /config (rules + dashboard token)
+//   - the shared CA dir at /config/ca (mitmproxy CA cert, persistent across sessions)
 func RunArgs(opts ProxyOpts) []string {
-	name := ContainerName(opts.Profile)
-	network := NetworkName(opts.Profile)
-	configMount := filepath.Join(opts.ConfigDir, "proxy-profiles")
+	name := ContainerName(opts.Session)
+	network := NetworkName(opts.Session)
+	stateMount := SessionStateDir(opts.ConfigDir, opts.Session)
+	caMount := SharedCADir(opts.ConfigDir)
 
 	args := []string{
 		"run",
@@ -88,12 +236,13 @@ func RunArgs(opts ProxyOpts) []string {
 		"--name", name,
 		"--network", network,
 		// NET_ADMIN lets the entrypoint install nftables rules in the
-		// container's netns. Claude containers join this same netns via
-		// `--network container:`, so the firewall here covers them too.
+		// netns. The Claude container joins this same netns via
+		// `--network container:`, so the firewall covers it too.
 		"--cap-add", "NET_ADMIN",
 		"-p", fmt.Sprintf("%d:8081", opts.DashboardPort),
-		"-v", configMount + ":/config",
-		"-e", "PROXY_PROFILE=" + opts.Profile,
+		"-v", stateMount + ":/config",
+		"-v", caMount + ":/config/ca",
+		"-e", "PROXY_SESSION=" + opts.Session,
 		ImageTag(),
 	}
 
@@ -107,15 +256,11 @@ func RunArgs(opts ProxyOpts) []string {
 // way for the Claude container to bypass it.
 //
 // HTTP_PROXY env vars are deliberately NOT set: transparent mode makes them
-// redundant, and some clients ignore them anyway. The whole point of the
-// shared-netns design is that proxy enforcement no longer depends on the
-// client opting in.
-//
-// Note: `--network container:` is mutually exclusive with `--network`,
+// redundant. `--network container:` is mutually exclusive with `--network`,
 // `-p`, `--add-host`, etc. on the joining container — Docker enforces this.
 // The Claude container doesn't publish ports so this is fine.
-func ClaudeNetworkArgs(profile string, caCertDir string) []string {
-	name := ContainerName(profile)
+func ClaudeNetworkArgs(session string, caCertDir string) []string {
+	name := ContainerName(session)
 
 	args := []string{
 		"--network", "container:" + name,
@@ -133,20 +278,18 @@ func ClaudeNetworkArgs(profile string, caCertDir string) []string {
 	return args
 }
 
-// EnsureNetwork creates the Docker network for the given profile if it does
+// EnsureNetwork creates the Docker network for the given session if it does
 // not already exist.
-func EnsureNetwork(profile string) error {
-	network := NetworkName(profile)
+func EnsureNetwork(session string) error {
+	network := NetworkName(session)
 
-	// Check if network already exists.
 	cmd := exec.Command("docker", "network", "inspect", network)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if cmd.Run() == nil {
-		return nil // already exists
+		return nil
 	}
 
-	// Create the network.
 	cmd = exec.Command("docker", "network", "create", network)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -156,13 +299,11 @@ func EnsureNetwork(profile string) error {
 	return nil
 }
 
-// RemoveNetwork removes the Docker network for the given profile.
-// It first disconnects any containers still attached to the network.
-func RemoveNetwork(profile string) error {
-	network := NetworkName(profile)
+// RemoveNetwork removes the Docker network for the given session, after
+// disconnecting any containers still attached to it.
+func RemoveNetwork(session string) error {
+	network := NetworkName(session)
 
-	// Disconnect any containers still connected to the network so
-	// docker network rm succeeds (it refuses when endpoints exist).
 	inspect := exec.Command("docker", "network", "inspect", network,
 		"--format", "{{range .Containers}}{{.Name}} {{end}}")
 	if out, err := inspect.Output(); err == nil {
@@ -182,42 +323,32 @@ func RemoveNetwork(profile string) error {
 	return nil
 }
 
-// EnsureRunning starts the proxy sidecar if it is not already running.
-// Returns true if a new container was started, the resolved dashboard port,
-// and any error.
+// EnsureRunning starts the per-session proxy sidecar if it is not already
+// running. Returns true if a new container was started, the resolved
+// dashboard port, and any error.
+//
+// The caller is expected to have already invoked EnsureSessionRules so the
+// rules file exists in the per-session state dir before the proxy starts.
 func EnsureRunning(opts ProxyOpts) (started bool, port int, err error) {
-	if opts.ForceRestart && IsRunning(opts.Profile) {
-		// Stop existing proxy so it restarts with fresh rules.
-		name := ContainerName(opts.Profile)
-		stop := exec.Command("docker", "stop", name)
-		stop.Stdout = nil
-		stop.Stderr = nil
-		stop.Run()
-		rm := exec.Command("docker", "rm", "-f", name)
-		rm.Stdout = nil
-		rm.Stderr = nil
-		rm.Run()
+	if opts.ForceRestart && IsRunning(opts.Session) {
+		name := ContainerName(opts.Session)
+		exec.Command("docker", "stop", name).Run()
+		exec.Command("docker", "rm", "-f", name).Run()
 	}
 
-	if IsRunning(opts.Profile) {
-		// Proxy already running — discover its port.
-		existingPort := GetDashboardPort(opts.Profile)
+	if IsRunning(opts.Session) {
+		existingPort := GetDashboardPort(opts.Session)
 		if existingPort == 0 {
 			return false, 0, fmt.Errorf("httpproxy: proxy running but can't determine port")
 		}
 		return false, existingPort, nil
 	}
 
-	// If a stopped container exists, remove it first.
-	if Exists(opts.Profile) {
-		name := ContainerName(opts.Profile)
-		rm := exec.Command("docker", "rm", "-f", name)
-		rm.Stdout = nil
-		rm.Stderr = nil
-		rm.Run()
+	if Exists(opts.Session) {
+		name := ContainerName(opts.Session)
+		exec.Command("docker", "rm", "-f", name).Run()
 	}
 
-	// Resolve dashboard port: pick a random one if 0.
 	dashboardPort := opts.DashboardPort
 	if dashboardPort == 0 {
 		dashboardPort, err = FindAvailablePort()
@@ -226,12 +357,26 @@ func EnsureRunning(opts ProxyOpts) (started bool, port int, err error) {
 		}
 	}
 
-	if err := EnsureNetwork(opts.Profile); err != nil {
+	// Make sure the host-side directories the proxy will mount exist
+	// and are populated. The session state dir is created by
+	// EnsureSessionRules; create the shared CA dir here so the bind
+	// mount target exists even on first run.
+	if err := os.MkdirAll(SharedCADir(opts.ConfigDir), 0o755); err != nil {
+		return false, 0, fmt.Errorf("httpproxy: create shared CA dir: %w", err)
+	}
+	if _, statErr := os.Stat(SessionRulesPath(opts.ConfigDir, opts.Session)); os.IsNotExist(statErr) {
+		// Defensive: caller should have done this, but seed empty if not.
+		if err := EnsureSessionRules(opts.ConfigDir, opts.Session, ""); err != nil {
+			return false, 0, err
+		}
+	}
+
+	if err := EnsureNetwork(opts.Session); err != nil {
 		return false, 0, err
 	}
 
 	resolvedOpts := ProxyOpts{
-		Profile:       opts.Profile,
+		Session:       opts.Session,
 		ConfigDir:     opts.ConfigDir,
 		DashboardPort: dashboardPort,
 	}
@@ -244,8 +389,6 @@ func EnsureRunning(opts ProxyOpts) (started bool, port int, err error) {
 		return false, 0, fmt.Errorf("httpproxy: failed to start proxy: %s: %w", stderr.String(), err)
 	}
 
-	// Wait for the proxy to be ready before returning, so that containers
-	// started immediately after can reach the network through the proxy.
 	if err := WaitForProxyReady(dashboardPort, 30*time.Second); err != nil {
 		return false, 0, err
 	}
@@ -272,37 +415,32 @@ func WaitForProxyReady(port int, timeout time.Duration) error {
 	return fmt.Errorf("httpproxy: timed out waiting for proxy to be ready on port %d", port)
 }
 
-// Stop stops the proxy container for the given profile and removes the network.
-func Stop(profile string) error {
-	name := ContainerName(profile)
-
-	// Stop the container (which also removes it due to --rm).
-	cmd := exec.Command("docker", "stop", name)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	cmd.Run() // best-effort; container may already be stopped
-
-	// Force remove in case --rm didn't trigger.
-	rm := exec.Command("docker", "rm", "-f", name)
-	rm.Stdout = nil
-	rm.Stderr = nil
-	rm.Run() // best-effort
-
-	// Remove the network.
-	return RemoveNetwork(profile)
+// Stop stops the per-session proxy container and removes its network.
+// Best-effort: errors stopping a non-existent container are swallowed,
+// but the network removal error is returned.
+func Stop(session string) error {
+	name := ContainerName(session)
+	exec.Command("docker", "stop", name).Run()
+	exec.Command("docker", "rm", "-f", name).Run()
+	return RemoveNetwork(session)
 }
 
-// DashboardURL returns the proxy dashboard URL for the given port.
+// RemoveSessionState deletes the per-session proxy state directory
+// (rules file, dashboard token). Called when a session is removed.
+func RemoveSessionState(configDir, session string) error {
+	return os.RemoveAll(SessionStateDir(configDir, session))
+}
+
+// DashboardURL returns the host-side proxy dashboard URL for the given port.
 func DashboardURL(port int) string {
 	return fmt.Sprintf("http://localhost:%d", port)
 }
 
-// DashboardURLWithToken returns the dashboard URL with the auth token query
-// parameter appended, when one is available for the profile. The browser
-// reads the token from the URL and uses it to authenticate to the dashboard.
-func DashboardURLWithToken(configDir, profile string, port int) string {
+// DashboardURLWithToken returns the dashboard URL with the per-session auth
+// token query parameter appended, when one is available.
+func DashboardURLWithToken(configDir, session string, port int) string {
 	base := DashboardURL(port)
-	token, err := ReadDashboardToken(configDir, profile)
+	token, err := ReadDashboardToken(configDir, session)
 	if err != nil || token == "" {
 		return base
 	}
@@ -310,9 +448,9 @@ func DashboardURLWithToken(configDir, profile string, port int) string {
 }
 
 // ReadDashboardToken returns the dashboard auth token written by the proxy
-// for the given profile, or "" if it does not exist yet.
-func ReadDashboardToken(configDir, profile string) (string, error) {
-	path := filepath.Join(configDir, "proxy-profiles", "dashboard-token-"+profile)
+// for the given session, or "" if it does not exist yet.
+func ReadDashboardToken(configDir, session string) (string, error) {
+	path := filepath.Join(SessionStateDir(configDir, session), "dashboard-token")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -321,9 +459,9 @@ func ReadDashboardToken(configDir, profile string) (string, error) {
 }
 
 // WaitForDashboardToken polls until the proxy has written the dashboard token
-// file for the given profile, or until the timeout expires.
-func WaitForDashboardToken(configDir, profile string, timeout time.Duration) error {
-	path := filepath.Join(configDir, "proxy-profiles", "dashboard-token-"+profile)
+// file for the given session, or until the timeout expires.
+func WaitForDashboardToken(configDir, session string, timeout time.Duration) error {
+	path := filepath.Join(SessionStateDir(configDir, session), "dashboard-token")
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(path); err == nil {
@@ -346,10 +484,9 @@ func FindAvailablePort() (int, error) {
 }
 
 // GetDashboardPort returns the host port mapped to container port 8081 for
-// the proxy with the given profile. Returns 0 if the container is not
-// running or the port can't be determined.
-func GetDashboardPort(profile string) int {
-	name := ContainerName(profile)
+// the proxy with the given session. Returns 0 if not running.
+func GetDashboardPort(session string) int {
+	name := ContainerName(session)
 	cmd := exec.Command("docker", "port", name, "8081")
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -357,9 +494,7 @@ func GetDashboardPort(profile string) int {
 	if err := cmd.Run(); err != nil {
 		return 0
 	}
-	// Output is like "0.0.0.0:18081\n" — extract port after last colon.
 	output := strings.TrimSpace(buf.String())
-	// May have multiple lines (IPv4 and IPv6). Take the first.
 	if idx := strings.Index(output, "\n"); idx >= 0 {
 		output = output[:idx]
 	}
@@ -386,22 +521,10 @@ func PendingCount(port int) int {
 	return strings.Count(buf.String(), "flow_id")
 }
 
-// ProfileRulesPath returns the path to the proxy rules JSON file for the
-// given profile name within the config directory.
-func ProfileRulesPath(configDir, profile string) string {
-	return filepath.Join(configDir, "proxy-profiles", "profiles", profile+".json")
-}
-
-// CACertDir returns the path to the CA certificate directory within the
-// proxy profile configuration.
-func CACertDir(configDir string) string {
-	return filepath.Join(configDir, "proxy-profiles", "ca")
-}
-
 // WaitForCACert waits for the mitmproxy CA certificate to exist in the
-// CA cert directory. It polls every 500ms for up to 30 seconds.
+// shared CA cert directory. It polls every 500ms for up to 30 seconds.
 func WaitForCACert(configDir string) error {
-	certPath := filepath.Join(CACertDir(configDir), "mitmproxy-ca-cert.pem")
+	certPath := filepath.Join(SharedCADir(configDir), "mitmproxy-ca-cert.pem")
 	deadline := time.Now().Add(30 * time.Second)
 
 	for time.Now().Before(deadline) {
