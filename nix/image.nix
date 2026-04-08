@@ -28,6 +28,54 @@ let
 
   managedSettingsFile = pkgs.writeText "managed-settings.json" (builtins.toJSON managedSettings);
 
+  # Hook script invoked by Claude Code on PostToolUseFailure for Bash and
+  # WebFetch tool calls. It checks the proxy's pending list and, if any
+  # requests are held, returns additionalContext telling the user to open
+  # the dashboard in a browser. The hook never blocks the failure and
+  # never tries to approve flows itself — only the host browser, which
+  # holds the auth token, can resolve pending flows.
+  proxyPendingHook = pkgs.writeShellScript "proxy-pending-hook.sh" ''
+    set -e
+    # Pull stdin so Claude Code does not block on the pipe; we ignore the
+    # contents because we only care about the proxy's pending list.
+    cat >/dev/null
+
+    : "''${CLAUDE_PROXY_DASHBOARD_URL:=}"
+    : "''${CLAUDE_PROXY_DASHBOARD_HOST_URL:=}"
+    if [ -z "$CLAUDE_PROXY_DASHBOARD_URL" ]; then
+      exit 0
+    fi
+
+    pending=$(${pkgs.curl}/bin/curl -fsS --max-time 3 \
+      "$CLAUDE_PROXY_DASHBOARD_URL/api/pending" 2>/dev/null || true)
+    if [ -z "$pending" ] || [ "$pending" = "[]" ]; then
+      exit 0
+    fi
+
+    summary=$(${jqBin} -r '
+      if length == 0 then empty
+      else map("- " + .url) | join("\n")
+      end
+    ' <<<"$pending" 2>/dev/null || true)
+    if [ -z "$summary" ]; then
+      exit 0
+    fi
+
+    open_url="$CLAUDE_PROXY_DASHBOARD_HOST_URL"
+    if [ -z "$open_url" ]; then
+      open_url="(see host terminal for the dashboard URL)"
+    fi
+
+    msg=$'The proxy is holding the following request(s) waiting for the user to approve them:\n\n'"$summary"$'\n\nThe user must open '"$open_url"$' in a browser, choose Allow or Deny along with a pattern (Exact URL / URL any params / Host / Domain / Custom regex) and a duration (15min / 1hr / 1day / 1week / 1month / forever), then ask me to retry. I cannot approve these requests myself — only the host browser holds the auth token.'
+
+    ${jqBin} -n --arg ctx "$msg" '{
+      hookSpecificOutput: {
+        hookEventName: "PostToolUseFailure",
+        additionalContext: $ctx
+      }
+    }'
+  '';
+
   settingsFile =
     if settings != { } then pkgs.writeText "settings.json" (builtins.toJSON settings) else null;
 
@@ -323,10 +371,20 @@ pkgs.dockerTools.buildLayeredImage {
 
     # Nix configuration for in-container package management
     mkdir -p etc/nix
+
+    # Pin the `nixpkgs` flake reference to the baked-in nixpkgs source so
+    # `nix profile install nixpkgs#<pkg>` works without contacting the
+    # registry server (which we usually can't reach from the proxy network).
+    cat > etc/nix/registry.json << 'REGEOF'
+    {"version":2,"flakes":[{"from":{"type":"indirect","id":"nixpkgs"},"to":{"type":"path","path":"${pkgs.path}"}}]}
+    REGEOF
+
     cat > etc/nix/nix.conf << 'NIXCONF'
     experimental-features = nix-command flakes
     sandbox = false
     accept-flake-config = true
+    build-users-group =
+    flake-registry = /etc/nix/registry.json
     substituters = https://cache.nixos.org https://devenv.cachix.org
     trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=
     NIXCONF
@@ -343,6 +401,11 @@ pkgs.dockerTools.buildLayeredImage {
 
     # Baked-in managed settings
     cp ${managedSettingsFile} etc/claude-code/managed-settings.json
+
+    # Hook scripts referenced by managed-settings.json
+    mkdir -p etc/claude-code/hooks
+    cp ${proxyPendingHook} etc/claude-code/hooks/proxy-pending-hook.sh
+    chmod 0755 etc/claude-code/hooks/proxy-pending-hook.sh
 
     ${lib.optionalString (settingsFile != null) ''
       cp ${settingsFile} etc/claude-code/settings.json

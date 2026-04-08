@@ -3,6 +3,30 @@
 (function () {
   "use strict";
 
+  // --- Auth token (from URL ?token=... or #token=...) ---
+  // The proxy generates a token at startup and writes it to a host-only
+  // file. The host CLI prints the dashboard URL with ?token=... so the
+  // browser can authenticate. The Claude container never sees this token,
+  // so it cannot mutate proxy state.
+  function getAuthToken() {
+    const qs = new URLSearchParams(location.search);
+    if (qs.has("token")) return qs.get("token");
+    if (location.hash.startsWith("#token=")) {
+      return decodeURIComponent(location.hash.slice("#token=".length));
+    }
+    return null;
+  }
+  const AUTH_TOKEN = getAuthToken();
+
+  // Wrap fetch to auto-include the auth header on every request.
+  const _origFetch = window.fetch.bind(window);
+  window.fetch = function (url, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({}, opts.headers || {});
+    if (AUTH_TOKEN) opts.headers["X-Auth-Token"] = AUTH_TOKEN;
+    return _origFetch(url, opts);
+  };
+
   // --- State ---
   let ws = null;
   let pending = [];
@@ -185,6 +209,32 @@
     ];
   }
 
+  // Pattern presets for raw TCP flows (e.g. SSH, custom protocols).
+  // Synthetic URL form is `tcp://host:port`. The rule store matches the
+  // same regex engine as HTTP rules, so the patterns just need to anchor
+  // against that URL form.
+  function getTcpPatternPresets(host, port) {
+    const hostPort = host + ":" + port;
+    return [
+      {
+        id: "exact",
+        label: "Exact: " + hostPort,
+        value: "^tcp://" + escapeRegex(hostPort) + "$",
+      },
+      {
+        id: "host_any_port",
+        label: "Host (any port): " + host,
+        value: "^tcp://" + escapeRegex(host) + ":\\d+$",
+      },
+      {
+        id: "port_any_host",
+        label: "Port " + port + " (any host)",
+        value: "^tcp://[^:]+:" + port + "$",
+      },
+      { id: "custom", label: "Custom regex", value: "" },
+    ];
+  }
+
   // --- Render pending requests ---
   function renderPending() {
     if (pending.length === 0) {
@@ -201,15 +251,21 @@
         0,
         Math.ceil(HOLD_TIMEOUT - (now - item.time))
       );
-      const presets = getPatternPresets(item.url, item.host);
+      const isTcp = item.kind === "tcp";
+      const presets = isTcp
+        ? getTcpPatternPresets(item.host, item.port)
+        : getPatternPresets(item.url, item.host);
+      const headerHost = isTcp
+        ? item.host + ":" + item.port + " (raw TCP)"
+        : item.host;
 
       const card = document.createElement("div");
-      card.className = "pending-card";
+      card.className = "pending-card" + (isTcp ? " pending-card-tcp" : "");
       card.setAttribute("data-flow-id", item.flow_id);
 
       card.innerHTML = `
         <div class="card-header">
-          <span class="host">${htmlEscape(item.host)}</span>
+          <span class="host">${htmlEscape(headerHost)}</span>
           <span class="countdown ${remaining < 30 ? "urgent" : ""}" data-time="${item.time}">${remaining}s</span>
         </div>
         <div class="url">${htmlEscape(item.url)}</div>
@@ -426,7 +482,10 @@
   // --- WebSocket ---
   function connectWebSocket() {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    ws = new WebSocket(protocol + "//" + location.host + "/ws");
+    const wsTokenSuffix = AUTH_TOKEN
+      ? "?token=" + encodeURIComponent(AUTH_TOKEN)
+      : "";
+    ws = new WebSocket(protocol + "//" + location.host + "/ws" + wsTokenSuffix);
 
     ws.addEventListener("open", () => {
       wsStatus.textContent = "Connected";

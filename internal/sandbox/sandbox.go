@@ -291,6 +291,11 @@ func containerInstructions(extraPackages []string) string {
 	b.WriteString("- `nix profile list` to see installed packages\n")
 	b.WriteString("- `nix profile remove <index>` to remove\n")
 	b.WriteString("Do not use apt-get, yum, brew, or other package managers — they are not available.\n")
+	b.WriteString("\n### Network Proxy and Held Requests\n")
+	b.WriteString("All outbound network traffic goes through an HTTP/HTTPS proxy that enforces a domain allowlist.\n")
+	b.WriteString("If a request to a domain is not in the allowlist, the proxy holds it until the user approves it via the dashboard in their browser.\n")
+	b.WriteString("When a Bash or WebFetch tool call fails, a hook checks for held requests. If any are pending, the failure context will include a message starting with \"The proxy is holding the following request(s)\".\n")
+	b.WriteString("When you see that message: STOP, surface the message to the user verbatim including the dashboard URL, and wait for them to approve in the browser before retrying. Do NOT attempt to approve, resolve, or curl the proxy yourself — you do not have the required auth token and any such attempt will fail and will be treated as a security issue.\n")
 	b.WriteString("\n### Devenv Support\n")
 	b.WriteString("devenv is pre-installed for declarative dev environments. If the workspace has a devenv.nix:\n")
 	b.WriteString("- `devenv shell` to enter the dev environment\n")
@@ -305,6 +310,10 @@ func (p Profile) ManagedSettingsForProxy(httpProxyPort int, extraAllowPerms []st
 		"env": map[string]any{
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
 			"DISABLE_AUTOUPDATER":                      "1",
+			// Bash tool timeout (default is 60s) — give the proxy time to
+			// hold pending requests until the user approves them.
+			"BASH_DEFAULT_TIMEOUT_MS": "120000",
+			"BASH_MAX_TIMEOUT_MS":     "600000",
 		},
 		"cleanupPeriodDays":     14,
 		"alwaysThinkingEnabled": true,
@@ -320,6 +329,24 @@ func (p Profile) ManagedSettingsForProxy(httpProxyPort int, extraAllowPerms []st
 			"network": map[string]any{
 				"allowedDomains": []string{"*"},
 				"httpProxyPort":  httpProxyPort,
+			},
+		},
+		// Hooks block: when a Bash or WebFetch tool call fails, check the
+		// proxy for pending (held) requests and surface them to the user
+		// via additionalContext. The hook never blocks and never approves;
+		// it only tells the user to open the dashboard in a browser.
+		"hooks": map[string]any{
+			"PostToolUseFailure": []map[string]any{
+				{
+					"matcher": "Bash|WebFetch",
+					"hooks": []map[string]any{
+						{
+							"type":    "command",
+							"command": "/etc/claude-code/hooks/proxy-pending-hook.sh",
+							"timeout": 10,
+						},
+					},
+				},
 			},
 		},
 	}
@@ -340,12 +367,21 @@ func (p Profile) ManagedSettingsForProxy(httpProxyPort int, extraAllowPerms []st
 		perms["allow"] = allow
 	}
 
-	deny := make([]string, 0, len(p.DenyPerms)+len(extraDenyPerms))
+	deny := make([]string, 0, len(p.DenyPerms)+len(extraDenyPerms)+4)
 	deny = append(deny, p.DenyPerms...)
 	deny = append(deny, extraDenyPerms...)
-	if len(deny) > 0 {
-		perms["deny"] = deny
-	}
+	// Always block any attempt to talk directly to the proxy dashboard or
+	// its resolve API. Claude must never approve its own held flows. The
+	// dashboard is also auth-token-gated, but the deny rule short-circuits
+	// the obvious shell paths so failures surface as permission errors
+	// instead of silently authenticating.
+	deny = append(deny,
+		"Bash(*claude-proxy*)",
+		"Bash(*api/resolve*)",
+		"Bash(*api/rules*)",
+		"WebFetch(domain:claude-proxy_*)",
+	)
+	perms["deny"] = deny
 
 	if len(perms) > 0 {
 		settings["permissions"] = perms

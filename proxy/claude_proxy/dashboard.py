@@ -28,6 +28,34 @@ _store: Optional[RuleStore] = None
 _profile_path: Optional[str] = None
 _ws_clients: set[WebSocket] = set()
 _dashboard_loop: Optional[asyncio.AbstractEventLoop] = None
+_auth_token: Optional[str] = None
+
+
+def set_auth_token(token: str) -> None:
+    """Register the auth token required for mutating endpoints."""
+    global _auth_token
+    _auth_token = token
+
+
+def _check_auth(request: Request) -> bool:
+    """Return True if the request carries the correct auth token.
+
+    Accepts the token via the X-Auth-Token header or the `token` query
+    parameter (for browser links). When no token is configured (e.g. tests),
+    auth is skipped.
+    """
+    if _auth_token is None:
+        return True
+    presented = request.headers.get("x-auth-token") or request.query_params.get("token")
+    return presented == _auth_token
+
+
+def _check_ws_auth(websocket: WebSocket) -> bool:
+    """Same as _check_auth but for WebSocket connections."""
+    if _auth_token is None:
+        return True
+    presented = websocket.headers.get("x-auth-token") or websocket.query_params.get("token")
+    return presented == _auth_token
 
 
 def set_dashboard_loop(loop: Optional[asyncio.AbstractEventLoop]) -> None:
@@ -108,6 +136,8 @@ async def get_rules(request: Request) -> JSONResponse:
 
 async def add_rule(request: Request) -> JSONResponse:
     """Add a new rule. Body: {type, pattern, label?, expires_at?, source?}."""
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
     if _store is None:
         return JSONResponse({"error": "not configured"}, status_code=503)
     body = await request.json()
@@ -128,6 +158,8 @@ async def add_rule(request: Request) -> JSONResponse:
 
 async def delete_rule(request: Request) -> JSONResponse:
     """Remove a rule by id."""
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
     if _store is None:
         return JSONResponse({"error": "not configured"}, status_code=503)
     rule_id = request.path_params["rule_id"]
@@ -141,6 +173,8 @@ async def delete_rule(request: Request) -> JSONResponse:
 
 async def resolve_pending(request: Request) -> JSONResponse:
     """Resolve a pending flow. Body: {flow_id, action, pattern, label?, expires_at?}."""
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
     if _addon is None:
         return JSONResponse({"error": "not configured"}, status_code=503)
     body = await request.json()
@@ -171,6 +205,9 @@ async def resolve_pending(request: Request) -> JSONResponse:
 
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """WebSocket endpoint for real-time updates."""
+    if not _check_ws_auth(websocket):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     _ws_clients.add(websocket)
     logger.info("WebSocket client connected (%d total)", len(_ws_clients))

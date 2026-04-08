@@ -137,9 +137,10 @@ func ensureRunning(store *config.Store, name string, sess *config.Session) error
 			Resume:          sess.ResumeID,
 			Continue:        sess.ResumeID == "",
 			ExtraWorkspaces: sess.ExtraWorkspaces,
-			ProxyProfile:    proxyProfile,
-			ProxyCACertDir:  httpproxy.CACertDir(config.DefaultDir()),
-			Packages:        sess.Packages,
+			ProxyProfile:       proxyProfile,
+			ProxyCACertDir:     httpproxy.CACertDir(config.DefaultDir()),
+			ProxyDashboardPort: sess.ProxyPort,
+			Packages:           sess.Packages,
 		}, true)
 		startCmd := exec.Command("docker", detachedArgs...)
 		startCmd.Stderr = os.Stderr

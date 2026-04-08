@@ -192,8 +192,9 @@ func runTask() error {
 		GID:             docker.ContainerGID(),
 		Prompt:          taskPrompt,
 		ExtraWorkspaces: extraWorkspaces,
-		ProxyProfile:    proxyProfile,
-		ProxyCACertDir:  httpproxy.CACertDir(config.DefaultDir()),
+		ProxyProfile:       proxyProfile,
+		ProxyCACertDir:     httpproxy.CACertDir(config.DefaultDir()),
+		ProxyDashboardPort: resolvedPort,
 	}
 
 	// Save session.

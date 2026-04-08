@@ -87,6 +87,10 @@ func RunArgs(opts ProxyOpts) []string {
 		"--rm",
 		"--name", name,
 		"--network", network,
+		// NET_ADMIN lets the entrypoint install nftables rules in the
+		// container's netns. Claude containers join this same netns via
+		// `--network container:`, so the firewall here covers them too.
+		"--cap-add", "NET_ADMIN",
 		"-p", fmt.Sprintf("%d:8081", opts.DashboardPort),
 		"-v", configMount + ":/config",
 		"-e", "PROXY_PROFILE=" + opts.Profile,
@@ -96,19 +100,25 @@ func RunArgs(opts ProxyOpts) []string {
 	return args
 }
 
-// ClaudeNetworkArgs returns extra docker run arguments to connect a Claude
-// container to the proxy network and configure proxy environment variables.
-// If caCertDir is non-empty, the CA certificate directory is mounted and
-// SSL cert env vars are set.
+// ClaudeNetworkArgs returns extra docker run arguments that put the Claude
+// container into the proxy's network namespace. With shared netns, the
+// nftables rules installed by the proxy entrypoint cover both containers,
+// transparently REDIRECTing every TCP connection through mitmproxy with no
+// way for the Claude container to bypass it.
+//
+// HTTP_PROXY env vars are deliberately NOT set: transparent mode makes them
+// redundant, and some clients ignore them anyway. The whole point of the
+// shared-netns design is that proxy enforcement no longer depends on the
+// client opting in.
+//
+// Note: `--network container:` is mutually exclusive with `--network`,
+// `-p`, `--add-host`, etc. on the joining container — Docker enforces this.
+// The Claude container doesn't publish ports so this is fine.
 func ClaudeNetworkArgs(profile string, caCertDir string) []string {
 	name := ContainerName(profile)
-	network := NetworkName(profile)
-	proxyURL := fmt.Sprintf("http://%s:8080", name)
 
 	args := []string{
-		"--network", network,
-		"-e", "HTTP_PROXY=" + proxyURL,
-		"-e", "HTTPS_PROXY=" + proxyURL,
+		"--network", "container:" + name,
 	}
 
 	if caCertDir != "" {
@@ -285,6 +295,43 @@ func Stop(profile string) error {
 // DashboardURL returns the proxy dashboard URL for the given port.
 func DashboardURL(port int) string {
 	return fmt.Sprintf("http://localhost:%d", port)
+}
+
+// DashboardURLWithToken returns the dashboard URL with the auth token query
+// parameter appended, when one is available for the profile. The browser
+// reads the token from the URL and uses it to authenticate to the dashboard.
+func DashboardURLWithToken(configDir, profile string, port int) string {
+	base := DashboardURL(port)
+	token, err := ReadDashboardToken(configDir, profile)
+	if err != nil || token == "" {
+		return base
+	}
+	return base + "/?token=" + token
+}
+
+// ReadDashboardToken returns the dashboard auth token written by the proxy
+// for the given profile, or "" if it does not exist yet.
+func ReadDashboardToken(configDir, profile string) (string, error) {
+	path := filepath.Join(configDir, "proxy-profiles", "dashboard-token-"+profile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// WaitForDashboardToken polls until the proxy has written the dashboard token
+// file for the given profile, or until the timeout expires.
+func WaitForDashboardToken(configDir, profile string, timeout time.Duration) error {
+	path := filepath.Join(configDir, "proxy-profiles", "dashboard-token-"+profile)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return fmt.Errorf("httpproxy: timed out waiting for dashboard token at %s", path)
 }
 
 // FindAvailablePort finds a random available TCP port by binding to :0.

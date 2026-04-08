@@ -35,7 +35,7 @@ class ProxyAddon:
         self._lock = threading.Lock()
 
     def request(self, flow) -> None:
-        """Called by mitmproxy for each intercepted request.
+        """Called by mitmproxy for each intercepted HTTP request.
 
         Checks the URL against the rule store. Allowed requests pass through,
         denied requests are killed, and unknown requests are held as pending.
@@ -51,12 +51,15 @@ class ProxyAddon:
                 return
 
             # Unknown — intercept and hold the flow as pending
+            logger.info("holding pending request: %s", url)
             flow.intercept()
             entry = {
                 "flow": flow,
                 "flow_id": flow.id,
+                "kind": "http",
                 "url": url,
                 "host": flow.request.host,
+                "port": flow.request.port,
                 "time": time.time(),
             }
 
@@ -67,8 +70,10 @@ class ProxyAddon:
                 self.on_pending(
                     {
                         "flow_id": flow.id,
+                        "kind": "http",
                         "url": url,
                         "host": flow.request.host,
+                        "port": flow.request.port,
                         "time": entry["time"],
                     }
                 )
@@ -78,6 +83,60 @@ class ProxyAddon:
                 flow.kill()
             except Exception:
                 logger.exception("failed to kill flow after error")
+
+    def tcp_start(self, flow) -> None:
+        """Called by mitmproxy for each new raw TCP flow (transparent mode).
+
+        Used for non-HTTP/S protocols like SSH or arbitrary TCP. The
+        original destination comes from SO_ORIGINAL_DST and is exposed via
+        flow.server_conn.address. We synthesise a tcp:// URL so the same
+        regex rule store can match it.
+        """
+        try:
+            addr = getattr(flow.server_conn, "address", None)
+            if not addr:
+                return
+            host, port = addr[0], addr[1]
+            synthetic = f"tcp://{host}:{port}"
+            action = self.store.match(synthetic)
+
+            if action == "allow":
+                return
+            if action == "deny":
+                flow.kill()
+                return
+
+            logger.info("holding pending tcp flow: %s", synthetic)
+            flow.intercept()
+            entry = {
+                "flow": flow,
+                "flow_id": flow.id,
+                "kind": "tcp",
+                "url": synthetic,
+                "host": host,
+                "port": port,
+                "time": time.time(),
+            }
+            with self._lock:
+                self.pending[flow.id] = entry
+
+            if self.on_pending is not None:
+                self.on_pending(
+                    {
+                        "flow_id": flow.id,
+                        "kind": "tcp",
+                        "url": synthetic,
+                        "host": host,
+                        "port": port,
+                        "time": entry["time"],
+                    }
+                )
+        except Exception:
+            logger.exception("error processing tcp flow, killing")
+            try:
+                flow.kill()
+            except Exception:
+                logger.exception("failed to kill tcp flow after error")
 
     def resolve(
         self,
@@ -112,8 +171,10 @@ class ProxyAddon:
             return [
                 {
                     "flow_id": entry["flow_id"],
+                    "kind": entry.get("kind", "http"),
                     "url": entry["url"],
                     "host": entry["host"],
+                    "port": entry.get("port"),
                     "time": entry["time"],
                 }
                 for entry in self.pending.values()

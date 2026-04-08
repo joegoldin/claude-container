@@ -369,12 +369,16 @@ func createSession(opts createOpts) error {
 	if err != nil {
 		return fmt.Errorf("start proxy: %w", err)
 	}
+	if err := httpproxy.WaitForDashboardToken(config.DefaultDir(), proxyProfile, 30*time.Second); err != nil {
+		return err
+	}
+	dashURL := httpproxy.DashboardURLWithToken(config.DefaultDir(), proxyProfile, resolvedPort)
 	if started {
 		fmt.Printf("Proxy started for profile %q — dashboard at %s\n",
-			proxyProfile, httpproxy.DashboardURL(resolvedPort))
+			proxyProfile, dashURL)
 	} else {
 		fmt.Printf("Reusing proxy for profile %q — dashboard at %s\n",
-			proxyProfile, httpproxy.DashboardURL(resolvedPort))
+			proxyProfile, dashURL)
 	}
 	if err := httpproxy.WaitForCACert(config.DefaultDir()); err != nil {
 		return err
@@ -463,9 +467,10 @@ func createSession(opts createOpts) error {
 		Prompt:          opts.prompt,
 		Continue:        opts.cont,
 		ExtraWorkspaces: extraWorkspaces,
-		ProxyProfile:    proxyProfile,
-		ProxyCACertDir:  httpproxy.CACertDir(config.DefaultDir()),
-		Packages:        opts.packages,
+		ProxyProfile:       proxyProfile,
+		ProxyCACertDir:     httpproxy.CACertDir(config.DefaultDir()),
+		ProxyDashboardPort: resolvedPort,
+		Packages:           opts.packages,
 	}
 
 	// When using worktree mode, pass repo info so the container entrypoint

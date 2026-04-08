@@ -63,7 +63,7 @@ const (
 const prefixKey byte = 0x02
 
 // prefixTimeout is how long we wait for a command key after Ctrl+B.
-const prefixTimeout = 2 * time.Second
+const prefixTimeout = 8 * time.Second
 
 // Run starts a Docker subprocess and proxies I/O between the host terminal
 // and the container, providing prefix key interception and a status bar.
@@ -514,16 +514,9 @@ func renderStatusBar(w io.Writer, width, height int, info StatusBarInfo, prefixA
 		url := httpproxy.DashboardURL(info.ProxyPort)
 		if count > 0 {
 			parts = append(parts, fmt.Sprintf("[!] %d pending %s", count, url))
-		} else if count == 0 {
-			// Show full URL or just port depending on available width.
-			// Estimate remaining space: ~40 chars for other parts + hints.
-			if width > 100 {
-				parts = append(parts, url)
-			} else {
-				parts = append(parts, fmt.Sprintf(":%d", info.ProxyPort))
-			}
+		} else {
+			parts = append(parts, url)
 		}
-		// count == -1 means proxy unreachable, don't show anything
 	}
 
 	var hint string

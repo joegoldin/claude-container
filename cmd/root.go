@@ -70,9 +70,10 @@ var rootCmd = &cobra.Command{
 						Resume:          sess.ResumeID,
 						Continue:        sess.ResumeID == "",
 						ExtraWorkspaces: sess.ExtraWorkspaces,
-						ProxyProfile:    proxyProfile,
-						ProxyCACertDir:  httpproxy.CACertDir(config.DefaultDir()),
-						Packages:        sess.Packages,
+						ProxyProfile:       proxyProfile,
+						ProxyCACertDir:     httpproxy.CACertDir(config.DefaultDir()),
+						ProxyDashboardPort: sess.ProxyPort,
+						Packages:           sess.Packages,
 					}
 					startCmd := exec.Command("docker", docker.RunArgs(runOpts, true)...)
 					startCmd.Stderr = os.Stderr
@@ -194,10 +195,16 @@ var rootCmd = &cobra.Command{
 				}
 				if !res.Background {
 					cn := docker.ContainerName(res.Name)
+					createdSess, _ := store.Get(res.Name)
+					sbar := proxy.StatusBarInfo{Name: res.Name, Yolo: res.Yolo}
+					if createdSess != nil {
+						sbar.Branch = createdSess.Branch
+						sbar.ProxyPort = createdSess.ProxyPort
+					}
 					_ = proxy.Run(proxy.Opts{
 						DockerArgs:    []string{"attach", cn},
 						ContainerName: cn,
-						StatusBar:     proxy.StatusBarInfo{Name: res.Name, Yolo: res.Yolo},
+						StatusBar:     sbar,
 						Cleanup:       func(_ string) { removeSession(store, res.Name) },
 					})
 					saveResumeID(store, res.Name)

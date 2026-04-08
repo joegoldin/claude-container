@@ -92,8 +92,9 @@ type RunOpts struct {
 	Continue        bool
 	Resume          string   // claude --resume <id>
 	ExtraWorkspaces []string // additional folders mounted as /workspace/<basename>
-	ProxyProfile    string   // proxy profile name (for network/env args)
-	ProxyCACertDir  string   // path to mitmproxy CA cert directory
+	ProxyProfile       string // proxy profile name (for network/env args)
+	ProxyCACertDir     string // path to mitmproxy CA cert directory
+	ProxyDashboardPort int    // host-side dashboard port, surfaced to hooks so they can tell the user where to open the browser
 	RepoPath        string   // host repo path, mounted at /mnt/repo for worktree creation
 	WorktreeBranch  string   // branch name — entrypoint creates worktree at /workspace
 	WorktreeFrom    string   // optional base branch for worktree
@@ -156,13 +157,29 @@ func RunArgs(opts RunOpts, detached bool) []string {
 
 	// When proxy is enabled, add network and proxy env vars.
 	if opts.ProxyProfile != "" {
+		// Share the proxy container's network namespace. The proxy entrypoint
+		// installs nftables rules in this netns that REDIRECT every TCP
+		// connection to mitmproxy's transparent listener and default-deny
+		// everything else (UDP, raw sockets, QUIC). The Claude container has
+		// no NIC of its own and no way to bypass the firewall. HTTP_PROXY env
+		// vars are intentionally not set: transparent mode makes them moot.
+		// `--network container:` is mutually exclusive with `--network`/`-p`,
+		// which is fine because Claude containers don't publish ports.
 		proxyContainer := "claude-proxy_" + opts.ProxyProfile
-		network := "claude-proxy-net_" + opts.ProxyProfile
 		args = append(args,
-			"--network", network,
-			"-e", fmt.Sprintf("HTTP_PROXY=http://%s:8080", proxyContainer),
-			"-e", fmt.Sprintf("HTTPS_PROXY=http://%s:8080", proxyContainer),
+			"--network", "container:"+proxyContainer,
+			// Dashboard lives on loopback inside the shared netns. Mutating
+			// endpoints still require an auth token the container does not
+			// have, so it cannot approve its own held flows.
+			"-e", "CLAUDE_PROXY_DASHBOARD_URL=http://127.0.0.1:8081",
 		)
+		if opts.ProxyDashboardPort > 0 {
+			// Tell hooks where the user should open their browser. This is
+			// the host-side localhost URL, not the container-network URL.
+			args = append(args,
+				"-e", fmt.Sprintf("CLAUDE_PROXY_DASHBOARD_HOST_URL=http://localhost:%d", opts.ProxyDashboardPort),
+			)
+		}
 		if opts.ProxyCACertDir != "" {
 			args = append(args,
 				"-v", opts.ProxyCACertDir+":/proxy-ca:ro",
@@ -263,13 +280,29 @@ func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
 	}
 
 	if opts.ProxyProfile != "" {
+		// Share the proxy container's network namespace. The proxy entrypoint
+		// installs nftables rules in this netns that REDIRECT every TCP
+		// connection to mitmproxy's transparent listener and default-deny
+		// everything else (UDP, raw sockets, QUIC). The Claude container has
+		// no NIC of its own and no way to bypass the firewall. HTTP_PROXY env
+		// vars are intentionally not set: transparent mode makes them moot.
+		// `--network container:` is mutually exclusive with `--network`/`-p`,
+		// which is fine because Claude containers don't publish ports.
 		proxyContainer := "claude-proxy_" + opts.ProxyProfile
-		network := "claude-proxy-net_" + opts.ProxyProfile
 		args = append(args,
-			"--network", network,
-			"-e", fmt.Sprintf("HTTP_PROXY=http://%s:8080", proxyContainer),
-			"-e", fmt.Sprintf("HTTPS_PROXY=http://%s:8080", proxyContainer),
+			"--network", "container:"+proxyContainer,
+			// Dashboard lives on loopback inside the shared netns. Mutating
+			// endpoints still require an auth token the container does not
+			// have, so it cannot approve its own held flows.
+			"-e", "CLAUDE_PROXY_DASHBOARD_URL=http://127.0.0.1:8081",
 		)
+		if opts.ProxyDashboardPort > 0 {
+			// Tell hooks where the user should open their browser. This is
+			// the host-side localhost URL, not the container-network URL.
+			args = append(args,
+				"-e", fmt.Sprintf("CLAUDE_PROXY_DASHBOARD_HOST_URL=http://localhost:%d", opts.ProxyDashboardPort),
+			)
+		}
 		if opts.ProxyCACertDir != "" {
 			args = append(args,
 				"-v", opts.ProxyCACertDir+":/proxy-ca:ro",

@@ -69,6 +69,7 @@ func TestRunArgs(t *testing.T) {
 		{"auto-remove", "--rm"},
 		{"container name", "--name claude-proxy_default"},
 		{"network", "--network claude-proxy-net_default"},
+		{"NET_ADMIN cap", "--cap-add NET_ADMIN"},
 		{"dashboard port", "-p 8081:8081"},
 		{"config volume", "-v /home/user/.config/claude-container/proxy-profiles:/config"},
 		{"profile env", "-e PROXY_PROFILE=default"},
@@ -101,9 +102,7 @@ func TestClaudeNetworkArgs(t *testing.T) {
 		name string
 		want string
 	}{
-		{"network", "--network claude-proxy-net_work"},
-		{"HTTP_PROXY", "-e HTTP_PROXY=http://claude-proxy_work:8080"},
-		{"HTTPS_PROXY", "-e HTTPS_PROXY=http://claude-proxy_work:8080"},
+		{"shared netns", "--network container:claude-proxy_work"},
 		{"CA cert volume", "-v " + caCertDir + ":/proxy-ca:ro"},
 		{"SSL_CERT_FILE", "-e SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem"},
 		{"NIX_SSL_CERT_FILE", "-e NIX_SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem"},
@@ -124,15 +123,13 @@ func TestClaudeNetworkArgsNoCACert(t *testing.T) {
 	args := ClaudeNetworkArgs(profile, caCertDir)
 	joined := strings.Join(args, " ")
 
-	// Should have network and proxy env vars.
-	if !strings.Contains(joined, "--network claude-proxy-net_default") {
-		t.Error("ClaudeNetworkArgs (no cert): missing network flag")
+	// Should join the proxy container's network namespace.
+	if !strings.Contains(joined, "--network container:claude-proxy_default") {
+		t.Error("ClaudeNetworkArgs (no cert): missing shared-netns flag")
 	}
-	if !strings.Contains(joined, "HTTP_PROXY=http://claude-proxy_default:8080") {
-		t.Error("ClaudeNetworkArgs (no cert): missing HTTP_PROXY")
-	}
-	if !strings.Contains(joined, "HTTPS_PROXY=http://claude-proxy_default:8080") {
-		t.Error("ClaudeNetworkArgs (no cert): missing HTTPS_PROXY")
+	// HTTP_PROXY env vars should NOT be set in shared-netns mode.
+	if strings.Contains(joined, "HTTP_PROXY") {
+		t.Error("ClaudeNetworkArgs: HTTP_PROXY should not be set with shared netns")
 	}
 
 	// Should NOT have cert-related args.

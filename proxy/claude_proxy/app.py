@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import logging
 import os
+import secrets
 import threading
 
 import uvicorn
@@ -16,7 +17,7 @@ from mitmproxy import options
 from mitmproxy.tools.dump import DumpMaster
 
 from claude_proxy.addon import ProxyAddon
-from claude_proxy.dashboard import app, configure, on_pending_request, set_dashboard_loop
+from claude_proxy.dashboard import app, configure, on_pending_request, set_auth_token, set_dashboard_loop
 from claude_proxy.rules import RuleStore
 
 logger = logging.getLogger(__name__)
@@ -50,8 +51,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hold-timeout",
         type=float,
-        default=120,
-        help="Seconds before pending requests are auto-denied (default: 120)",
+        default=3600,
+        help="Seconds before pending requests are auto-denied (default: 3600)",
+    )
+    parser.add_argument(
+        "--transparent",
+        action="store_true",
+        help="Run mitmproxy in transparent mode (requires nftables REDIRECT in the netns)",
     )
     return parser.parse_args()
 
@@ -97,7 +103,19 @@ async def run_proxy(args: argparse.Namespace) -> None:
         hold_timeout=args.hold_timeout,
     )
 
-    # 4. Configure dashboard with dependencies
+    # 4. Generate auth token and write to host-mounted config dir.
+    # Mutating endpoints (POST/DELETE/WS resolve) require this token, so the
+    # Claude container — which never sees /config — cannot approve its own
+    # held requests.
+    token = secrets.token_urlsafe(32)
+    token_path = os.path.join(args.config_dir, f"dashboard-token-{args.profile}")
+    with open(token_path, "w") as f:
+        f.write(token)
+    os.chmod(token_path, 0o600)
+    set_auth_token(token)
+    logger.info("Dashboard auth token written to %s", token_path)
+
+    # 5. Configure dashboard with dependencies
     configure(addon, store, profile_path)
 
     # 5. Start dashboard in background daemon thread
@@ -114,12 +132,21 @@ async def run_proxy(args: argparse.Namespace) -> None:
     os.makedirs(ca_dir, exist_ok=True)
 
     # 7. Create mitmproxy DumpMaster
-    opts = options.Options(
+    opts_kwargs = dict(
         listen_host="0.0.0.0",
         listen_port=args.proxy_port,
         confdir=ca_dir,
         ssl_insecure=True,
+        showhost=True,
     )
+    if args.transparent:
+        # Transparent mode: kernel REDIRECTs all TCP into mitmproxy, which
+        # reads SO_ORIGINAL_DST to learn the real destination. tcp_hosts
+        # set to .* lets non-HTTP protocols (SSH, raw TCP, etc.) be
+        # tunneled as raw streams instead of being rejected.
+        opts_kwargs["mode"] = ["transparent"]
+        opts_kwargs["tcp_hosts"] = [".*"]
+    opts = options.Options(**opts_kwargs)
     master = DumpMaster(opts)
     master.addons.add(addon)
     logger.info("Proxy listening on port %d", args.proxy_port)

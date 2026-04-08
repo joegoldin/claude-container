@@ -370,14 +370,14 @@ func TestRunArgsProxyNetwork(t *testing.T) {
 
 	joined := strings.Join(args, " ")
 
-	if !strings.Contains(joined, "--network claude-proxy-net_myprofile") {
-		t.Errorf("missing network flag in %v", args)
+	if !strings.Contains(joined, "--network container:claude-proxy_myprofile") {
+		t.Errorf("missing shared-netns flag in %v", args)
 	}
-	if !strings.Contains(joined, "HTTP_PROXY=http://claude-proxy_myprofile:8080") {
-		t.Errorf("missing HTTP_PROXY in %v", args)
+	if strings.Contains(joined, "HTTP_PROXY") {
+		t.Errorf("HTTP_PROXY should not be set with shared netns: %v", args)
 	}
-	if !strings.Contains(joined, "HTTPS_PROXY=http://claude-proxy_myprofile:8080") {
-		t.Errorf("missing HTTPS_PROXY in %v", args)
+	if !strings.Contains(joined, "CLAUDE_PROXY_DASHBOARD_URL=http://127.0.0.1:8081") {
+		t.Errorf("dashboard URL should point to loopback in shared netns: %v", args)
 	}
 	if !strings.Contains(joined, "/tmp/ca:/proxy-ca:ro") {
 		t.Errorf("missing CA cert volume in %v", args)

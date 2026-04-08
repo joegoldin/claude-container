@@ -12,14 +12,108 @@ let
 
   proxySource = ../proxy;
 
+  # Dedicated uid for the mitmproxy process so the firewall rules in the
+  # shared network namespace can exempt its outbound traffic via
+  # `meta skuid` matching. Any other uid in the netns (i.e. the Claude
+  # container's processes) is force-redirected through mitmproxy.
+  proxyUid = "1500";
+  proxyGid = "1500";
+
   entrypoint = pkgs.writeShellScript "proxy-entrypoint.sh" ''
     set -e
     PROXY_PROFILE=''${PROXY_PROFILE:-default}
-    exec ${python}/bin/python -m claude_proxy.app \
-      --profile "$PROXY_PROFILE" \
-      --config-dir /config \
-      --proxy-port 8080 \
-      --dashboard-port 8081
+
+    # Make sure /config (host bind mount) is writable by the mitmproxy uid.
+    # The proxy needs to write the CA dir, the dashboard token, and the
+    # rules profile JSON. The host owner of this dir is the user who ran
+    # `claude-container`; after this chown the host sees uid 1500 on these
+    # internal files, which is fine — they're managed state.
+    ${pkgs.coreutils}/bin/chown -R ${proxyUid}:${proxyGid} /config 2>/dev/null || true
+
+    # ----- Default-deny firewall in the shared network namespace -----
+    #
+    # The Claude container joins this namespace via `--network container:`,
+    # so installing rules here locks down ALL traffic for both containers.
+    #
+    # Strategy:
+    #   - filter OUTPUT default DROP, allowlist what we explicitly need.
+    #   - nat OUTPUT REDIRECTs every non-loopback TCP connection from any
+    #     uid OTHER THAN mitmproxy (1500) to mitmproxy's transparent
+    #     listener on port 8080. mitmproxy reads SO_ORIGINAL_DST to learn
+    #     the real destination, then either MITMs HTTPS/HTTP or proxies
+    #     raw TCP through to upstream.
+    #   - UDP/443 (QUIC/HTTP3) is dropped outright so clients fall back
+    #     to TCP, where the redirect catches them.
+    #   - DNS is allowed unrestricted for now (DoH over 443 still goes
+    #     through mitmproxy because of the TCP redirect).
+    ${pkgs.nftables}/bin/nft -f - <<NFT
+    table inet claude_proxy_fw {
+      chain output {
+        type filter hook output priority 0; policy drop;
+
+        # Loopback (dashboard, mitmproxy local listener, embedded DNS).
+        oif "lo" accept
+
+        # Established/related return traffic.
+        ct state established,related accept
+
+        # mitmproxy itself can talk to anything upstream.
+        meta skuid ${proxyUid} accept
+
+        # Local listeners that other processes in the netns may connect to.
+        tcp dport 8080 accept
+        tcp dport 8081 accept
+
+        # DNS (UDP and TCP). Docker's embedded resolver lives at 127.0.0.11
+        # and is reached via loopback above; this covers external resolvers
+        # too if a client is configured with one.
+        udp dport 53 accept
+        tcp dport 53 accept
+
+        # Kill QUIC so HTTPS clients downgrade to TCP and hit the redirect.
+        udp dport 443 drop
+
+        # Everything else: drop. Logged so we can see what's being blocked
+        # during smoke tests; remove the log statement later if noisy.
+        log prefix "claude_proxy_fw drop: " level debug
+      }
+
+      chain input {
+        type filter hook input priority 0; policy drop;
+        iif "lo" accept
+        ct state established,related accept
+        # Dashboard port-forwarded from the host.
+        tcp dport 8081 accept
+        # Transparent listener (only reached via the local REDIRECT, but
+        # accept defensively in case Docker's portmap touches it).
+        tcp dport 8080 accept
+      }
+
+      chain prerouting_nat {
+        type nat hook prerouting priority -100;
+      }
+
+      chain output_nat {
+        type nat hook output priority -100;
+        # Skip mitmproxy's own outbound (would loop forever).
+        meta skuid ${proxyUid} return
+        # Skip loopback so dashboard / embedded DNS work.
+        oif "lo" return
+        # Redirect ALL other TCP to mitmproxy transparent listener.
+        # SO_ORIGINAL_DST gives mitmproxy the real destination.
+        meta l4proto tcp redirect to :8080
+      }
+    }
+    NFT
+
+    # ----- Run mitmproxy as the dedicated uid -----
+    exec ${pkgs.su-exec}/bin/su-exec ${proxyUid}:${proxyGid} \
+      ${python}/bin/python -m claude_proxy.app \
+        --profile "$PROXY_PROFILE" \
+        --config-dir /config \
+        --proxy-port 8080 \
+        --dashboard-port 8081 \
+        --transparent
   '';
 in
 pkgs.dockerTools.buildLayeredImage {
@@ -32,7 +126,19 @@ pkgs.dockerTools.buildLayeredImage {
     pkgs.coreutils
     pkgs.cacert
     pkgs.curl
+    pkgs.nftables
+    pkgs.iproute2
+    pkgs.su-exec
+    pkgs.shadow
   ];
+
+  enableFakechroot = true;
+
+  fakeRootCommands = ''
+    ${pkgs.dockerTools.shadowSetup}
+    groupadd -g ${proxyGid} mitmproxy
+    useradd -u ${proxyUid} -g ${proxyGid} -d /var/empty -s ${pkgs.bash}/bin/bash -M mitmproxy
+  '';
 
   extraCommands = ''
     mkdir -p config opt
