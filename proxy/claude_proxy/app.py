@@ -17,7 +17,7 @@ from mitmproxy import options
 from mitmproxy.tools.dump import DumpMaster
 
 from claude_proxy.addon import ProxyAddon
-from claude_proxy.dashboard import app, configure, on_pending_request, set_auth_token, set_dashboard_loop
+from claude_proxy.dashboard import app, broadcast, configure, on_pending_request, set_auth_token, set_dashboard_loop
 from claude_proxy.rules import RuleStore
 
 logger = logging.getLogger(__name__)
@@ -159,6 +159,11 @@ async def run_proxy(args: argparse.Namespace) -> None:
                 timed_out = addon.cleanup_timed_out()
                 if timed_out:
                     logger.info("Timed out %d pending flows", len(timed_out))
+                    for flow_id in timed_out:
+                        await broadcast({
+                            "type": "resolved",
+                            "data": {"flow_id": flow_id, "action": "timeout"},
+                        })
                 store.cleanup_expired()
             except Exception:
                 logger.exception("Error during cleanup")

@@ -422,6 +422,7 @@ pkgs.dockerTools.buildLayeredImage {
       "SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt"
       "NIX_SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt"
       "NIX_PATH=nixpkgs=${pkgs.path}"
+      "NIX_CONF_DIR=/etc/nix"
     ];
   };
 }

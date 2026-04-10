@@ -36,6 +36,14 @@
   // Hold timeout in seconds (should match server default)
   const HOLD_TIMEOUT = 120;
 
+  // Convert server "remaining" seconds to a client-side expiresAt timestamp.
+  // This avoids clock-skew between the proxy container and the browser.
+  function stampExpiry(item) {
+    const remaining = item.remaining != null ? item.remaining : HOLD_TIMEOUT;
+    item.expiresAt = Date.now() / 1000 + remaining;
+    return item;
+  }
+
   // Duration presets in seconds (0 means forever)
   const DURATIONS = {
     forever: 0,
@@ -321,7 +329,7 @@
     pending.forEach((item) => {
       const remaining = Math.max(
         0,
-        Math.ceil(HOLD_TIMEOUT - (now - item.time))
+        Math.ceil(item.expiresAt - now)
       );
       const isTcp = item.kind === "tcp";
       const presets = isTcp
@@ -338,7 +346,7 @@
       card.innerHTML = `
         <div class="card-header">
           <span class="host">${htmlEscape(headerHost)}</span>
-          <span class="countdown ${remaining < 30 ? "urgent" : ""}" data-time="${item.time}">${remaining}s</span>
+          <span class="countdown ${remaining < 30 ? "urgent" : ""}" data-expires="${item.expiresAt}">${remaining}s</span>
         </div>
         <div class="url">${htmlEscape(item.url)}</div>
         <div class="options">
@@ -510,8 +518,8 @@
     countdownInterval = setInterval(() => {
       const now = Date.now() / 1000;
       document.querySelectorAll(".countdown").forEach((el) => {
-        const time = parseFloat(el.getAttribute("data-time"));
-        const remaining = Math.max(0, Math.ceil(HOLD_TIMEOUT - (now - time)));
+        const expiresAt = parseFloat(el.getAttribute("data-expires"));
+        const remaining = Math.max(0, Math.ceil(expiresAt - now));
         el.textContent = remaining + "s";
         if (remaining < 30) {
           el.classList.add("urgent");
@@ -585,7 +593,7 @@
 
       switch (msg.type) {
         case "init":
-          pending = msg.data.pending || [];
+          pending = (msg.data.pending || []).map(stampExpiry);
           rules = msg.data.rules || [];
           renderPending();
           renderRules();
@@ -593,7 +601,7 @@
 
         case "pending":
           // New pending request
-          pending.push(msg.data);
+          pending.push(stampExpiry(msg.data));
           renderPending();
           showNotification(
             "Pending Request",

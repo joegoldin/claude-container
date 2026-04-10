@@ -25,6 +25,7 @@ var ProfileOrder = []string{"low", "default", "med", "high"}
 // anthropicDomains are always needed for the Claude API itself.
 var anthropicDomains = []string{
 	"api.anthropic.com",
+	"platform.claude.com",
 	"statsig.anthropic.com",
 	"sentry.io",
 }

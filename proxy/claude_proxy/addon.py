@@ -74,7 +74,7 @@ class ProxyAddon:
                         "url": url,
                         "host": flow.request.host,
                         "port": flow.request.port,
-                        "time": entry["time"],
+                        "remaining": self.hold_timeout,
                     }
                 )
         except Exception:
@@ -128,7 +128,7 @@ class ProxyAddon:
                         "url": synthetic,
                         "host": host,
                         "port": port,
-                        "time": entry["time"],
+                        "remaining": self.hold_timeout,
                     }
                 )
         except Exception:
@@ -167,6 +167,7 @@ class ProxyAddon:
 
     def get_pending(self) -> list[dict]:
         """Return a list of all pending requests as serializable dicts."""
+        now = time.time()
         with self._lock:
             return [
                 {
@@ -175,7 +176,7 @@ class ProxyAddon:
                     "url": entry["url"],
                     "host": entry["host"],
                     "port": entry.get("port"),
-                    "time": entry["time"],
+                    "remaining": max(0, self.hold_timeout - (now - entry["time"])),
                 }
                 for entry in self.pending.values()
             ]
