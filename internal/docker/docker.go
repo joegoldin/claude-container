@@ -83,8 +83,7 @@ type RunOpts struct {
 	Name            string
 	Workspace       string
 	ConfigDir       string
-	HostClaudeDir   string   // host ~/.claude/ dir, mounted read-only for credential copying
-	HostClaudeJSON  string   // host ~/.claude.json file, mounted read-only for onboarding/auth state
+	HostClaudeFiles []string // individual host credential files, mounted read-only
 	UID             int
 	GID             int
 	Yolo            bool
@@ -207,12 +206,9 @@ func RunArgs(opts RunOpts, detached bool) []string {
 		args = append(args, "-e", "EXTRA_PACKAGES="+strings.Join(opts.Packages, ","))
 	}
 
-	// Mount host Claude credentials read-only for entrypoint to copy.
-	if opts.HostClaudeDir != "" {
-		args = append(args, "-v", opts.HostClaudeDir+":/mnt/claude-host:ro")
-	}
-	if opts.HostClaudeJSON != "" {
-		args = append(args, "-v", opts.HostClaudeJSON+":/mnt/claude-host-json:ro")
+	// Mount individual host credential files read-only for entrypoint to copy.
+	for _, f := range opts.HostClaudeFiles {
+		args = append(args, "-v", f+":/mnt/claude-host/"+filepath.Base(f)+":ro")
 	}
 
 	args = append(args, ImageTag(), "claude")
@@ -330,11 +326,9 @@ func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
 		args = append(args, "-e", "EXTRA_PACKAGES="+strings.Join(opts.Packages, ","))
 	}
 
-	if opts.HostClaudeDir != "" {
-		args = append(args, "-v", opts.HostClaudeDir+":/mnt/claude-host:ro")
-	}
-	if opts.HostClaudeJSON != "" {
-		args = append(args, "-v", opts.HostClaudeJSON+":/mnt/claude-host-json:ro")
+	// Mount individual host credential files read-only for entrypoint to copy.
+	for _, f := range opts.HostClaudeFiles {
+		args = append(args, "-v", f+":/mnt/claude-host/"+filepath.Base(f)+":ro")
 	}
 
 	args = append(args, ImageTag(), "claude",
@@ -364,7 +358,7 @@ func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
 
 // ShellArgs returns the docker run command arguments for an ephemeral
 // debug shell. Unlike RunArgs the container IS created with --rm.
-func ShellArgs(workspace, configDir, hostClaudeDir, hostClaudeJSON string, uid, gid int) []string {
+func ShellArgs(workspace, configDir string, hostClaudeFiles []string, uid, gid int) []string {
 	args := []string{
 		"run",
 		"--rm",
@@ -375,11 +369,8 @@ func ShellArgs(workspace, configDir, hostClaudeDir, hostClaudeJSON string, uid, 
 		"-e", fmt.Sprintf("USER_UID=%d", uid),
 		"-e", fmt.Sprintf("USER_GID=%d", gid),
 	}
-	if hostClaudeDir != "" {
-		args = append(args, "-v", hostClaudeDir+":/mnt/claude-host:ro")
-	}
-	if hostClaudeJSON != "" {
-		args = append(args, "-v", hostClaudeJSON+":/mnt/claude-host-json:ro")
+	for _, f := range hostClaudeFiles {
+		args = append(args, "-v", f+":/mnt/claude-host/"+filepath.Base(f)+":ro")
 	}
 	args = append(args, ImageTag(), "/bin/bash")
 	return args
@@ -550,16 +541,11 @@ func ExecGitDiff(session string) *exec.Cmd {
 // from the read-only mounts into /claude/. Mirrors the entrypoint logic
 // in nix/image.nix.
 const refreshAuthScript = `
-if [ -d /mnt/claude-host ]; then
-  for f in .credentials.json settings.json .claude.json; do
-    if [ -f "/mnt/claude-host/$f" ]; then
-      cp -L "/mnt/claude-host/$f" "/claude/$f" && chmod 600 "/claude/$f"
-    fi
-  done
-fi
-if [ -f /mnt/claude-host-json ]; then
-  cp -L /mnt/claude-host-json /claude/.claude.json && chmod 600 /claude/.claude.json
-fi`
+for f in .credentials.json settings.json .claude.json; do
+  if [ -f "/mnt/claude-host/$f" ]; then
+    cp -L "/mnt/claude-host/$f" "/claude/$f" && chmod 600 "/claude/$f"
+  fi
+done`
 
 // RefreshAuthCmd returns a prepared *exec.Cmd that re-copies host
 // credentials from the read-only mounts into /claude/ inside the

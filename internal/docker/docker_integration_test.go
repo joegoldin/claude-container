@@ -856,8 +856,8 @@ func TestIntegrationProxyContainerSetup(t *testing.T) {
 // available (required for real Claude Code execution).
 func skipIfNoHostCredentials(t *testing.T) {
 	t.Helper()
-	if config.HostClaudeDir() == "" {
-		t.Skip("no ~/.claude directory found; need authenticated Claude Code")
+	if len(config.HostClaudeCredentialFiles()) == 0 {
+		t.Skip("no ~/.claude credential files found; need authenticated Claude Code")
 	}
 }
 
@@ -939,11 +939,8 @@ func runClaudeProxyE2E(t *testing.T, profile string, hnAction string) claudeProx
 		"-e", fmt.Sprintf("USER_UID=%d", uid),
 		"-e", fmt.Sprintf("USER_GID=%d", gid),
 	}
-	if dir := config.HostClaudeDir(); dir != "" {
-		args = append(args, "-v", dir+":/mnt/claude-host:ro")
-	}
-	if p := config.HostClaudeJSON(); p != "" {
-		args = append(args, "-v", p+":/mnt/claude-host-json:ro")
+	for _, f := range config.HostClaudeCredentialFiles() {
+		args = append(args, "-v", f+":/mnt/claude-host/"+filepath.Base(f)+":ro")
 	}
 	claudeArgs := []string{"claude"}
 	// In rootless Docker the container runs as root; Claude refuses

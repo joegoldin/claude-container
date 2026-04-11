@@ -32,7 +32,7 @@ var shellCmd = &cobra.Command{
 			return err
 		}
 
-		shellArgs := docker.ShellArgs(ws, claudeConfigDir, config.HostClaudeDir(), config.HostClaudeJSON(), docker.ContainerUID(), docker.ContainerGID())
+		shellArgs := docker.ShellArgs(ws, claudeConfigDir, config.HostClaudeCredentialFiles(), docker.ContainerUID(), docker.ContainerGID())
 		return proxy.Run(proxy.Opts{
 			DockerArgs: shellArgs,
 			StatusBar:  proxy.StatusBarInfo{Name: "_shell"},

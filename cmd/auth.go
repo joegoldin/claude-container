@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/joegoldin/claude-container/internal/config"
@@ -29,9 +30,9 @@ var authStatusCmd = &cobra.Command{
 	Short: "Check authentication status",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store := config.NewStore(config.DefaultDir())
-		if hostDir := config.HostClaudeDir(); hostDir != "" {
-			if _, err := os.Stat(hostDir + "/.credentials.json"); err == nil {
-				fmt.Printf("Authenticated (host credentials: %s)\n", hostDir)
+		for _, f := range config.HostClaudeCredentialFiles() {
+			if filepath.Base(f) == ".credentials.json" {
+				fmt.Printf("Authenticated (host credentials: %s)\n", f)
 				return nil
 			}
 		}
@@ -85,9 +86,9 @@ func authLoginRun(cmd *cobra.Command, args []string) error {
 	store := config.NewStore(config.DefaultDir())
 
 	// Check if host already has credentials — no container auth needed.
-	if hostDir := config.HostClaudeDir(); hostDir != "" {
-		if _, err := os.Stat(hostDir + "/.credentials.json"); err == nil {
-			fmt.Printf("Host credentials found at %s/.credentials.json\n", hostDir)
+	for _, f := range config.HostClaudeCredentialFiles() {
+		if filepath.Base(f) == ".credentials.json" {
+			fmt.Printf("Host credentials found at %s\n", f)
 			fmt.Println("These are automatically mounted into containers. No auth needed.")
 			return nil
 		}

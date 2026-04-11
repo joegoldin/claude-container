@@ -209,7 +209,7 @@ func TestRunArgsEnvVars(t *testing.T) {
 }
 
 func TestShellArgsHasRm(t *testing.T) {
-	args := ShellArgs("/tmp/ws", "/tmp/cfg", "", "", 1000, 1000)
+	args := ShellArgs("/tmp/ws", "/tmp/cfg", nil, 1000, 1000)
 
 	if !slices.Contains(args, "--rm") {
 		t.Errorf("ShellArgs missing --rm flag in %v", args)
@@ -229,7 +229,7 @@ func TestShellArgsHasRm(t *testing.T) {
 }
 
 func TestShellArgsBash(t *testing.T) {
-	args := ShellArgs("/tmp/ws", "/tmp/cfg", "", "", 1000, 1000)
+	args := ShellArgs("/tmp/ws", "/tmp/cfg", nil, 1000, 1000)
 
 	if len(args) == 0 {
 		t.Fatal("ShellArgs returned empty slice")
@@ -271,7 +271,7 @@ func TestContainerNamePrefix(t *testing.T) {
 }
 
 func TestShellArgs(t *testing.T) {
-	args := ShellArgs("/home/user/project", "/home/user/.config/claude", "", "", 1000, 1000)
+	args := ShellArgs("/home/user/project", "/home/user/.config/claude", nil, 1000, 1000)
 
 	joined := strings.Join(args, " ")
 
@@ -515,10 +515,6 @@ func TestRefreshAuthArgs(t *testing.T) {
 		if !strings.Contains(script, f) {
 			t.Errorf("refresh script missing %q", f)
 		}
-	}
-	// Must handle /mnt/claude-host-json.
-	if !strings.Contains(script, "/mnt/claude-host-json") {
-		t.Errorf("refresh script missing /mnt/claude-host-json copy")
 	}
 	// Must set permissions to 600.
 	if !strings.Contains(script, "chmod 600") {

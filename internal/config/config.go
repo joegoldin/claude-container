@@ -80,35 +80,26 @@ func (s *Store) ClaudeConfigDir() string {
 	return filepath.Join(s.dir, "claude-config")
 }
 
-// HostClaudeDir returns the path to the host's ~/.claude/ directory,
-// or empty string if it doesn't exist. This is used to mount host
-// credentials read-only into containers.
-func HostClaudeDir() string {
+// HostClaudeCredentialFiles returns the paths of individual credential
+// files from the host's ~/.claude/ directory that actually exist.
+// Only known credential files are included (.credentials.json,
+// settings.json, .claude.json) — conversation history and other data
+// are deliberately excluded for security.
+func HostClaudeCredentialFiles() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ""
+		return nil
 	}
 	dir := filepath.Join(home, ".claude")
-	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
-		return dir
+	candidates := []string{".credentials.json", "settings.json", ".claude.json"}
+	var files []string
+	for _, name := range candidates {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err == nil {
+			files = append(files, p)
+		}
 	}
-	return ""
-}
-
-// HostClaudeJSON returns the path to the host's ~/.claude.json file,
-// or empty string if it doesn't exist. Claude Code stores onboarding
-// state, OAuth account info, and project settings in this file at the
-// home directory root (separate from ~/.claude/).
-func HostClaudeJSON() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	p := filepath.Join(home, ".claude.json")
-	if _, err := os.Stat(p); err == nil {
-		return p
-	}
-	return ""
+	return files
 }
 
 // IsAuthenticated reports whether Claude Code credentials exist either
@@ -120,9 +111,8 @@ func (s *Store) IsAuthenticated() bool {
 		return true
 	}
 	// Check host ~/.claude/ dir.
-	if dir := HostClaudeDir(); dir != "" {
-		p = filepath.Join(dir, ".credentials.json")
-		if _, err := os.Stat(p); err == nil {
+	for _, f := range HostClaudeCredentialFiles() {
+		if filepath.Base(f) == ".credentials.json" {
 			return true
 		}
 	}

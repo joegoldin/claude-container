@@ -302,7 +302,7 @@ func TestIsAuthenticated(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
 
-	// Override HOME so HostClaudeDir() doesn't find real host credentials.
+	// Override HOME so HostClaudeCredentialFiles() doesn't find real host credentials.
 	t.Setenv("HOME", t.TempDir())
 
 	// Not authenticated by default.

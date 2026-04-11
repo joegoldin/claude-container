@@ -130,20 +130,13 @@ let
 
     # --- Config setup ---
 
-    # Copy host credentials if mounted read-only
-    if [ -d /mnt/claude-host ]; then
-      for f in .credentials.json settings.json .claude.json; do
-        if [ -f "/mnt/claude-host/$f" ]; then
-          ${cp} -L "/mnt/claude-host/$f" "/claude/$f"
-          ${chmod} 600 "/claude/$f"
-        fi
-      done
-    fi
-
-    if [ -f /mnt/claude-host-json ]; then
-      ${cp} -L /mnt/claude-host-json /claude/.claude.json
-      ${chmod} 600 /claude/.claude.json
-    fi
+    # Copy host credentials if mounted read-only (individual files)
+    for f in .credentials.json settings.json .claude.json; do
+      if [ -f "/mnt/claude-host/$f" ]; then
+        ${cp} -L "/mnt/claude-host/$f" "/claude/$f"
+        ${chmod} 600 "/claude/$f"
+      fi
+    done
 
     # Symlink so Claude finds config at both paths
     ${ln} -sfn /claude "$HOME/.claude" 2>/dev/null || true
