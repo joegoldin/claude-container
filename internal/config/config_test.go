@@ -369,6 +369,114 @@ func TestGenerateName(t *testing.T) {
 	}
 }
 
+func TestRepoID(t *testing.T) {
+	// Stable output.
+	id1 := RepoID("/home/joe/Development/foo")
+	id2 := RepoID("/home/joe/Development/foo")
+	if id1 != id2 {
+		t.Errorf("RepoID not stable: %q != %q", id1, id2)
+	}
+
+	// 12 hex characters.
+	if len(id1) != 12 {
+		t.Errorf("RepoID length = %d, want 12", len(id1))
+	}
+
+	// Different inputs produce different IDs.
+	id3 := RepoID("/home/joe/Development/bar")
+	if id1 == id3 {
+		t.Errorf("different paths produced same RepoID: %q", id1)
+	}
+}
+
+func TestRepoConfigDir(t *testing.T) {
+	store := NewStore("/tmp/test-config")
+	got := store.RepoConfigDir("/home/joe/project")
+	id := RepoID("/home/joe/project")
+	want := filepath.Join("/tmp/test-config", "claude-config", id)
+	if got != want {
+		t.Errorf("RepoConfigDir() = %q, want %q", got, want)
+	}
+}
+
+func TestUpsertAndListRepos(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	// Empty list initially.
+	repos, err := store.ListRepos()
+	if err != nil {
+		t.Fatalf("ListRepos: %v", err)
+	}
+	if len(repos) != 0 {
+		t.Fatalf("expected empty map, got %d entries", len(repos))
+	}
+
+	// Upsert a repo.
+	repoPath := "/home/joe/Development/myproject"
+	if err := store.UpsertRepo(repoPath); err != nil {
+		t.Fatalf("UpsertRepo: %v", err)
+	}
+
+	repos, err = store.ListRepos()
+	if err != nil {
+		t.Fatalf("ListRepos: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(repos))
+	}
+
+	id := RepoID(repoPath)
+	entry, ok := repos[id]
+	if !ok {
+		t.Fatalf("entry for repo ID %q not found", id)
+	}
+	if entry.Path != repoPath {
+		t.Errorf("Path = %q, want %q", entry.Path, repoPath)
+	}
+	if entry.Name != "myproject" {
+		t.Errorf("Name = %q, want %q", entry.Name, "myproject")
+	}
+	if entry.LastUsed.IsZero() {
+		t.Error("LastUsed should not be zero")
+	}
+
+	// Verify config dir was created.
+	configDir := store.RepoConfigDir(repoPath)
+	if _, err := os.Stat(configDir); err != nil {
+		t.Errorf("repo config dir not created: %v", err)
+	}
+}
+
+func TestDeleteRepo(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	repoPath := "/home/joe/Development/deleteme"
+	if err := store.UpsertRepo(repoPath); err != nil {
+		t.Fatalf("UpsertRepo: %v", err)
+	}
+
+	id := RepoID(repoPath)
+	if err := store.DeleteRepo(id); err != nil {
+		t.Fatalf("DeleteRepo: %v", err)
+	}
+
+	repos, err := store.ListRepos()
+	if err != nil {
+		t.Fatalf("ListRepos: %v", err)
+	}
+	if _, ok := repos[id]; ok {
+		t.Error("repo entry still exists after delete")
+	}
+
+	// Config dir should still exist (caller decides whether to remove it).
+	configDir := store.RepoConfigDir(repoPath)
+	if _, err := os.Stat(configDir); err != nil {
+		t.Log("note: config dir was removed, but DeleteRepo should not remove it")
+	}
+}
+
 func TestSanitizeName(t *testing.T) {
 	tests := []struct {
 		input string

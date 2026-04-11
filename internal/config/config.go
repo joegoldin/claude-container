@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -47,6 +49,19 @@ type Session struct {
 	ProxyPort       int       `json:"proxy_port,omitempty"`
 }
 
+// RepoEntry represents a tracked repository in the repo index.
+type RepoEntry struct {
+	Path     string    `json:"path"`
+	Name     string    `json:"name"`
+	LastUsed time.Time `json:"last_used"`
+}
+
+// RepoID returns a stable 12-character hex identifier for a repository path.
+func RepoID(repoPath string) string {
+	h := sha256.Sum256([]byte(repoPath))
+	return hex.EncodeToString(h[:])[:12]
+}
+
 // Store provides thread-safe persistence of sessions to a JSON file.
 type Store struct {
 	mu  sync.Mutex
@@ -78,6 +93,94 @@ func (s *Store) WorktreeDir() string {
 // Claude Code manages its own auth and settings in this directory.
 func (s *Store) ClaudeConfigDir() string {
 	return filepath.Join(s.dir, "claude-config")
+}
+
+// RepoConfigDir returns the per-repo config directory path.
+func (s *Store) RepoConfigDir(repoPath string) string {
+	return filepath.Join(s.dir, "claude-config", RepoID(repoPath))
+}
+
+// repoIndexPath returns the path to the repos.json index file.
+func (s *Store) repoIndexPath() string {
+	return filepath.Join(s.dir, "claude-config", "repos.json")
+}
+
+// loadReposLocked reads the repo index. Must be called with s.mu held.
+func (s *Store) loadReposLocked() (map[string]RepoEntry, error) {
+	data, err := os.ReadFile(s.repoIndexPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return make(map[string]RepoEntry), nil
+		}
+		return nil, err
+	}
+	var repos map[string]RepoEntry
+	if err := json.Unmarshal(data, &repos); err != nil {
+		return nil, fmt.Errorf("parse repos.json: %w", err)
+	}
+	return repos, nil
+}
+
+// writeReposLocked writes the repo index. Must be called with s.mu held.
+func (s *Store) writeReposLocked(repos map[string]RepoEntry) error {
+	dir := filepath.Dir(s.repoIndexPath())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(repos, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.repoIndexPath(), data, 0o644)
+}
+
+// UpsertRepo adds or updates a repository in the repo index and creates
+// its per-repo config directory.
+func (s *Store) UpsertRepo(repoPath string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	repos, err := s.loadReposLocked()
+	if err != nil {
+		return err
+	}
+
+	id := RepoID(repoPath)
+	repos[id] = RepoEntry{
+		Path:     repoPath,
+		Name:     filepath.Base(repoPath),
+		LastUsed: time.Now(),
+	}
+
+	// Create the per-repo config directory.
+	repoDir := filepath.Join(s.dir, "claude-config", id)
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		return err
+	}
+
+	return s.writeReposLocked(repos)
+}
+
+// ListRepos returns all tracked repositories keyed by repo ID.
+func (s *Store) ListRepos() (map[string]RepoEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadReposLocked()
+}
+
+// DeleteRepo removes a repository from the repo index by its ID.
+// It does not delete the per-repo config directory.
+func (s *Store) DeleteRepo(repoID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	repos, err := s.loadReposLocked()
+	if err != nil {
+		return err
+	}
+
+	delete(repos, repoID)
+	return s.writeReposLocked(repos)
 }
 
 // HostClaudeCredentialFiles returns the paths of individual credential
