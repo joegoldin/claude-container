@@ -305,6 +305,14 @@ func createSession(opts createOpts) error {
 
 	// c. Check no existing session with that name.
 	store := config.NewStore(config.DefaultDir())
+
+	// One-time migration of shared conversation history to per-repo storage.
+	if n, err := config.MigrateToPerRepo(store); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: migration failed: %v\n", err)
+	} else if n > 0 {
+		fmt.Fprintf(os.Stderr, "Migrated %d conversations to per-repo storage\n", n)
+	}
+
 	if _, err := store.Get(name); err == nil {
 		return fmt.Errorf("session %q already exists", name)
 	}
