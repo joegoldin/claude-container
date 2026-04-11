@@ -272,6 +272,9 @@ func createSession(opts createOpts) error {
 	if repoErr != nil && !opts.noWorktree {
 		return fmt.Errorf("not inside a git repository (use --no-worktree to skip worktree creation): %w", repoErr)
 	}
+	if repoRoot == "" {
+		repoRoot = cwd // non-git directory uses CWD as repo identity
+	}
 
 	// Resolve extra workspaces from -W and -w flags.
 	extraWorkspaces, err := resolveWorkspaces(opts.workspace, opts.mounts)
@@ -423,10 +426,13 @@ func createSession(opts createOpts) error {
 		}
 	}
 
-	// f. Ensure shared Claude config dir exists.
-	claudeConfigDir := store.ClaudeConfigDir()
+	// f. Ensure per-repo Claude config dir exists.
+	claudeConfigDir := store.RepoConfigDir(repoRoot)
 	if err := os.MkdirAll(claudeConfigDir, 0o755); err != nil {
 		return fmt.Errorf("create claude config dir: %w", err)
+	}
+	if err := store.UpsertRepo(repoRoot); err != nil {
+		return fmt.Errorf("update repo index: %w", err)
 	}
 
 	if err := requireAuth(store); err != nil {

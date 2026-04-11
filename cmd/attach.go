@@ -118,6 +118,9 @@ func ensureRunning(store *config.Store, name string, sess *config.Session) error
 			settingsJSON, _ := json.MarshalIndent(
 				prof.ManagedSettingsForProxy(8080, extraAllowPerms, extraDenyPerms, sess.Packages), "", "  ")
 			configDir := store.ClaudeConfigDir()
+			if sess.RepoPath != "" {
+				configDir = store.RepoConfigDir(sess.RepoPath)
+			}
 			os.WriteFile(filepath.Join(configDir, "managed-settings.json"), settingsJSON, 0o644)
 		}
 
@@ -126,10 +129,14 @@ func ensureRunning(store *config.Store, name string, sess *config.Session) error
 		} else {
 			fmt.Println("Recreating container with --continue...")
 		}
+		reattachConfigDir := store.ClaudeConfigDir()
+		if sess.RepoPath != "" {
+			reattachConfigDir = store.RepoConfigDir(sess.RepoPath)
+		}
 		detachedArgs := docker.RunArgs(docker.RunOpts{
 			Name:            name,
 			Workspace:       sess.WorktreePath,
-			ConfigDir:       store.ClaudeConfigDir(),
+			ConfigDir:       reattachConfigDir,
 			HostClaudeFiles: config.HostClaudeCredentialFiles(),
 			UID:             docker.ContainerUID(),
 			GID:             docker.ContainerGID(),
