@@ -230,6 +230,99 @@ func (s *Store) ContainerConfigDir(name string) string {
 	return filepath.Join(s.dir, "containers", name)
 }
 
+// PrepareSessionConfig creates a per-session config directory and populates
+// it based on the resume mode. Returns the path to the session config dir.
+//
+// resumeMode values:
+//   - ""           : fresh session, no old conversations exposed
+//   - "__picker__" : symlink projects/ from per-repo dir (all conversations)
+//   - "<uuid>"     : symlink only that specific JSONL file
+func (s *Store) PrepareSessionConfig(sessionName, repoPath, resumeMode string) (string, error) {
+	sessionDir := s.ContainerConfigDir(sessionName)
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		return "", fmt.Errorf("create session config dir: %w", err)
+	}
+
+	repoDir := s.RepoConfigDir(repoPath)
+
+	switch resumeMode {
+	case "__picker__":
+		// Symlink projects/ from per-repo dir so all conversations are visible.
+		repoProjects := filepath.Join(repoDir, "projects")
+		if _, err := os.Stat(repoProjects); err == nil {
+			sessionProjects := filepath.Join(sessionDir, "projects")
+			os.Remove(sessionProjects) // remove stale symlink if exists
+			if err := os.Symlink(repoProjects, sessionProjects); err != nil {
+				return "", fmt.Errorf("symlink projects dir: %w", err)
+			}
+		}
+	case "":
+		// Fresh session: no projects/ dir, conversations are hidden.
+	default:
+		// Specific resume ID: expose only that one JSONL file.
+		repoWS := filepath.Join(repoDir, "projects", "-workspace")
+		jsonlFile := resumeMode + ".jsonl"
+		src := filepath.Join(repoWS, jsonlFile)
+		if _, err := os.Stat(src); err == nil {
+			sessionWS := filepath.Join(sessionDir, "projects", "-workspace")
+			if err := os.MkdirAll(sessionWS, 0o755); err != nil {
+				return "", fmt.Errorf("create session workspace dir: %w", err)
+			}
+			dst := filepath.Join(sessionWS, jsonlFile)
+			os.Remove(dst) // remove stale symlink
+			if err := os.Symlink(src, dst); err != nil {
+				return "", fmt.Errorf("symlink conversation: %w", err)
+			}
+		}
+	}
+
+	return sessionDir, nil
+}
+
+// SaveNewConversations copies any new JSONL files from the session config
+// dir back to the per-repo config dir for long-term storage.
+func (s *Store) SaveNewConversations(sessionName, repoPath string) error {
+	sessionWS := filepath.Join(s.ContainerConfigDir(sessionName), "projects", "-workspace")
+	repoWS := filepath.Join(s.RepoConfigDir(repoPath), "projects", "-workspace")
+
+	entries, err := os.ReadDir(sessionWS)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // no conversations created
+		}
+		return err
+	}
+
+	if err := os.MkdirAll(repoWS, 0o755); err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
+			continue
+		}
+		src := filepath.Join(sessionWS, entry.Name())
+		// Skip symlinks (these are resumed conversations, already in repo dir)
+		info, err := os.Lstat(src)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		dst := filepath.Join(repoWS, entry.Name())
+		if _, err := os.Stat(dst); err == nil {
+			continue // already exists in repo dir
+		}
+		// Copy the file
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return fmt.Errorf("read conversation %s: %w", entry.Name(), err)
+		}
+		if err := os.WriteFile(dst, data, 0o644); err != nil {
+			return fmt.Errorf("save conversation %s: %w", entry.Name(), err)
+		}
+	}
+	return nil
+}
+
 // Save persists sess into the store, creating the directory and file if
 // needed. If a session with the same name exists it is overwritten.
 func (s *Store) Save(sess *Session) error {

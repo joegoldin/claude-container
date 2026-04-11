@@ -60,6 +60,11 @@ var attachCmd = &cobra.Command{
 			Cleanup:       func(_ string) { removeSession(store, name) },
 		})
 		saveResumeID(store, name)
+		if sess.RepoPath != "" {
+			if err := store.SaveNewConversations(name, sess.RepoPath); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to save conversations: %v\n", err)
+			}
+		}
 		return proxyErr
 	},
 }
@@ -95,6 +100,16 @@ func ensureRunning(store *config.Store, name string, sess *config.Session) error
 		}
 		return nil
 	default:
+		// Prepare per-session config dir with selective conversation exposure.
+		reattachConfigDir := store.ContainerConfigDir(name)
+		if sess.RepoPath != "" {
+			var prepErr error
+			reattachConfigDir, prepErr = store.PrepareSessionConfig(name, sess.RepoPath, sess.ResumeID)
+			if prepErr != nil {
+				return fmt.Errorf("prepare session config: %w", prepErr)
+			}
+		}
+
 		// Regenerate managed settings from stored profile.
 		profile := sess.Profile
 		if profile == "" {
@@ -117,21 +132,13 @@ func ensureRunning(store *config.Store, name string, sess *config.Session) error
 
 			settingsJSON, _ := json.MarshalIndent(
 				prof.ManagedSettingsForProxy(8080, extraAllowPerms, extraDenyPerms, sess.Packages), "", "  ")
-			configDir := store.ClaudeConfigDir()
-			if sess.RepoPath != "" {
-				configDir = store.RepoConfigDir(sess.RepoPath)
-			}
-			os.WriteFile(filepath.Join(configDir, "managed-settings.json"), settingsJSON, 0o644)
+			os.WriteFile(filepath.Join(reattachConfigDir, "managed-settings.json"), settingsJSON, 0o644)
 		}
 
 		if sess.ResumeID != "" {
 			fmt.Printf("Recreating container with --resume %s...\n", sess.ResumeID)
 		} else {
 			fmt.Println("Recreating container with --continue...")
-		}
-		reattachConfigDir := store.ClaudeConfigDir()
-		if sess.RepoPath != "" {
-			reattachConfigDir = store.RepoConfigDir(sess.RepoPath)
 		}
 		detachedArgs := docker.RunArgs(docker.RunOpts{
 			Name:            name,

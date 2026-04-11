@@ -444,12 +444,18 @@ func createSession(opts createOpts) error {
 	}
 
 	// f. Ensure per-repo Claude config dir exists.
-	claudeConfigDir := store.RepoConfigDir(repoRoot)
-	if err := os.MkdirAll(claudeConfigDir, 0o755); err != nil {
-		return fmt.Errorf("create claude config dir: %w", err)
+	repoConfigDir := store.RepoConfigDir(repoRoot)
+	if err := os.MkdirAll(repoConfigDir, 0o755); err != nil {
+		return fmt.Errorf("create repo config dir: %w", err)
 	}
 	if err := store.UpsertRepo(repoRoot); err != nil {
 		return fmt.Errorf("update repo index: %w", err)
+	}
+
+	// Prepare per-session config dir with selective conversation exposure.
+	claudeConfigDir, err := store.PrepareSessionConfig(name, repoRoot, opts.resume)
+	if err != nil {
+		return fmt.Errorf("prepare session config: %w", err)
 	}
 
 	if err := requireAuth(store); err != nil {
@@ -578,6 +584,9 @@ func createSession(opts createOpts) error {
 	})
 	// Save resume ID from container logs so future reattach uses --resume.
 	saveResumeID(store, name)
+	if err := store.SaveNewConversations(name, repoRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to save conversations: %v\n", err)
+	}
 	return proxyErr
 }
 
