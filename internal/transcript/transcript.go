@@ -27,7 +27,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 )
 
 // ansiRe matches ANSI escape sequences. We strip these when rendering text
@@ -244,6 +246,121 @@ func renderBlock(w io.Writer, block map[string]any, opts RenderOptions) {
 			}
 		}
 	}
+}
+
+// ConversationInfo holds metadata about a single conversation JSONL file.
+type ConversationInfo struct {
+	ID      string    // UUID from filename (without .jsonl extension)
+	Path    string    // full path to JSONL file
+	ModTime time.Time // file modification time
+	Size    int64     // file size in bytes
+	Preview string    // first user message (truncated to 80 chars)
+}
+
+// ScanConversations finds all JSONL conversation files under configDir and
+// returns metadata for each, sorted by modification time descending.
+// The configDir should be a per-repo config dir (e.g. store.RepoConfigDir(path)).
+func ScanConversations(configDir string) ([]ConversationInfo, error) {
+	projectsDir := filepath.Join(configDir, "projects")
+	if _, err := os.Stat(projectsDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var convos []ConversationInfo
+	err := filepath.WalkDir(projectsDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".jsonl") {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		base := filepath.Base(path)
+		id := strings.TrimSuffix(base, ".jsonl")
+		ci := ConversationInfo{
+			ID:      id,
+			Path:    path,
+			ModTime: info.ModTime(),
+			Size:    info.Size(),
+			Preview: extractPreview(path),
+		}
+		convos = append(convos, ci)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(convos, func(i, j int) bool {
+		return convos[i].ModTime.After(convos[j].ModTime)
+	})
+	return convos, nil
+}
+
+// extractPreview reads the first user message from a JSONL file and returns
+// it truncated to 80 characters. Returns "(no preview)" if none found.
+func extractPreview(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return "(no preview)"
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1<<20), 8<<20)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var entry map[string]any
+		if err := json.Unmarshal(line, &entry); err != nil {
+			continue
+		}
+		msg, ok := entry["message"].(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+		if role != "user" {
+			continue
+		}
+		// Extract text from content.
+		var text string
+		switch content := msg["content"].(type) {
+		case string:
+			text = content
+		case []any:
+			for _, block := range content {
+				b, ok := block.(map[string]any)
+				if !ok {
+					continue
+				}
+				if t, ok := b["text"].(string); ok {
+					text = t
+					break
+				}
+			}
+		}
+		text = strings.TrimSpace(stripANSI(text))
+		if text == "" {
+			continue
+		}
+		// Collapse whitespace to single spaces.
+		text = strings.Join(strings.Fields(text), " ")
+		if len(text) > 80 {
+			text = text[:77] + "..."
+		}
+		return text
+	}
+	return "(no preview)"
 }
 
 // EncodeHostCwd returns the claude-code-style encoding of a host cwd, which

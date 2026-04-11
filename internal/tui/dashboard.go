@@ -32,8 +32,10 @@ type DashboardModel struct {
 	creatingDir string // directory chosen for new session
 	dirInput    textinput.Model
 	pickingDir  bool // true when directory input is active
-	confirming  bool // true when awaiting y/n confirmation for remove
-	confirmName string // session name pending removal
+	confirming        bool // true when awaiting y/n confirmation for remove
+	confirmName       string // session name pending removal
+	showConversations bool
+	convosModel       ConversationsModel
 }
 
 // Internal message types.
@@ -100,6 +102,18 @@ func (m DashboardModel) refreshSessions() tea.Cmd {
 
 // Update processes messages and returns the updated model and any commands.
 func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Delegate to conversations view when active.
+	if m.showConversations {
+		updated, cmd := m.convosModel.Update(msg)
+		m.convosModel = updated.(ConversationsModel)
+		if m.convosModel.GoBack() {
+			m.showConversations = false
+			m.convosModel = ConversationsModel{}
+			return m, m.refreshSessions()
+		}
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 
 	case tea.KeyMsg:
@@ -213,6 +227,11 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.refreshSessions()
 
+		case "c":
+			m.convosModel = NewConversations(m.store)
+			m.showConversations = true
+			return m, m.convosModel.Init()
+
 		case "x":
 			if len(m.sessions) > 0 {
 				idx := m.cursor
@@ -254,6 +273,10 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m DashboardModel) View() string {
 	if m.quitting {
 		return ""
+	}
+
+	if m.showConversations {
+		return m.convosModel.View()
 	}
 
 	contentW := m.width - 4 // border padding
@@ -375,7 +398,7 @@ func (m DashboardModel) View() string {
 		)
 	} else {
 		bottom = helpStyle.Render(
-			"  ↑/↓ navigate  enter attach  n new  d stop  x remove  q quit",
+			"  ↑/↓ navigate  enter attach  n new  d stop  x remove  c convos  q quit",
 		)
 	}
 
