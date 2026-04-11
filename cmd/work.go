@@ -22,6 +22,7 @@ var (
 	workDenyPaths    []string
 	workProxyPreset string
 	workProxyPort   int
+	workResume         string
 	workAllowCommands  []string
 	workDenyCommands   []string
 )
@@ -46,6 +47,7 @@ var workCmd = &cobra.Command{
 			from:          workFrom,
 			yolo:          workYolo,
 			prompt:        workPrompt,
+			resume:        workResume,
 			background:    workBackground,
 			autoRemove:    workAutoRemove,
 			mounts:        workMounts,
@@ -63,6 +65,8 @@ var workCmd = &cobra.Command{
 
 func init() {
 	workCmd.Flags().BoolVar(&workYolo, "yolo", false, "Skip permission prompts")
+	workCmd.Flags().StringVar(&workResume, "resume", "", "Resume a previous conversation (pass ID or empty for picker)")
+	workCmd.Flags().Lookup("resume").NoOptDefVal = "__picker__"
 	workCmd.Flags().StringVarP(&workPrompt, "prompt", "p", "", "Initial prompt to send to Claude")
 	workCmd.Flags().StringVar(&workName, "name", "", "Session name (auto-generated if omitted)")
 	workCmd.Flags().StringVar(&workFrom, "from", "", "Base branch for worktree (default: current HEAD)")

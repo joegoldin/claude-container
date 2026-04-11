@@ -21,6 +21,7 @@ var (
 	runDenyPaths    []string
 	runProxyPreset string
 	runProxyPort   int
+	runResume         string
 	runAllowCommands  []string
 	runDenyCommands   []string
 )
@@ -44,6 +45,7 @@ var runCmd = &cobra.Command{
 			noWorktree:    true,
 			yolo:          runYolo,
 			prompt:        runPrompt,
+			resume:        runResume,
 			background:    runBackground,
 			autoRemove:    runAutoRemove,
 			mounts:        runMounts,
@@ -61,6 +63,8 @@ var runCmd = &cobra.Command{
 
 func init() {
 	runCmd.Flags().BoolVar(&runYolo, "yolo", false, "Skip permission prompts")
+	runCmd.Flags().StringVar(&runResume, "resume", "", "Resume a previous conversation (pass ID or empty for picker)")
+	runCmd.Flags().Lookup("resume").NoOptDefVal = "__picker__"
 	runCmd.Flags().StringVarP(&runPrompt, "prompt", "p", "", "Initial prompt to send to Claude")
 	runCmd.Flags().StringVar(&runName, "name", "", "Session name (auto-generated if omitted)")
 	runCmd.Flags().BoolVarP(&runBackground, "background", "b", false, "Don't attach after creation")

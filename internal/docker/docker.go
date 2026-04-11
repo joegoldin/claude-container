@@ -220,7 +220,9 @@ func RunArgs(opts RunOpts, detached bool) []string {
 	if opts.Yolo && !IsRootless() {
 		args = append(args, "--dangerously-skip-permissions")
 	}
-	if opts.Resume != "" {
+	if opts.Resume == "__picker__" {
+		args = append(args, "--resume")
+	} else if opts.Resume != "" {
 		args = append(args, "--resume", opts.Resume)
 	} else if opts.Continue {
 		args = append(args, "--continue")

@@ -37,6 +37,7 @@ var (
 	newDenyPaths     []string
 	newProxyPreset string // --preset
 	newProxyPort   int
+	newResume         string
 	newAllowCommands  []string
 	newDenyCommands   []string
 	newAllowPerms     []string
@@ -52,6 +53,7 @@ type createOpts struct {
 	noWorktree   bool
 	yolo         bool
 	prompt       string
+	resume       string   // --resume flag value
 	cont         bool     // "continue" is a keyword
 	background   bool     // don't auto-attach after creation
 	autoRemove   bool     // clean up session when it stops
@@ -170,6 +172,7 @@ var newCmd = &cobra.Command{
 			noWorktree:    newNoWorktree,
 			yolo:          newYolo,
 			prompt:        newPrompt,
+			resume:        newResume,
 			cont:          newContinue,
 			background:    newBackground,
 			autoRemove:    newAutoRemove,
@@ -196,6 +199,8 @@ func init() {
 	newCmd.Flags().BoolVar(&newNoWorktree, "no-worktree", false, "Use current directory directly")
 	newCmd.Flags().BoolVar(&newYolo, "yolo", false, "Skip permission prompts")
 	newCmd.Flags().StringVarP(&newPrompt, "prompt", "p", "", "Initial prompt to send to Claude")
+	newCmd.Flags().StringVar(&newResume, "resume", "", "Resume a previous conversation (pass ID or empty for picker)")
+	newCmd.Flags().Lookup("resume").NoOptDefVal = "__picker__"
 	newCmd.Flags().BoolVarP(&newContinue, "continue", "c", false, "Resume previous conversation")
 	newCmd.Flags().BoolVarP(&newBackground, "background", "b", false, "Don't attach after creation")
 	newCmd.Flags().BoolVar(&newAutoRemove, "rm", false, "Auto-remove session when it exits")
@@ -262,6 +267,10 @@ func resolveWorkspaces(workspaceName string, mounts []string) ([]string, error) 
 }
 
 func createSession(opts createOpts) error {
+	if opts.resume != "" && opts.cont {
+		return fmt.Errorf("--resume and --continue cannot be used together")
+	}
+
 	// a. Get cwd and resolve repo root.
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -482,7 +491,8 @@ func createSession(opts createOpts) error {
 		GID:             docker.ContainerGID(),
 		Yolo:            prof.Yolo,
 		Prompt:          opts.prompt,
-		Continue:        opts.cont,
+		Resume:          opts.resume,
+		Continue:        opts.cont && opts.resume == "",
 		ExtraWorkspaces: extraWorkspaces,
 		ProxyEnabled:       true,
 		ProxyCACertDir:     httpproxy.CACertDir(config.DefaultDir()),
