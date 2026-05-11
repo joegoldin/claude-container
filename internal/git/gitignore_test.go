@@ -17,9 +17,16 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func setupRepo(t *testing.T, dir string) {
+	t.Helper()
+	runGit(t, dir, "init", "-q")
+	runGit(t, dir, "config", "user.email", "t@t")
+	runGit(t, dir, "config", "user.name", "t")
+}
+
 func TestEnsureIgnored_AlreadyIgnored(t *testing.T) {
 	dir := t.TempDir()
-	runGit(t, dir, "init", "-q")
+	setupRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".worktrees/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +41,7 @@ func TestEnsureIgnored_AlreadyIgnored(t *testing.T) {
 
 func TestEnsureIgnored_NotIgnored_AppendsAndReturnsTrue(t *testing.T) {
 	dir := t.TempDir()
-	runGit(t, dir, "init", "-q")
+	setupRepo(t, dir)
 	added, err := EnsureIgnored(dir, ".worktrees")
 	if err != nil {
 		t.Fatalf("unexpected: %v", err)
@@ -53,7 +60,7 @@ func TestEnsureIgnored_NotIgnored_AppendsAndReturnsTrue(t *testing.T) {
 
 func TestEnsureIgnored_GitignoreExistsButMissingEntry(t *testing.T) {
 	dir := t.TempDir()
-	runGit(t, dir, "init", "-q")
+	setupRepo(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("node_modules/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +71,10 @@ func TestEnsureIgnored_GitignoreExistsButMissingEntry(t *testing.T) {
 	if !added {
 		t.Fatal("expected added=true")
 	}
-	data, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
 	got := string(data)
 	if !strings.Contains(got, "node_modules/") || !strings.Contains(got, ".worktrees/") {
 		t.Fatalf("expected both entries; got %q", got)
