@@ -6,3 +6,6 @@ vendor/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Dev shell
+.devenv/
