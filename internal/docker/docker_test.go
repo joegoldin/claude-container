@@ -611,3 +611,45 @@ func TestACPRunArgs_UsesRmAndStdinNoTTY(t *testing.T) {
 		t.Fatalf("expected last arg = claude-agent-acp, got %q", args[len(args)-1])
 	}
 }
+
+func TestACPRunArgs_DefaultModeIsACP(t *testing.T) {
+	args := ACPRunArgs(RunOpts{
+		Name:      "acp1",
+		Workspace: "/tmp/ws",
+		ConfigDir: "/tmp/cfg",
+		// Mode left empty — must default to "acp".
+	})
+	if !containsEnv(args, "CLAUDE_CONTAINER_MODE=acp") {
+		t.Fatalf("expected CLAUDE_CONTAINER_MODE=acp env when Mode empty, got: %v", args)
+	}
+}
+
+func TestACPRunArgs_ProxyEnabledEmitsNetworkAndCA(t *testing.T) {
+	args := ACPRunArgs(RunOpts{
+		Name:               "acp1",
+		Workspace:          "/tmp/ws",
+		ConfigDir:          "/tmp/cfg",
+		ProxyEnabled:       true,
+		ProxyCACertDir:     "/tmp/ca",
+		ProxyDashboardPort: 9000,
+	})
+
+	hasNetwork := false
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--network" && args[i+1] == "container:claude-proxy_acp1" {
+			hasNetwork = true
+		}
+	}
+	if !hasNetwork {
+		t.Fatalf("expected --network container:claude-proxy_acp1, got: %v", args)
+	}
+	if !containsEnv(args, "CLAUDE_PROXY_DASHBOARD_URL=http://127.0.0.1:8081") {
+		t.Fatalf("expected CLAUDE_PROXY_DASHBOARD_URL env, got: %v", args)
+	}
+	if !containsEnv(args, "CLAUDE_PROXY_DASHBOARD_HOST_URL=http://localhost:9000") {
+		t.Fatalf("expected CLAUDE_PROXY_DASHBOARD_HOST_URL env with the dashboard port, got: %v", args)
+	}
+	if !containsEnv(args, "SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem") {
+		t.Fatalf("expected SSL_CERT_FILE env, got: %v", args)
+	}
+}
