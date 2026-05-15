@@ -102,6 +102,9 @@ type RunOpts struct {
 	// proxy's network namespace. The proxy container is named after the
 	// session (opts.Name), not after a profile.
 	ProxyEnabled bool
+	// Mode is one of "tty", "acp", "task", "background". Passed to the
+	// container as CLAUDE_CONTAINER_MODE. Empty defaults to "tty".
+	Mode string
 }
 
 // RunArgs returns the docker run command arguments for a persistent
@@ -198,6 +201,12 @@ func RunArgs(opts RunOpts, detached bool) []string {
 		"-e", fmt.Sprintf("USER_UID=%d", opts.UID),
 		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
 	)
+
+	mode := opts.Mode
+	if mode == "" {
+		mode = "tty"
+	}
+	args = append(args, "-e", "CLAUDE_CONTAINER_MODE="+mode)
 
 	// Persistent Nix store for runtime package installs.
 	args = append(args, "-v", "claude-nix-store:/nix/var")
@@ -320,6 +329,12 @@ func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
 		"-e", fmt.Sprintf("USER_UID=%d", opts.UID),
 		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
 	)
+
+	mode := opts.Mode
+	if mode == "" {
+		mode = "task"
+	}
+	args = append(args, "-e", "CLAUDE_CONTAINER_MODE="+mode)
 
 	// Persistent Nix store for runtime package installs.
 	args = append(args, "-v", "claude-nix-store:/nix/var")

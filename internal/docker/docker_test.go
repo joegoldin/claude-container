@@ -203,8 +203,8 @@ func TestRunArgsEnvVars(t *testing.T) {
 			envCount++
 		}
 	}
-	if envCount != 3 {
-		t.Errorf("RunArgs has %d -e flags, want 3", envCount)
+	if envCount != 4 {
+		t.Errorf("RunArgs has %d -e flags, want 4", envCount)
 	}
 }
 
@@ -537,4 +537,37 @@ func TestTaskRunArgsMaxTurns(t *testing.T) {
 	if !strings.Contains(joined, "--max-turns 5") {
 		t.Errorf("TaskRunArgs missing --max-turns 5 in %v", args)
 	}
+}
+
+func TestRunArgs_PassesCLAUDE_CONTAINER_MODE(t *testing.T) {
+	args := RunArgs(RunOpts{
+		Name:      "s1",
+		Workspace: "/tmp/ws",
+		ConfigDir: "/tmp/cfg",
+		Mode:      "acp",
+	}, true)
+	if !containsEnv(args, "CLAUDE_CONTAINER_MODE=acp") {
+		t.Fatalf("expected CLAUDE_CONTAINER_MODE=acp env, got: %v", args)
+	}
+}
+
+func TestRunArgs_DefaultModeIsTTY(t *testing.T) {
+	args := RunArgs(RunOpts{
+		Name:      "s1",
+		Workspace: "/tmp/ws",
+		ConfigDir: "/tmp/cfg",
+	}, true)
+	if !containsEnv(args, "CLAUDE_CONTAINER_MODE=tty") {
+		t.Fatalf("expected CLAUDE_CONTAINER_MODE=tty env (default), got: %v", args)
+	}
+}
+
+// containsEnv reports whether docker args contain a -e value matching want.
+func containsEnv(args []string, want string) bool {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "-e" && args[i+1] == want {
+			return true
+		}
+	}
+	return false
 }
