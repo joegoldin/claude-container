@@ -8,17 +8,18 @@ dashboard.
 
 ## Build & test commands
 
-The dev shell provides `go`, `git`, `docker`, and `nix`. Prefix any command with
-`nix develop --command` (or run inside `nix develop` once and use bare commands).
+The dev shell is managed by **devenv** (config in `devenv.nix` and `devenv.yaml`).
+It provides `go`, `gopls`, `dlv`, `git`, and `docker`. `nix build`, `nix flake
+check`, etc. still work — only the dev shell entry changed from `nix develop`.
 
 ```bash
-nix develop                                  # enter dev shell
-go build ./...                               # compile entire workspace
-go test ./<package>/                         # run one package's tests (fast)
-go test ./<package>/ -run TestName -v        # run one test
-go test ./...                                # run every package (slow)
-go test -tags=integration ./...              # add real-docker integration tests
-go vet ./...                                 # static analysis
+devenv shell                                 # enter dev shell
+devenv shell -- go build ./...               # one-shot: compile entire workspace
+devenv shell -- go test ./<package>/         # one-shot: run one package's tests
+devenv shell -- go test ./<package>/ -run TestName -v   # one test
+devenv shell -- go test ./...                # run every package (slow)
+devenv shell -- go test -tags=integration ./...         # real-docker integration tests
+devenv shell -- go vet ./...                 # static analysis
 nix build                                    # full build with completions + wrapping
 ```
 

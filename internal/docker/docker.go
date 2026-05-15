@@ -373,6 +373,81 @@ func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
 	return args
 }
 
+// ACPRunArgs returns docker run arguments for an ephemeral ACP container.
+// The container runs `claude-agent-acp` with --rm and -i (no TTY) so the
+// host can bridge stdio to the JSON-RPC client.
+//
+// All proxy / config / mounts behave the same as RunArgs; the only differences
+// are the lack of a PTY, the use of --rm, and the agent binary as the command.
+func ACPRunArgs(opts RunOpts) []string {
+	name := ContainerName(opts.Name)
+
+	args := []string{
+		"run",
+		"--name", name,
+		"--rm",
+		"-i",
+	}
+
+	// Mount primary workspace (ACP never uses worktree mode, so opts.Workspace
+	// is the host pwd in practice). The same skip logic applies for symmetry.
+	if opts.Workspace != "" && opts.WorktreeBranch == "" {
+		args = append(args, "-v", opts.Workspace+":/workspace")
+	}
+
+	for _, ws := range opts.ExtraWorkspaces {
+		base := filepath.Base(ws)
+		args = append(args, "-v", ws+":/workspace/"+base)
+	}
+
+	if opts.ProxyEnabled {
+		proxyContainer := "claude-proxy_" + opts.Name
+		args = append(args,
+			"--network", "container:"+proxyContainer,
+			"-e", "CLAUDE_PROXY_DASHBOARD_URL=http://127.0.0.1:8081",
+		)
+		if opts.ProxyDashboardPort > 0 {
+			args = append(args,
+				"-e", fmt.Sprintf("CLAUDE_PROXY_DASHBOARD_HOST_URL=http://localhost:%d", opts.ProxyDashboardPort),
+			)
+		}
+		if opts.ProxyCACertDir != "" {
+			args = append(args,
+				"-v", opts.ProxyCACertDir+":/proxy-ca:ro",
+				"-e", "SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
+				"-e", "NIX_SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem",
+				"-e", "NODE_EXTRA_CA_CERTS=/proxy-ca/mitmproxy-ca-cert.pem",
+			)
+		}
+	}
+
+	args = append(args,
+		"-v", opts.ConfigDir+":/claude",
+		"-e", "CLAUDE_CONFIG_DIR=/claude",
+		"-e", fmt.Sprintf("USER_UID=%d", opts.UID),
+		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
+	)
+
+	mode := opts.Mode
+	if mode == "" {
+		mode = "acp"
+	}
+	args = append(args, "-e", "CLAUDE_CONTAINER_MODE="+mode)
+
+	args = append(args, "-v", "claude-nix-store:/nix/var")
+
+	if len(opts.Packages) > 0 {
+		args = append(args, "-e", "EXTRA_PACKAGES="+strings.Join(opts.Packages, ","))
+	}
+
+	for _, f := range opts.HostClaudeFiles {
+		args = append(args, "-v", f+":/mnt/claude-host/"+filepath.Base(f)+":ro")
+	}
+
+	args = append(args, ImageTag(), "claude-agent-acp")
+	return args
+}
+
 // ShellArgs returns the docker run command arguments for an ephemeral
 // debug shell. Unlike RunArgs the container IS created with --rm.
 func ShellArgs(workspace, configDir string, hostClaudeFiles []string, uid, gid int) []string {

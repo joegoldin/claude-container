@@ -571,3 +571,43 @@ func containsEnv(args []string, want string) bool {
 	}
 	return false
 }
+
+func TestACPRunArgs_UsesRmAndStdinNoTTY(t *testing.T) {
+	args := ACPRunArgs(RunOpts{
+		Name:      "acp1",
+		Workspace: "/tmp/ws",
+		ConfigDir: "/tmp/cfg",
+		Mode:      "acp",
+	})
+
+	if args[0] != "run" {
+		t.Fatalf("expected first arg to be 'run', got %q", args[0])
+	}
+	hasRm := false
+	hasI := false
+	hasIT := false
+	for _, a := range args {
+		if a == "--rm" {
+			hasRm = true
+		}
+		if a == "-i" {
+			hasI = true
+		}
+		if a == "-it" || a == "-dit" {
+			hasIT = true
+		}
+	}
+	if !hasRm {
+		t.Fatal("expected --rm")
+	}
+	if !hasI {
+		t.Fatal("expected -i")
+	}
+	if hasIT {
+		t.Fatal("expected no -it/-dit (ACP must not allocate a TTY)")
+	}
+	// Final arg should be the agent binary, not "claude".
+	if args[len(args)-1] != "claude-agent-acp" {
+		t.Fatalf("expected last arg = claude-agent-acp, got %q", args[len(args)-1])
+	}
+}
