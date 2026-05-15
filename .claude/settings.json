@@ -1,11 +1,15 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
-    "defaultMode": "dontAsk",
+    "defaultMode": "auto",
     "allow": [
       "Read",
       "Edit",
       "Write",
+      "Edit(./**)",
+      "Write(./**)",
+      "Edit(/tmp/**)",
+      "Write(/tmp/**)",
       "Grep",
       "Glob",
       "TodoWrite",
@@ -61,6 +65,7 @@
       "Bash(ls *)",
       "Bash(ls)",
       "Bash(find *)",
+      "Bash(rm *)",
       "Bash(rg *)",
       "Bash(grep *)",
       "Bash(cat *)",
@@ -320,6 +325,23 @@
           }
         ]
       }
+    ]
+  },
+  "autoMode": {
+    "environment": [
+      "$defaults",
+      "Project: claude-container — a Go CLI by joegoldin (joe@joegold.in) for running multiple Claude Code instances in isolated Docker containers with per-session mitmproxy sidecars and a Bubble Tea TUI.",
+      "Source control: github.com/joegoldin/claude-container — pushes here are routine; pushes to any other org or repo are not.",
+      "Local Docker daemon is trusted: claude-container's whole purpose is to spawn local containers from the claude-container:* and claude-proxy:* images it builds. Reading/writing /var/run/docker.sock is expected for this project.",
+      "Trusted local images: claude-container:* and claude-proxy:* are built locally via nix and the project's Dockerfile. They are NOT pulled from any registry.",
+      "Build infrastructure: nix substituters cache.nixos.org and *.cachix.org are trusted. devenv reads/writes ./.devenv and ~/.cache/nix.",
+      "Go module fetches via proxy.golang.org and sum.golang.org are trusted for go build/test."
+    ],
+    "soft_deny": [
+      "$defaults",
+      "Never pull container images from any registry. Only run claude-container:* and claude-proxy:* images built locally.",
+      "Never run git push under any circumstances. The user pushes manually; if asked to push, decline and tell the user to do it themselves.",
+      "Never modify ~/.ssh, ~/.aws, ~/.gnupg, ~/.config/gh, ~/.docker, ~/.kube, or any credentials directory."
     ]
   }
 }
