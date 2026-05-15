@@ -32,6 +32,7 @@ type Session struct {
 	ContainerName   string    `json:"container_name"`
 	Yolo            bool      `json:"yolo"`
 	AutoRemove      bool      `json:"auto_remove,omitempty"`
+	Mode            string    `json:"mode,omitempty"` // tty, acp, task, background; default tty for old records
 	ResumeID        string    `json:"resume_id,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	Profile         string    `json:"profile,omitempty"`
@@ -490,6 +491,11 @@ func (s *Store) loadLocked() ([]*Session, error) {
 	var sessions []*Session
 	if err := json.Unmarshal(data, &sessions); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	for _, sess := range sessions {
+		if sess.Mode == "" {
+			sess.Mode = "tty"
+		}
 	}
 	return sessions, nil
 }

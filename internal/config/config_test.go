@@ -498,3 +498,36 @@ func TestSanitizeName(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionUnmarshal_OldRecordDefaultsModeToTTY(t *testing.T) {
+	dir := t.TempDir()
+	// Old records had no `mode` field. Write a sessions.json missing the field.
+	old := `[{"name":"old","branch":"main","worktree_path":"","repo_path":"/tmp/x","container_name":"c","yolo":false,"created_at":"2025-01-01T00:00:00Z"}]`
+	if err := os.WriteFile(filepath.Join(dir, "sessions.json"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewStore(dir)
+	s, err := store.Get("old")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if s.Mode != "tty" {
+		t.Fatalf("expected Mode=tty for old record, got %q", s.Mode)
+	}
+}
+
+func TestSessionRoundTrip_PreservesMode(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if err := store.Save(&Session{Name: "acp1", Mode: "acp", CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := store.Get("acp1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Mode != "acp" {
+		t.Fatalf("expected Mode=acp, got %q", got.Mode)
+	}
+}
