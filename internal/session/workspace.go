@@ -2,6 +2,8 @@ package session
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
 )
@@ -35,6 +37,49 @@ func ResolveWorkspace(cwd string, opts Opts) (Workspace, error) {
 		return Workspace{HostPath: cwd}, nil
 	}
 
-	// 2. Git repo + worktree mode (auto or always). Implemented in Task 7.
-	return Workspace{}, fmt.Errorf("worktree resolution not implemented yet")
+	// 2. Git repo + worktree mode.
+	base, err := pickWorktreeBase(repoRoot)
+	if err != nil {
+		return Workspace{}, fmt.Errorf("pick worktree base: %w", err)
+	}
+
+	added, ignErr := gitpkg.EnsureIgnored(repoRoot, base)
+	if ignErr != nil {
+		// .gitignore not writable — fall back to global location (Task 9).
+		return Workspace{}, fmt.Errorf("ensure ignored: %w (fallback not implemented)", ignErr)
+	}
+	if added {
+		fmt.Fprintf(os.Stderr, "note: added %s/ to .gitignore — commit when convenient\n", base)
+	}
+
+	branch := opts.WorktreeName
+	if branch == "" {
+		branch = opts.Name
+	}
+	if branch == "" {
+		return Workspace{}, fmt.Errorf("worktree mode requires a session name")
+	}
+
+	return Workspace{
+		RepoPath: repoRoot,
+		Worktree: true,
+		Branch:   branch,
+	}, nil
+}
+
+// pickWorktreeBase returns the base directory name (relative to repoRoot)
+// where new worktrees should live. Priority: existing .worktrees, then
+// existing worktrees, then create .worktrees.
+func pickWorktreeBase(repoRoot string) (string, error) {
+	candidates := []string{".worktrees", "worktrees"}
+	for _, c := range candidates {
+		if info, err := os.Stat(filepath.Join(repoRoot, c)); err == nil && info.IsDir() {
+			return c, nil
+		}
+	}
+	// Create the hidden default.
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".worktrees"), 0o755); err != nil {
+		return "", err
+	}
+	return ".worktrees", nil
 }
