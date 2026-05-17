@@ -100,3 +100,32 @@ func TestResolveWorkspace_Git_DotWorktreesAlreadyIgnored(t *testing.T) {
 		t.Errorf("HostPath should be empty for worktree, got %q", ws.HostPath)
 	}
 }
+
+func TestResolveWorkspace_Git_CreatesWorktreesDirWhenMissing(t *testing.T) {
+	repo := setupGitRepo(t)
+	// Pre-ignore .worktrees so ResolveWorkspace doesn't need to mutate
+	// .gitignore — this test focuses on the directory creation path.
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".worktrees/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Confirm .worktrees does not exist yet.
+	if _, err := os.Stat(filepath.Join(repo, ".worktrees")); err == nil {
+		t.Fatal("precondition: .worktrees should not exist yet")
+	}
+
+	ws, err := ResolveWorkspace(repo, Opts{Mode: ModeTTY, WorktreeMode: WorktreeAuto, Name: "mkdir-test"})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if !ws.Worktree {
+		t.Error("Worktree should be true")
+	}
+	// The directory should now exist on disk.
+	info, err := os.Stat(filepath.Join(repo, ".worktrees"))
+	if err != nil {
+		t.Fatalf(".worktrees was not created: %v", err)
+	}
+	if !info.IsDir() {
+		t.Error(".worktrees was created but is not a directory")
+	}
+}

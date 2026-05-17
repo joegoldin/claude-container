@@ -38,7 +38,7 @@ func ResolveWorkspace(cwd string, opts Opts) (Workspace, error) {
 	}
 
 	// 2. Git repo + worktree mode.
-	base, err := pickWorktreeBase(repoRoot)
+	base, err := ensureWorktreeBase(repoRoot)
 	if err != nil {
 		return Workspace{}, fmt.Errorf("pick worktree base: %w", err)
 	}
@@ -67,10 +67,11 @@ func ResolveWorkspace(cwd string, opts Opts) (Workspace, error) {
 	}, nil
 }
 
-// pickWorktreeBase returns the base directory name (relative to repoRoot)
-// where new worktrees should live. Priority: existing .worktrees, then
-// existing worktrees, then create .worktrees.
-func pickWorktreeBase(repoRoot string) (string, error) {
+// ensureWorktreeBase returns the base directory name (relative to repoRoot)
+// where new worktrees should live, creating it on disk if it doesn't exist.
+// Priority: existing .worktrees, then existing worktrees, then create
+// .worktrees as the default.
+func ensureWorktreeBase(repoRoot string) (string, error) {
 	candidates := []string{".worktrees", "worktrees"}
 	for _, c := range candidates {
 		if info, err := os.Stat(filepath.Join(repoRoot, c)); err == nil && info.IsDir() {
