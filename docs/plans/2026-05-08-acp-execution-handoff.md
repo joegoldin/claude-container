@@ -1,5 +1,9 @@
 # ACP Implementation — Execution Handoff (Mid-Phase-2)
 
+> **SUPERSEDED 2026-05-17:** ACP scope was dropped. See
+> `docs/plans/2026-05-17-transparent-binary-handoff.md` for the active
+> handoff. This file is preserved for historical context.
+
 This document captures the live state of the ACP + transparent-binary
 implementation so a fresh agent can pick up cleanly without replaying the
 preceding conversation.

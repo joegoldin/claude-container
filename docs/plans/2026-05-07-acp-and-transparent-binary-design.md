@@ -1,5 +1,10 @@
 # Transparent Binary + ACP Integration
 
+> **SUPERSEDED 2026-05-17:** ACP scope was dropped (`claude-agent-acp`
+> bills outside Claude Max). See
+> `docs/plans/2026-05-17-transparent-binary-design.md` for the active
+> design. This file is preserved for historical context.
+
 ## Summary
 
 Reshape `claude-container` so the binary feels like a drop-in replacement for `claude` while preserving every existing command. Two new entry points:

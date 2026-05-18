@@ -1,5 +1,10 @@
 # Transparent Binary + ACP Integration Implementation Plan
 
+> **SUPERSEDED 2026-05-17:** ACP scope was dropped. See
+> `docs/plans/2026-05-17-transparent-binary-implementation.md` for the
+> active plan. This file is preserved for historical context.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Reshape `claude-container` so bare invocation creates a sandboxed Claude session and add an `acp` subcommand for ACP-compatible IDEs (Zed). Introduce `internal/session/` as the single launcher that all commands delegate to.
