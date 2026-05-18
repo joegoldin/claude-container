@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -110,5 +111,24 @@ func TestResolveWorkspace_Git_CreatesWorktreesDirWhenMissing(t *testing.T) {
 	}
 	if !info.IsDir() {
 		t.Error(".worktrees was created but is not a directory")
+	}
+}
+
+func TestResolveWorkspace_Git_AppendsGitignore(t *testing.T) {
+	repo := setupGitRepo(t)
+	// .gitignore exists but does NOT include .worktrees.
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := ResolveWorkspace(repo, Opts{Mode: ModeTTY, WorktreeMode: WorktreeAuto, Name: "s1"})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if !ws.Worktree {
+		t.Fatal("expected worktree mode")
+	}
+	data, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	if !strings.Contains(string(data), ".worktrees/") {
+		t.Fatalf(".gitignore was not updated: %q", string(data))
 	}
 }
