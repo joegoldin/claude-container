@@ -52,8 +52,8 @@ take 10–15 minutes; reserve them for phase boundaries and pre-release checks.
   attach (Ctrl+B chord, status bar)
 - `internal/sandbox/` — Sandbox profile definitions (low/default/med/high)
 - `internal/session/` — Session launcher: workspace resolution, container
-  lifecycle, output adapters (TTY/ACP/task/background) — added by the
-  transparent-binary + ACP plan
+  lifecycle, output adapters (TTY/task/background) — added by the
+  transparent-binary plan
 - `internal/transcript/` — JSONL transcript parsing for `extract` and the TUI
 - `internal/tui/` — Bubble Tea dashboard, session list, wizard, conversations
 - `nix/` — Image derivations (`image.nix`, `proxy-image.nix`) and the managed

@@ -18,14 +18,14 @@ type Workspace struct {
 }
 
 // ResolveWorkspace decides whether to create a worktree or pwd-passthrough.
-// See spec at docs/plans/2026-05-07-acp-and-transparent-binary-design.md
+// See spec at docs/plans/2026-05-07-transparent-binary-design.md
 // (Workspace resolution).
 func ResolveWorkspace(cwd string, opts Opts) (Workspace, error) {
 	repoRoot, repoErr := gitpkg.RepoRoot(cwd)
 	inGit := repoErr == nil && repoRoot != ""
 
 	// 1. Forced pwd passthrough.
-	if opts.WorktreeMode == WorktreeNever || opts.Mode == ModeACP {
+	if opts.WorktreeMode == WorktreeNever {
 		ws := Workspace{HostPath: cwd}
 		if inGit {
 			ws.RepoPath = repoRoot

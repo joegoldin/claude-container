@@ -7,7 +7,6 @@ type Mode string
 
 const (
 	ModeTTY        Mode = "tty"
-	ModeACP        Mode = "acp"
 	ModeTask       Mode = "task"
 	ModeBackground Mode = "background"
 )
@@ -21,7 +20,7 @@ const (
 	WorktreeAuto WorktreeMode = iota
 	// WorktreeAlways creates a worktree even if cwd is the repo root. Used by `work`.
 	WorktreeAlways
-	// WorktreeNever forces pwd passthrough. Used by `run` and `acp`.
+	// WorktreeNever forces pwd passthrough. Used by `run`.
 	WorktreeNever
 )
 
@@ -73,16 +72,6 @@ func (o *Opts) ApplyDefaults() {
 		o.WorktreeMode = WorktreeNever
 	}
 	switch o.Mode {
-	case ModeACP:
-		// ACP is always pwd passthrough and always ephemeral.
-		o.WorktreeMode = WorktreeNever
-		o.NoWorktree = true
-		if !o.AutoRemove {
-			o.AutoRemove = true
-		}
-		if o.Profile == "" {
-			o.Profile = "med"
-		}
 	case ModeTask:
 		if !o.AutoRemove {
 			o.AutoRemove = true
@@ -103,7 +92,7 @@ func (o *Opts) Validate() error {
 		return fmt.Errorf("resume and continue cannot both be set")
 	}
 	switch o.Mode {
-	case ModeTTY, ModeACP, ModeTask, ModeBackground, "":
+	case ModeTTY, ModeTask, ModeBackground, "":
 		// ok
 	default:
 		return fmt.Errorf("unknown mode %q", o.Mode)

@@ -544,10 +544,10 @@ func TestRunArgs_PassesCLAUDE_CONTAINER_MODE(t *testing.T) {
 		Name:      "s1",
 		Workspace: "/tmp/ws",
 		ConfigDir: "/tmp/cfg",
-		Mode:      "acp",
+		Mode:      "task",
 	}, true)
-	if !containsEnv(args, "CLAUDE_CONTAINER_MODE=acp") {
-		t.Fatalf("expected CLAUDE_CONTAINER_MODE=acp env, got: %v", args)
+	if !containsEnv(args, "CLAUDE_CONTAINER_MODE=task") {
+		t.Fatalf("expected CLAUDE_CONTAINER_MODE=task env, got: %v", args)
 	}
 }
 
@@ -572,84 +572,3 @@ func containsEnv(args []string, want string) bool {
 	return false
 }
 
-func TestACPRunArgs_UsesRmAndStdinNoTTY(t *testing.T) {
-	args := ACPRunArgs(RunOpts{
-		Name:      "acp1",
-		Workspace: "/tmp/ws",
-		ConfigDir: "/tmp/cfg",
-		Mode:      "acp",
-	})
-
-	if args[0] != "run" {
-		t.Fatalf("expected first arg to be 'run', got %q", args[0])
-	}
-	hasRm := false
-	hasI := false
-	hasIT := false
-	for _, a := range args {
-		if a == "--rm" {
-			hasRm = true
-		}
-		if a == "-i" {
-			hasI = true
-		}
-		if a == "-it" || a == "-dit" {
-			hasIT = true
-		}
-	}
-	if !hasRm {
-		t.Fatal("expected --rm")
-	}
-	if !hasI {
-		t.Fatal("expected -i")
-	}
-	if hasIT {
-		t.Fatal("expected no -it/-dit (ACP must not allocate a TTY)")
-	}
-	// Final arg should be the agent binary, not "claude".
-	if args[len(args)-1] != "claude-agent-acp" {
-		t.Fatalf("expected last arg = claude-agent-acp, got %q", args[len(args)-1])
-	}
-}
-
-func TestACPRunArgs_DefaultModeIsACP(t *testing.T) {
-	args := ACPRunArgs(RunOpts{
-		Name:      "acp1",
-		Workspace: "/tmp/ws",
-		ConfigDir: "/tmp/cfg",
-		// Mode left empty — must default to "acp".
-	})
-	if !containsEnv(args, "CLAUDE_CONTAINER_MODE=acp") {
-		t.Fatalf("expected CLAUDE_CONTAINER_MODE=acp env when Mode empty, got: %v", args)
-	}
-}
-
-func TestACPRunArgs_ProxyEnabledEmitsNetworkAndCA(t *testing.T) {
-	args := ACPRunArgs(RunOpts{
-		Name:               "acp1",
-		Workspace:          "/tmp/ws",
-		ConfigDir:          "/tmp/cfg",
-		ProxyEnabled:       true,
-		ProxyCACertDir:     "/tmp/ca",
-		ProxyDashboardPort: 9000,
-	})
-
-	hasNetwork := false
-	for i := 0; i < len(args)-1; i++ {
-		if args[i] == "--network" && args[i+1] == "container:claude-proxy_acp1" {
-			hasNetwork = true
-		}
-	}
-	if !hasNetwork {
-		t.Fatalf("expected --network container:claude-proxy_acp1, got: %v", args)
-	}
-	if !containsEnv(args, "CLAUDE_PROXY_DASHBOARD_URL=http://127.0.0.1:8081") {
-		t.Fatalf("expected CLAUDE_PROXY_DASHBOARD_URL env, got: %v", args)
-	}
-	if !containsEnv(args, "CLAUDE_PROXY_DASHBOARD_HOST_URL=http://localhost:9000") {
-		t.Fatalf("expected CLAUDE_PROXY_DASHBOARD_HOST_URL env with the dashboard port, got: %v", args)
-	}
-	if !containsEnv(args, "SSL_CERT_FILE=/proxy-ca/mitmproxy-ca-cert.pem") {
-		t.Fatalf("expected SSL_CERT_FILE env, got: %v", args)
-	}
-}

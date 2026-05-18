@@ -520,14 +520,14 @@ func TestSessionUnmarshal_OldRecordDefaultsModeToTTY(t *testing.T) {
 func TestSessionRoundTrip_PreservesMode(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
-	if err := store.Save(&Session{Name: "acp1", Mode: "acp", CreatedAt: time.Now()}); err != nil {
+	if err := store.Save(&Session{Name: "task1", Mode: "task", CreatedAt: time.Now()}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	got, err := store.Get("acp1")
+	got, err := store.Get("task1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Mode != "acp" {
-		t.Fatalf("expected Mode=acp, got %q", got.Mode)
+	if got.Mode != "task" {
+		t.Fatalf("expected Mode=task, got %q", got.Mode)
 	}
 }

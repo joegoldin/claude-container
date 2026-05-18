@@ -32,7 +32,7 @@ type Session struct {
 	ContainerName   string    `json:"container_name"`
 	Yolo            bool      `json:"yolo"`
 	AutoRemove      bool      `json:"auto_remove,omitempty"`
-	Mode            string    `json:"mode,omitempty"` // tty, acp, task, background; default tty for old records
+	Mode            string    `json:"mode,omitempty"` // tty, task, background; default tty for old records
 	ResumeID        string    `json:"resume_id,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	Profile         string    `json:"profile,omitempty"`

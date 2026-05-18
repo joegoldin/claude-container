@@ -60,23 +60,6 @@ func TestResolveWorkspace_Git_WorktreeNever_ForcesPwd(t *testing.T) {
 	}
 }
 
-func TestResolveWorkspace_Git_ACPMode_ForcesPwd(t *testing.T) {
-	repo := setupGitRepo(t)
-	ws, err := ResolveWorkspace(repo, Opts{Mode: ModeACP, WorktreeMode: WorktreeAuto, Name: "x"})
-	if err != nil {
-		t.Fatalf("unexpected: %v", err)
-	}
-	if ws.HostPath != repo {
-		t.Errorf("HostPath: want %q, got %q", repo, ws.HostPath)
-	}
-	if ws.RepoPath != repo {
-		t.Errorf("RepoPath should be set for git repo, got %q", ws.RepoPath)
-	}
-	if ws.Worktree {
-		t.Error("Worktree should be false for ACP mode")
-	}
-}
-
 func TestResolveWorkspace_Git_DotWorktreesAlreadyIgnored(t *testing.T) {
 	repo := setupGitRepo(t)
 	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".worktrees/\n"), 0o644); err != nil {
