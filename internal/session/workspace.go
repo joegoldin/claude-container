@@ -1,6 +1,8 @@
 package session
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,8 +47,22 @@ func ResolveWorkspace(cwd string, opts Opts) (Workspace, error) {
 
 	added, ignErr := gitpkg.EnsureIgnored(repoRoot, base)
 	if ignErr != nil {
-		// .gitignore not writable — fall back to global location (Task 9).
-		return Workspace{}, fmt.Errorf("ensure ignored: %w (fallback not implemented)", ignErr)
+		// .gitignore not writable — fall back to global location.
+		fallback, ferr := globalWorktreeDir(repoRoot, opts)
+		if ferr != nil {
+			return Workspace{}, fmt.Errorf("ensure ignored: %w; fallback failed: %v", ignErr, ferr)
+		}
+		fmt.Fprintf(os.Stderr, "note: %s/.gitignore not writable; using fallback %s\n", repoRoot, fallback)
+		branch := opts.WorktreeName
+		if branch == "" {
+			branch = opts.Name
+		}
+		return Workspace{
+			HostPath: fallback,
+			RepoPath: repoRoot,
+			Worktree: true,
+			Branch:   branch,
+		}, nil
 	}
 	if added {
 		fmt.Fprintf(os.Stderr, "note: added %s/ to .gitignore — commit when convenient\n", base)
@@ -83,4 +99,28 @@ func ensureWorktreeBase(repoRoot string) (string, error) {
 		return "", err
 	}
 	return ".worktrees", nil
+}
+
+// globalWorktreeDir returns $XDG_DATA_HOME/claude-container/worktrees/<repo-id>/<branch>
+// (defaulting XDG_DATA_HOME to ~/.local/share), creating the parent directory if missing.
+func globalWorktreeDir(repoRoot string, opts Opts) (string, error) {
+	xdg := os.Getenv("XDG_DATA_HOME")
+	if xdg == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		xdg = filepath.Join(home, ".local", "share")
+	}
+	hash := sha256.Sum256([]byte(repoRoot))
+	id := hex.EncodeToString(hash[:])[:12]
+	branch := opts.WorktreeName
+	if branch == "" {
+		branch = opts.Name
+	}
+	dir := filepath.Join(xdg, "claude-container", "worktrees", id, branch)
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
 }

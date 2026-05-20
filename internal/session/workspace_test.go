@@ -135,3 +135,30 @@ func TestResolveWorkspace_Git_AppendsGitignore(t *testing.T) {
 		t.Fatalf(".gitignore was not updated: %q", string(data))
 	}
 }
+
+func TestResolveWorkspace_Git_GitignoreReadOnly_FallsBackToGlobal(t *testing.T) {
+	repo := setupGitRepo(t)
+	gi := filepath.Join(repo, ".gitignore")
+	if err := os.WriteFile(gi, []byte("# placeholder\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(gi, 0o644) // so t.TempDir cleanup works
+
+	tmpHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", tmpHome)
+
+	ws, err := ResolveWorkspace(repo, Opts{Mode: ModeTTY, WorktreeMode: WorktreeAuto, Name: "fallback-foo"})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if !ws.Worktree {
+		t.Fatal("expected Worktree=true")
+	}
+	want := filepath.Join(tmpHome, "claude-container", "worktrees")
+	if !strings.HasPrefix(ws.HostPath, want) {
+		t.Fatalf("expected fallback under %q, got %q", want, ws.HostPath)
+	}
+	if ws.Branch != "fallback-foo" {
+		t.Errorf("Branch: want %q, got %q", "fallback-foo", ws.Branch)
+	}
+}
