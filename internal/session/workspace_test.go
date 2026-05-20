@@ -127,7 +127,10 @@ func TestResolveWorkspace_Git_AppendsGitignore(t *testing.T) {
 	if !ws.Worktree {
 		t.Fatal("expected worktree mode")
 	}
-	data, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	data, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
 	if !strings.Contains(string(data), ".worktrees/") {
 		t.Fatalf(".gitignore was not updated: %q", string(data))
 	}
