@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 // TaskOpts configures WaitTask.
@@ -33,8 +34,10 @@ func (h *Handle) WaitTask(ctx context.Context, opts TaskOpts) (TaskResult, error
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("docker wait: %w", err)
 	}
-	exitCode := 0
-	fmt.Sscanf(string(out), "%d", &exitCode)
+	var exitCode int
+	if n, _ := fmt.Sscanf(string(out), "%d", &exitCode); n != 1 {
+		return TaskResult{}, fmt.Errorf("docker wait: unexpected output %q", strings.TrimSpace(string(out)))
+	}
 
 	logs := exec.CommandContext(ctx, "docker", "logs", h.Container)
 	logsOut, err := logs.Output()
