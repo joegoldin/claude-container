@@ -2,25 +2,25 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/joegoldin/claude-container/internal/config"
+	"github.com/joegoldin/claude-container/internal/session"
 	"github.com/spf13/cobra"
 )
 
 var (
-	runYolo         bool
-	runPrompt       string
-	runName         string
-	runBackground   bool
-	runAutoRemove   bool
-	runMounts       []string
-	runWorkspace    string
-	runProfile      string
-	runAllowDomains []string
-	runDenyPaths    []string
-	runProxyPreset string
-	runProxyPort   int
+	runYolo           bool
+	runPrompt         string
+	runName           string
+	runBackground     bool
+	runAutoRemove     bool
+	runMounts         []string
+	runWorkspace      string
+	runProfile        string
+	runAllowDomains   []string
+	runDenyPaths      []string
+	runProxyPreset    string
+	runProxyPort      int
 	runResume         string
 	runAllowCommands  []string
 	runDenyCommands   []string
@@ -31,33 +31,47 @@ var runCmd = &cobra.Command{
 	Short: "Quick-start a session in the current directory",
 	Long:  `Create a session without a worktree, using the current directory. Name is auto-generated unless --name is provided.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name := runName
-		if name == "" {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return fmt.Errorf("getwd: %w", err)
-			}
-			name = config.GenerateName(cwd)
+		ctx := cmd.Context()
+		store := config.NewStore(config.DefaultDir())
+		if err := requireAuth(store); err != nil {
+			return err
 		}
 
-		return createSession(createOpts{
-			name:          name,
-			noWorktree:    true,
-			yolo:          runYolo,
-			prompt:        runPrompt,
-			resume:        runResume,
-			background:    runBackground,
-			autoRemove:    runAutoRemove,
-			mounts:        runMounts,
-			workspace:     runWorkspace,
-			profile:       runProfile,
-			allowDomains:  runAllowDomains,
-			denyPaths:     runDenyPaths,
-			allowCommands: runAllowCommands,
-			denyCommands:  runDenyCommands,
-			proxySeedPreset: runProxyPreset,
-			proxyPort:       runProxyPort,
-		})
+		opts := session.Opts{
+			Name:            runName,
+			Mode:            session.ModeTTY,
+			WorktreeMode:    session.WorktreeNever,
+			NoWorktree:      true,
+			Profile:         runProfile,
+			Yolo:            runYolo,
+			AllowDomains:    runAllowDomains,
+			DenyPaths:       runDenyPaths,
+			AllowCommands:   runAllowCommands,
+			DenyCommands:    runDenyCommands,
+			Mounts:          runMounts,
+			WorkspaceName:   runWorkspace,
+			AutoRemove:      runAutoRemove,
+			Background:      runBackground,
+			Prompt:          runPrompt,
+			Resume:          runResume,
+			ProxySeedPreset: runProxyPreset,
+			ProxyPort:       runProxyPort,
+		}
+
+		h, err := session.Launch(ctx, store, opts)
+		if err != nil {
+			return err
+		}
+
+		if runBackground {
+			fmt.Printf("Session %q created (background).\n", h.Name)
+			fmt.Printf("  Attach: claude-container attach %s\n", h.Name)
+			return h.RunBackground()
+		}
+		fmt.Printf("Session %q created.\n", h.Name)
+		err = h.AttachTTY()
+		saveResumeID(store, h.Name)
+		return err
 	},
 }
 
