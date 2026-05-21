@@ -7,7 +7,10 @@ import (
 
 // AttachTTY runs the existing PTY proxy against the launched container.
 // It blocks until the user detaches (Ctrl+B d) or the container exits.
-// Cleanup runs after proxy.Run returns.
+//
+// proxy.Opts.{AutoRemove,Cleanup} are intentionally left unset: defer
+// h.Cleanup() runs on every return path (including detach), which is
+// broader coverage than proxy's own teardown hook.
 func (h *Handle) AttachTTY() error {
 	defer h.Cleanup()
 	return proxy.Run(proxy.Opts{
