@@ -2,29 +2,29 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/joegoldin/claude-container/internal/config"
+	"github.com/joegoldin/claude-container/internal/session"
 	"github.com/spf13/cobra"
 )
 
 var (
-	workYolo         bool
-	workPrompt       string
-	workName         string
-	workFrom         string
-	workBackground   bool
-	workAutoRemove   bool
-	workMounts       []string
-	workWorkspace    string
-	workProfile      string
-	workAllowDomains []string
-	workDenyPaths    []string
-	workProxyPreset string
-	workProxyPort   int
-	workResume         string
-	workAllowCommands  []string
-	workDenyCommands   []string
+	workYolo          bool
+	workPrompt        string
+	workName          string
+	workFrom          string
+	workBackground    bool
+	workAutoRemove    bool
+	workMounts        []string
+	workWorkspace     string
+	workProfile       string
+	workAllowDomains  []string
+	workDenyPaths     []string
+	workProxyPreset   string
+	workProxyPort     int
+	workResume        string
+	workAllowCommands []string
+	workDenyCommands  []string
 )
 
 var workCmd = &cobra.Command{
@@ -32,34 +32,47 @@ var workCmd = &cobra.Command{
 	Short: "Quick-start an isolated worktree session",
 	Long:  `Create a session with its own git worktree for isolation. Name and branch are auto-generated unless --name is provided.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name := workName
-		if name == "" {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return fmt.Errorf("getwd: %w", err)
-			}
-			name = config.GenerateName(cwd)
+		ctx := cmd.Context()
+		store := config.NewStore(config.DefaultDir())
+		if err := requireAuth(store); err != nil {
+			return err
 		}
 
-		return createSession(createOpts{
-			name:          name,
-			worktree:      name,
-			from:          workFrom,
-			yolo:          workYolo,
-			prompt:        workPrompt,
-			resume:        workResume,
-			background:    workBackground,
-			autoRemove:    workAutoRemove,
-			mounts:        workMounts,
-			workspace:     workWorkspace,
-			profile:       workProfile,
-			allowDomains:  workAllowDomains,
-			denyPaths:     workDenyPaths,
-			allowCommands: workAllowCommands,
-			denyCommands:  workDenyCommands,
-			proxySeedPreset: workProxyPreset,
-			proxyPort:       workProxyPort,
-		})
+		opts := session.Opts{
+			Name:            workName,
+			Mode:            session.ModeTTY,
+			WorktreeMode:    session.WorktreeAlways,
+			From:            workFrom,
+			Profile:         workProfile,
+			Yolo:            workYolo,
+			AllowDomains:    workAllowDomains,
+			DenyPaths:       workDenyPaths,
+			AllowCommands:   workAllowCommands,
+			DenyCommands:    workDenyCommands,
+			Mounts:          workMounts,
+			WorkspaceName:   workWorkspace,
+			AutoRemove:      workAutoRemove,
+			Background:      workBackground,
+			Prompt:          workPrompt,
+			Resume:          workResume,
+			ProxySeedPreset: workProxyPreset,
+			ProxyPort:       workProxyPort,
+		}
+
+		h, err := session.Launch(ctx, store, opts)
+		if err != nil {
+			return err
+		}
+
+		if workBackground {
+			fmt.Printf("Session %q created (background).\n", h.Name)
+			fmt.Printf("  Attach: claude-container attach %s\n", h.Name)
+			return h.RunBackground()
+		}
+		fmt.Printf("Session %q created on branch %q.\n", h.Name, h.Branch)
+		err = h.AttachTTY()
+		saveResumeID(store, h.Name)
+		return err
 	},
 }
 
