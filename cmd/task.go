@@ -1,19 +1,15 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
-	gitpkg "github.com/joegoldin/claude-container/internal/git"
-	"github.com/joegoldin/claude-container/internal/httpproxy"
-	sandboxPkg "github.com/joegoldin/claude-container/internal/sandbox"
+	"github.com/joegoldin/claude-container/internal/session"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -43,7 +39,7 @@ var taskCmd = &cobra.Command{
 		if taskPrompt == "" {
 			return fmt.Errorf("--prompt is required")
 		}
-		return runTask()
+		return runTask(cmd)
 	},
 }
 
@@ -65,181 +61,55 @@ func init() {
 	rootCmd.AddCommand(taskCmd)
 }
 
-func runTask() error {
+func runTask(cmd *cobra.Command) error {
 	startTime := time.Now()
 	stderrIsTTY := term.IsTerminal(int(os.Stderr.Fd()))
 
-	// --- Session setup (mirrors createSession) ---
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-
-	repoRoot, _ := gitpkg.RepoRoot(cwd)
-
-	extraWorkspaces, err := resolveWorkspaces(taskWorkspace, taskMounts)
-	if err != nil {
-		return err
-	}
-
-	profile := taskProfile
-	if profile == "" {
-		profile = "default"
-	}
-
-	name := taskName
-	if name == "" {
-		name = config.GenerateName(cwd)
-	}
-
 	store := config.NewStore(config.DefaultDir())
-	if _, err := store.Get(name); err == nil {
-		return fmt.Errorf("session %q already exists", name)
-	}
-
-	if err := docker.EnsureImage(config.DefaultDir()); err != nil {
-		return err
-	}
-
-	// Per-session proxy setup. taskProxyProfile, when set, names a saved
-	// preset to seed the rules file from. (Flag name is legacy; semantics
-	// are the same as `claude new --preset`.)
-	seedPreset := taskProxyProfile
-	if !httpproxy.ImageExists() {
-		tarball := os.Getenv("CLAUDE_PROXY_IMAGE_TARBALL")
-		if tarball != "" {
-			loadCmd := exec.Command("docker", "load", "-i", tarball)
-			loadCmd.Stdout = os.Stderr
-			loadCmd.Stderr = os.Stderr
-			if err := loadCmd.Run(); err != nil {
-				return fmt.Errorf("load proxy image: %w", err)
-			}
-		} else {
-			return fmt.Errorf("proxy image %q not found; set CLAUDE_PROXY_IMAGE_TARBALL", httpproxy.ImageTag())
-		}
-	}
-
-	prof, err := sandboxPkg.GetProfile(profile)
-	if err != nil {
-		return err
-	}
-	proxyRules := prof.ProxyRules(taskAllowDomains)
-	rulesJSON, err := json.MarshalIndent(proxyRules, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal proxy rules: %w", err)
-	}
-	if err := httpproxy.EnsureSessionRules(config.DefaultDir(), name, seedPreset); err != nil {
-		return fmt.Errorf("seed proxy rules: %w", err)
-	}
-	if err := httpproxy.AppendSessionRules(config.DefaultDir(), name, rulesJSON); err != nil {
-		return fmt.Errorf("write proxy rules: %w", err)
-	}
-
-	_, resolvedPort, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
-		Session:       name,
-		ConfigDir:     config.DefaultDir(),
-		DashboardPort: taskProxyPort,
-	})
-	if err != nil {
-		return fmt.Errorf("start proxy: %w", err)
-	}
-	if err := httpproxy.WaitForCACert(config.DefaultDir()); err != nil {
-		return err
-	}
-
-	workspace := cwd
-	if len(extraWorkspaces) > 0 {
-		workspace = ""
-	}
-
-	claudeConfigDir := store.ClaudeConfigDir()
-	if err := os.MkdirAll(claudeConfigDir, 0o755); err != nil {
-		return fmt.Errorf("create claude config dir: %w", err)
-	}
 	if err := requireAuth(store); err != nil {
 		return err
 	}
 
-	// Managed settings.
-	var extraAllowPerms []string
-	if profile != "high" {
-		extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(envExtraAllowCommands())...)
-	}
-	extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(taskAllowCommands)...)
-	var extraDenyPerms []string
-	for _, p := range taskDenyPaths {
-		extraDenyPerms = append(extraDenyPerms, fmt.Sprintf("Read(%s)", p))
-	}
-	extraDenyPerms = append(extraDenyPerms, wrapCommandPerms(taskDenyCommands)...)
-	settingsJSON, err := json.MarshalIndent(
-		prof.ManagedSettingsForProxy(8080, extraAllowPerms, extraDenyPerms, nil), "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(claudeConfigDir, "managed-settings.json"), settingsJSON, 0o644); err != nil {
-		return fmt.Errorf("write managed settings: %w", err)
-	}
-
-	runOpts := docker.RunOpts{
-		Name:            name,
-		Workspace:       workspace,
-		ConfigDir:       claudeConfigDir,
-		HostClaudeFiles: config.HostClaudeCredentialFiles(),
-		UID:             docker.ContainerUID(),
-		GID:             docker.ContainerGID(),
-		Prompt:          taskPrompt,
-		ExtraWorkspaces: extraWorkspaces,
-		ProxyEnabled:       true,
-		ProxyCACertDir:     httpproxy.CACertDir(config.DefaultDir()),
-		ProxyDashboardPort: resolvedPort,
-	}
-
-	// Save session.
-	sess := &config.Session{
-		Name:            name,
-		WorktreePath:    workspace,
-		RepoPath:        repoRoot,
-		ContainerName:   docker.ContainerName(name),
-		Yolo:            true,
-		AutoRemove:      !taskKeep,
-		CreatedAt:       time.Now(),
-		Profile:         profile,
-		ExtraWorkspaces: extraWorkspaces,
+	opts := session.Opts{
+		Name:            taskName,
+		Mode:            session.ModeTask,
+		Profile:         taskProfile,
 		AllowDomains:    taskAllowDomains,
 		DenyPaths:       taskDenyPaths,
 		AllowCommands:   taskAllowCommands,
 		DenyCommands:    taskDenyCommands,
-		ProxySeedPreset: seedPreset,
-		ProxyPort:       resolvedPort,
-	}
-	if err := store.Save(sess); err != nil {
-		return fmt.Errorf("save session: %w", err)
-	}
-
-	// --- Start container (detached, non-interactive) ---
-	dockerArgs := docker.TaskRunArgs(runOpts, taskModel, taskMaxTurns)
-	startCmd := exec.Command("docker", dockerArgs...)
-	startCmd.Stderr = os.Stderr
-	if err := startCmd.Run(); err != nil {
-		return fmt.Errorf("start task container: %w", err)
+		Mounts:          taskMounts,
+		WorkspaceName:   taskWorkspace,
+		AutoRemove:      !taskKeep,
+		Prompt:          taskPrompt,
+		ProxySeedPreset: taskProxyProfile,
+		ProxyPort:       taskProxyPort,
+		Model:           taskModel,
+		MaxTurns:        taskMaxTurns,
 	}
 
-	// --- Stream logs and parse ---
-	containerName := docker.ContainerName(name)
+	h, err := session.Launch(cmd.Context(), store, opts)
+	if err != nil {
+		return err
+	}
 
-	// Start spinner on stderr (TTY only).
+	// Spinner shows "Working... Ns" on stderr while the task runs (TTY only).
 	var stopSpinner func()
 	if stderrIsTTY {
 		stopSpinner = startSpinner(startTime)
 	}
 
-	logsCmd := exec.Command("docker", "logs", "--follow", containerName)
+	// Stream logs in parallel with the running container so the spinner can
+	// keep ticking. parseStreamEvents reads until the container exits.
+	logsCmd := exec.Command("docker", "logs", "--follow", h.Container)
 	logsPipe, err := logsCmd.StdoutPipe()
 	if err != nil {
+		h.Cleanup()
 		return fmt.Errorf("logs pipe: %w", err)
 	}
-	logsCmd.Stderr = nil // discard docker logs stderr
+	logsCmd.Stderr = nil
 	if err := logsCmd.Start(); err != nil {
+		h.Cleanup()
 		return fmt.Errorf("start logs: %w", err)
 	}
 
@@ -250,18 +120,17 @@ func runTask() error {
 		stopSpinner()
 	}
 
-	// --- Wait for container exit code ---
-	exitCode, _ := docker.WaitExitCode(name)
+	exitCode, _ := docker.WaitExitCode(h.Name)
 
-	// --- Get changed files via docker exec ---
+	// Changed files via docker exec — container must still exist, so this
+	// happens BEFORE h.Cleanup() runs the auto-remove path.
 	var changedFiles string
-	diffCmd := docker.ExecGitDiff(name)
+	diffCmd := docker.ExecGitDiff(h.Name)
 	if diffOut, err := diffCmd.Output(); err == nil {
 		changedFiles = strings.TrimSpace(string(diffOut))
 	}
 
-	// --- Output ---
-	// stdout: final assistant text
+	// stdout: final assistant text.
 	if result.FinalText != "" {
 		fmt.Print(result.FinalText)
 		if !strings.HasSuffix(result.FinalText, "\n") {
@@ -269,7 +138,7 @@ func runTask() error {
 		}
 	}
 
-	// stderr: summary
+	// stderr: summary.
 	duration := time.Since(startTime)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "--- Task Complete ---")
@@ -287,13 +156,12 @@ func runTask() error {
 			formatNumber(result.InputTokens), formatNumber(result.OutputTokens))
 	}
 	if taskKeep {
-		fmt.Fprintf(os.Stderr, "Session:  %s  (kept)\n", name)
+		fmt.Fprintf(os.Stderr, "Session:  %s  (kept)\n", h.Name)
 	}
 
-	// --- Cleanup ---
-	if !taskKeep {
-		removeSession(store, name)
-	}
+	// Cleanup runs the auto-remove block (docker stop/rm + proxy teardown +
+	// session record delete) only when opts.AutoRemove is true.
+	h.Cleanup()
 
 	if exitCode != 0 {
 		os.Exit(exitCode)

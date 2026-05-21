@@ -213,7 +213,7 @@ func Launch(ctx context.Context, store *config.Store, opts Opts) (handle *Handle
 	var dockerArgs []string
 	switch opts.Mode {
 	case ModeTask:
-		dockerArgs = docker.TaskRunArgs(runOpts, "", 0)
+		dockerArgs = docker.TaskRunArgs(runOpts, opts.Model, opts.MaxTurns)
 	default:
 		dockerArgs = docker.RunArgs(runOpts, true)
 	}

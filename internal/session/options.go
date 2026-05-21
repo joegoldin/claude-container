@@ -59,6 +59,10 @@ type Opts struct {
 	Resume   string
 	Continue bool
 
+	// Task-mode controls (passed to docker.TaskRunArgs when Mode == ModeTask).
+	Model    string
+	MaxTurns int
+
 	// Packages and proxy.
 	Packages        []string
 	ProxySeedPreset string
