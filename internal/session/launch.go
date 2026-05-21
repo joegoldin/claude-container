@@ -20,11 +20,31 @@ import (
 // Launch creates and starts a Claude Code container with all the requested
 // scaffolding (workspace, proxy, config dir, session record) and returns a
 // Handle whose method the caller invokes based on opts.Mode.
-func Launch(ctx context.Context, store *config.Store, opts Opts) (*Handle, error) {
+//
+// On error after the per-session proxy or container have been started,
+// Launch rolls those resources back so a failed call doesn't leave
+// orphans on disk or in Docker.
+func Launch(ctx context.Context, store *config.Store, opts Opts) (handle *Handle, retErr error) {
 	opts.ApplyDefaults()
 	if err := opts.Validate(); err != nil {
 		return nil, err
 	}
+
+	var proxyUp, containerUp bool
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		if containerUp {
+			_ = docker.Stop(opts.Name)
+			_ = docker.Remove(opts.Name)
+		}
+		if proxyUp {
+			_ = httpproxy.Stop(opts.Name)
+			_ = httpproxy.RemoveSessionState(config.DefaultDir(), opts.Name)
+			_ = httpproxy.RemoveNetwork(opts.Name)
+		}
+	}()
 
 	// Step 1: image readiness.
 	if err := docker.EnsureImage(config.DefaultDir()); err != nil {
@@ -143,6 +163,7 @@ func Launch(ctx context.Context, store *config.Store, opts Opts) (*Handle, error
 	if err := httpproxy.WaitForCACert(config.DefaultDir()); err != nil {
 		return nil, err
 	}
+	proxyUp = true
 
 	// Step 6: resolve extra mounts (-w paths and -W named workspace).
 	extraWorkspaces, worktreeRepos, err := resolveMounts(opts, ws.Worktree)
@@ -202,6 +223,7 @@ func Launch(ctx context.Context, store *config.Store, opts Opts) (*Handle, error
 	if err := startCmd.Run(); err != nil {
 		return nil, fmt.Errorf("docker run: %w", err)
 	}
+	containerUp = true
 
 	// Step 8: persist session record.
 	worktreePath := ws.HostPath
