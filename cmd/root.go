@@ -3,7 +3,9 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/joegoldin/claude-container/internal/config"
@@ -97,6 +99,8 @@ func runDefault(ctx context.Context) error {
 		return err
 	}
 
+	maybePrintBareInvokeNotice(store, config.DefaultDir(), os.Stderr)
+
 	opts := session.Opts{
 		Name:            rootName,
 		Mode:            session.ModeTTY,
@@ -130,6 +134,39 @@ func runDefault(ctx context.Context) error {
 		return h.RunBackground()
 	}
 	return h.AttachTTY()
+}
+
+// bareInvokeNoticeFlagFile is the path of the flag file that suppresses
+// the migration notice after the first display.
+const bareInvokeNoticeFlagFile = "migrated-bare-invoke"
+
+// maybePrintBareInvokeNotice prints a one-line stderr notice the first
+// time a user runs bare claude-container after upgrading. It writes a
+// flag file in configDir so the notice doesn't repeat.
+//
+// Suppressed by CLAUDE_CONTAINER_QUIET=1 and (silently) when there are
+// no prior sessions.
+func maybePrintBareInvokeNotice(store *config.Store, configDir string, out io.Writer) {
+	if os.Getenv("CLAUDE_CONTAINER_QUIET") != "" {
+		return
+	}
+	flagPath := filepath.Join(configDir, bareInvokeNoticeFlagFile)
+	if _, err := os.Stat(flagPath); err == nil {
+		return
+	}
+	sessions := store.List()
+	if len(sessions) == 0 {
+		// Nothing to migrate; mark seen so the notice never fires.
+		_ = os.MkdirAll(configDir, 0o755)
+		_ = os.WriteFile(flagPath, nil, 0o644)
+		return
+	}
+	fmt.Fprintf(out,
+		"note: bare claude-container now creates a session; run 'claude-container tui' for the dashboard (existing sessions: %d)\n",
+		len(sessions),
+	)
+	_ = os.MkdirAll(configDir, 0o755)
+	_ = os.WriteFile(flagPath, nil, 0o644)
 }
 
 // splitCSV expands any comma-separated values inside a string slice.
