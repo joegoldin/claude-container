@@ -26,10 +26,11 @@ type Handle struct {
 	cleanup     CleanupFunc
 }
 
-// Cleanup runs the cleanup function (idempotent).
+// Cleanup runs the cleanup function (idempotent). Safe for concurrent callers.
 func (h *Handle) Cleanup() {
-	if h.cleanup == nil {
-		return
-	}
-	h.cleanupOnce.Do(h.cleanup)
+	h.cleanupOnce.Do(func() {
+		if h.cleanup != nil {
+			h.cleanup()
+		}
+	})
 }
