@@ -40,6 +40,14 @@ func ResolveWorkspace(cwd string, opts Opts) (Workspace, error) {
 	}
 
 	// 2. Git repo + worktree mode.
+	branch := opts.WorktreeName
+	if branch == "" {
+		branch = opts.Name
+	}
+	if branch == "" {
+		return Workspace{}, fmt.Errorf("worktree mode requires a session name")
+	}
+
 	base, err := ensureWorktreeBase(repoRoot)
 	if err != nil {
 		return Workspace{}, fmt.Errorf("pick worktree base: %w", err)
@@ -48,15 +56,11 @@ func ResolveWorkspace(cwd string, opts Opts) (Workspace, error) {
 	added, ignErr := gitpkg.EnsureIgnored(repoRoot, base)
 	if ignErr != nil {
 		// .gitignore not writable — fall back to global location.
-		fallback, ferr := globalWorktreeDir(repoRoot, opts)
+		fallback, ferr := ensureGlobalWorktreeDir(repoRoot, branch)
 		if ferr != nil {
-			return Workspace{}, fmt.Errorf("ensure ignored: %w; fallback failed: %v", ignErr, ferr)
+			return Workspace{}, fmt.Errorf("write .gitignore: %w; global fallback: %v", ignErr, ferr)
 		}
 		fmt.Fprintf(os.Stderr, "note: %s/.gitignore not writable; using fallback %s\n", repoRoot, fallback)
-		branch := opts.WorktreeName
-		if branch == "" {
-			branch = opts.Name
-		}
 		return Workspace{
 			HostPath: fallback,
 			RepoPath: repoRoot,
@@ -66,14 +70,6 @@ func ResolveWorkspace(cwd string, opts Opts) (Workspace, error) {
 	}
 	if added {
 		fmt.Fprintf(os.Stderr, "note: added %s/ to .gitignore — commit when convenient\n", base)
-	}
-
-	branch := opts.WorktreeName
-	if branch == "" {
-		branch = opts.Name
-	}
-	if branch == "" {
-		return Workspace{}, fmt.Errorf("worktree mode requires a session name")
 	}
 
 	return Workspace{
@@ -101,9 +97,11 @@ func ensureWorktreeBase(repoRoot string) (string, error) {
 	return ".worktrees", nil
 }
 
-// globalWorktreeDir returns $XDG_DATA_HOME/claude-container/worktrees/<repo-id>/<branch>
-// (defaulting XDG_DATA_HOME to ~/.local/share), creating the parent directory if missing.
-func globalWorktreeDir(repoRoot string, opts Opts) (string, error) {
+// ensureGlobalWorktreeDir returns $XDG_DATA_HOME/claude-container/worktrees/<repo-id>/<branch>
+// (defaulting XDG_DATA_HOME to ~/.local/share), creating the parent directory
+// if missing. The leaf branch directory is intentionally left for the
+// container entrypoint to create via `git worktree add`.
+func ensureGlobalWorktreeDir(repoRoot, branch string) (string, error) {
 	xdg := os.Getenv("XDG_DATA_HOME")
 	if xdg == "" {
 		home, err := os.UserHomeDir()
@@ -113,11 +111,8 @@ func globalWorktreeDir(repoRoot string, opts Opts) (string, error) {
 		xdg = filepath.Join(home, ".local", "share")
 	}
 	hash := sha256.Sum256([]byte(repoRoot))
+	// 12 hex chars (48 bits) — negligible collision risk for a workstation.
 	id := hex.EncodeToString(hash[:])[:12]
-	branch := opts.WorktreeName
-	if branch == "" {
-		branch = opts.Name
-	}
 	dir := filepath.Join(xdg, "claude-container", "worktrees", id, branch)
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return "", err

@@ -158,6 +158,9 @@ func TestResolveWorkspace_Git_GitignoreReadOnly_FallsBackToGlobal(t *testing.T) 
 	if !strings.HasPrefix(ws.HostPath, want) {
 		t.Fatalf("expected fallback under %q, got %q", want, ws.HostPath)
 	}
+	if !strings.Contains(ws.HostPath, "fallback-foo") {
+		t.Errorf("expected branch component %q in HostPath, got %q", "fallback-foo", ws.HostPath)
+	}
 	if ws.Branch != "fallback-foo" {
 		t.Errorf("Branch: want %q, got %q", "fallback-foo", ws.Branch)
 	}
