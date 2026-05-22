@@ -47,7 +47,7 @@ var attachCmd = &cobra.Command{
 		}
 
 		if attachDashboard {
-			return rootCmd.RunE(cmd, nil)
+			return runTUI(cmd.Context())
 		}
 
 		containerName := docker.ContainerName(name)

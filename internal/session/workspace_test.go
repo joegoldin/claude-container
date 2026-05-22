@@ -44,6 +44,17 @@ func TestResolveWorkspace_NonGit_PwdPassthrough(t *testing.T) {
 	}
 }
 
+func TestResolveWorkspace_NonGit_WorktreeAlways_Errors(t *testing.T) {
+	dir := t.TempDir() // not a git repo
+	_, err := ResolveWorkspace(dir, Opts{Mode: ModeTTY, WorktreeMode: WorktreeAlways, Name: "x"})
+	if err == nil {
+		t.Fatal("expected error for WorktreeAlways in non-git dir")
+	}
+	if !strings.Contains(err.Error(), "not inside a git repository") {
+		t.Errorf("error message: want 'not inside a git repository', got %q", err.Error())
+	}
+}
+
 func TestResolveWorkspace_Git_WorktreeNever_ForcesPwd(t *testing.T) {
 	repo := setupGitRepo(t)
 	ws, err := ResolveWorkspace(repo, Opts{Mode: ModeTTY, WorktreeMode: WorktreeNever, Name: "x"})

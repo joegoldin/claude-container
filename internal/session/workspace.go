@@ -36,6 +36,11 @@ func ResolveWorkspace(cwd string, opts Opts) (Workspace, error) {
 	}
 
 	if !inGit {
+		// WorktreeAlways requires a git repo; reject explicitly rather
+		// than silently falling back to pwd passthrough.
+		if opts.WorktreeMode == WorktreeAlways {
+			return Workspace{}, fmt.Errorf("not inside a git repository: cannot create worktree (use --no-worktree or `run`)")
+		}
 		return Workspace{HostPath: cwd}, nil
 	}
 

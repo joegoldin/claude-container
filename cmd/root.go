@@ -133,7 +133,9 @@ func runDefault(ctx context.Context) error {
 	if opts.Background {
 		return h.RunBackground()
 	}
-	return h.AttachTTY()
+	attachErr := h.AttachTTY()
+	saveResumeID(store, h.Name)
+	return attachErr
 }
 
 // bareInvokeNoticeFlagFile is the path of the flag file that suppresses
