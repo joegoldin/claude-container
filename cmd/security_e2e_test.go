@@ -24,11 +24,17 @@ package cmd
 // ---------------------------------------------------------------------------
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -81,6 +87,268 @@ func boundedDockerExec(t *testing.T, timeout time.Duration, name string, args ..
 	cmdArgs := append([]string{"exec", "claude-container_" + name}, args...)
 	out, err := exec.CommandContext(ctx, "docker", cmdArgs...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+// ---------------------------------------------------------------------------
+// Proxy-API approval helpers
+//
+// The per-session proxy exposes an HTTP API on the host at the dashboard
+// port (mapped from container port 8081). Mutating endpoints require the
+// per-session bearer token written by mitmproxy at
+// <configDir>/proxy-state/<session>/dashboard-token.
+//
+// Pending flows are held until the user (or this test harness) POSTs to
+// /api/resolve with {flow_id, action: "allow"|"deny", pattern}.
+// ---------------------------------------------------------------------------
+
+type proxyAPI struct {
+	baseURL string // http://127.0.0.1:<dashboard-port>
+	token   string // contents of dashboard-token file
+	http    *http.Client
+}
+
+// newProxyAPI resolves the dashboard URL + token for a running session.
+// configDir is the XDG config dir the session is using (typically the
+// path returned by setupConfigDir/t.TempDir for the test).
+func newProxyAPI(t *testing.T, configDir, session string) *proxyAPI {
+	t.Helper()
+	tokenPath := filepath.Join(configDir, "claude-container", "proxy-state", session, "dashboard-token")
+	tok, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("read dashboard token at %s: %v", tokenPath, err)
+	}
+	out, err := exec.Command("docker", "port", "claude-proxy_"+session, "8081").Output()
+	if err != nil {
+		t.Fatalf("docker port claude-proxy_%s 8081: %v", session, err)
+	}
+	// `docker port` prints lines like "0.0.0.0:54321\n[::]:54321\n"; take
+	// the first one and split off the host.
+	line := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
+	host, port, ok := strings.Cut(line, ":")
+	if !ok {
+		t.Fatalf("unrecognised docker port output: %q", out)
+	}
+	if host == "0.0.0.0" || host == "::" || host == "" {
+		host = "127.0.0.1"
+	}
+	return &proxyAPI{
+		baseURL: fmt.Sprintf("http://%s:%s", host, port),
+		token:   strings.TrimSpace(string(tok)),
+		http:    &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+// getPending returns the list of currently-held flows as raw JSON. Each
+// entry has at minimum fields `id` (flow_id) and `host` (the destination
+// the flow tried to reach).
+func (p *proxyAPI) getPending(t *testing.T) []map[string]interface{} {
+	t.Helper()
+	req, _ := http.NewRequest("GET", p.baseURL+"/api/pending", nil)
+	resp, err := p.http.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/pending: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("GET /api/pending: %d %s", resp.StatusCode, body)
+	}
+	var out []map[string]interface{}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("parse pending: %v\nbody: %s", err, body)
+	}
+	return out
+}
+
+// waitForPending polls /api/pending until at least one flow matches the
+// host substring, or the timeout expires. Returns the matching flow.
+func (p *proxyAPI) waitForPending(t *testing.T, hostSubstr string, timeout time.Duration) map[string]interface{} {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, flow := range p.getPending(t) {
+			h, _ := flow["host"].(string)
+			if strings.Contains(h, hostSubstr) {
+				return flow
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("no pending flow matching host %q after %s", hostSubstr, timeout)
+	return nil
+}
+
+// resolve approves or denies a held flow. action must be "allow" or "deny".
+// pattern is the rule's match pattern (typically the host string).
+func (p *proxyAPI) resolve(t *testing.T, flowID, action, pattern string) {
+	t.Helper()
+	payload := map[string]string{
+		"flow_id": flowID,
+		"action":  action,
+		"pattern": pattern,
+		"label":   "test-approval",
+	}
+	body, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", p.baseURL+"/api/resolve", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	resp, err := p.http.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/resolve: %v", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		t.Fatalf("POST /api/resolve: %d %s", resp.StatusCode, respBody)
+	}
+}
+
+// addRule pre-approves a pattern before any flow has been attempted.
+func (p *proxyAPI) addRule(t *testing.T, ruleType, pattern string) {
+	t.Helper()
+	payload := map[string]string{
+		"type":    ruleType, // e.g. "http_allow"
+		"pattern": pattern,
+		"label":   "test-preallow",
+	}
+	body, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", p.baseURL+"/api/rules", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	resp, err := p.http.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/rules: %v", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		t.Fatalf("POST /api/rules: %d %s", resp.StatusCode, respBody)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Group A0: Proxy approval workflow (positive controls)
+//
+// These tests exercise the proxy the same way a user would: start a
+// session, observe that unknown flows are held, then either approve or
+// deny via the dashboard API and watch the flow resolve.
+//
+// They share one container per test (no shortcuts) so the full life
+// cycle is covered.
+// ---------------------------------------------------------------------------
+
+// TestSecurity_ProxyHoldsByDefault_TimesOut proves the proxy's
+// containment-by-default behavior: a flow to an unknown domain is held
+// until the user resolves it. With no approval given, the curl times
+// out — which is the desired behavior.
+func TestSecurity_ProxyHoldsByDefault_TimesOut(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupConfigDir(t)
+
+	name := "sec-hold-default"
+	startSecurityContainer(t, name, "--profile=default", "--yolo")
+
+	// example.com is not in any pre-allowed list. The proxy should
+	// hold the flow; the curl times out (-m 6 → exit 28).
+	start := time.Now()
+	out, err := boundedDockerExec(t, 15*time.Second, name,
+		"sh", "-c", "curl -sS -o /dev/null -m 6 -w '%{http_code}' https://example.com/ ; echo exit=$?")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Logf("docker exec returned err (still indicative): %v\n%s", err, out)
+	}
+	t.Logf("held-flow curl took %s, output: %s", elapsed, out)
+
+	// Curl must NOT have succeeded.
+	if strings.Contains(out, "exit=0") {
+		t.Errorf("curl unexpectedly succeeded (proxy did not hold the flow): %s", out)
+	}
+	// Should have hit the timeout (exit 28 = curl operation timeout)
+	// rather than a successful HTTP status code.
+	if strings.Contains(out, "200") && !strings.Contains(out, "exit=28") {
+		t.Errorf("curl got a 200 — proxy let the flow through without approval: %s", out)
+	}
+}
+
+// TestSecurity_ProxyApprove_AllowsFlow proves the resolve-via-API path:
+// kick off a curl in the background, observe the held flow via
+// /api/pending, POST /api/resolve action=allow, and confirm the curl
+// completes successfully.
+func TestSecurity_ProxyApprove_AllowsFlow(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupConfigDir(t)
+
+	name := "sec-approve-flow"
+	startSecurityContainer(t, name, "--profile=default", "--yolo")
+
+	api := newProxyAPI(t, configDir, name)
+
+	// Kick off the curl in the background inside the container. Use a
+	// long timeout so it survives until we approve.
+	type curlResult struct {
+		out string
+		err error
+	}
+	resultCh := make(chan curlResult, 1)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		out, err := boundedDockerExec(t, 30*time.Second, name,
+			"sh", "-c", "curl -sS -o /dev/null -m 25 -w '%{http_code}' https://example.com/ ; echo exit=$?")
+		resultCh <- curlResult{out, err}
+	}()
+	t.Cleanup(wg.Wait)
+
+	// Wait for the flow to show up on the host's /api/pending and
+	// approve it. 20s is generous — flows usually appear within ~1s.
+	flow := api.waitForPending(t, "example.com", 20*time.Second)
+	flowID, _ := flow["id"].(string)
+	if flowID == "" {
+		t.Fatalf("pending flow has no id: %+v", flow)
+	}
+	host, _ := flow["host"].(string)
+	t.Logf("approving held flow %s → %s", flowID, host)
+	api.resolve(t, flowID, "allow", host)
+
+	// Wait for the in-container curl to finish.
+	select {
+	case res := <-resultCh:
+		t.Logf("post-approval curl finished: out=%q err=%v", res.out, res.err)
+		if !strings.Contains(res.out, "exit=0") {
+			t.Errorf("expected curl exit=0 after approval; got %s", res.out)
+		}
+	case <-time.After(35 * time.Second):
+		t.Errorf("curl never finished after approval (proxy didn't release the flow)")
+	}
+}
+
+// TestSecurity_ProxyPreAllow_LetsFlowPassImmediately proves the
+// pre-allow path (rule added before any flow): POST /api/rules with an
+// allow pattern, then attempt the curl — it should pass without ever
+// being held.
+func TestSecurity_ProxyPreAllow_LetsFlowPassImmediately(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupConfigDir(t)
+
+	name := "sec-preallow"
+	startSecurityContainer(t, name, "--profile=default", "--yolo")
+
+	api := newProxyAPI(t, configDir, name)
+	api.addRule(t, "http_allow", "example.com")
+
+	// Curl should succeed quickly (no held flow).
+	start := time.Now()
+	out, err := boundedDockerExec(t, 20*time.Second, name,
+		"sh", "-c", "curl -sS -o /dev/null -m 10 -w '%{http_code}' https://example.com/ ; echo exit=$?")
+	elapsed := time.Since(start)
+	t.Logf("pre-allowed curl took %s, output: %s", elapsed, out)
+	if err != nil {
+		t.Errorf("docker exec failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "exit=0") {
+		t.Errorf("expected curl exit=0 with pre-allow rule; got %s", out)
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,26 @@
 set -uo pipefail
 
 # ---------------------------------------------------------------------------
+# Signal handling — single Ctrl+C aborts the whole script (not just the
+# currently-running `go test`) and best-effort-removes any sec-* containers
+# left running so the next invocation starts clean.
+# ---------------------------------------------------------------------------
+
+ABORTED=0
+cleanup_security_containers() {
+  docker ps -aq --filter "name=^claude-container_sec-" 2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
+  docker ps -aq --filter "name=^claude-proxy_sec-"     2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
+  docker network ls -q --filter "name=^claude-proxy-net_sec-" 2>/dev/null | xargs -r docker network rm >/dev/null 2>&1 || true
+}
+on_abort() {
+  ABORTED=1
+  printf '\n\033[31m[abort]\033[0m Ctrl+C — stopping and cleaning up sec-* containers...\n'
+  cleanup_security_containers
+  exit 130
+}
+trap on_abort INT TERM
+
+# ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
@@ -105,9 +125,9 @@ if ! docker info >/dev/null 2>&1; then
 fi
 ok "docker daemon reachable"
 
-info "preflight: claude-container image"
-if [[ -z "$(docker images -q claude-container 2>/dev/null)" ]]; then
-  warn "image 'claude-container' not loaded — tests that need it will fail or skip"
+info "preflight: claude-code image (loaded as 'claude-code', containers are claude-container_<session>)"
+if [[ -z "$(docker images -q claude-code 2>/dev/null)" ]]; then
+  warn "image 'claude-code' not loaded — tests that need it will fail or skip"
 else
   ok "image present"
 fi
@@ -162,11 +182,18 @@ while IFS= read -r TEST_NAME; do
   [[ -z "$TEST_NAME" ]] && continue
   i=$((i + 1))
 
-  printf '%s[%d/%d]%s %s%s%s … ' "$C_BLUE" "$i" "$N_TESTS" "$C_RESET" "$C_BOLD" "$TEST_NAME" "$C_RESET"
+  printf '%s[%d/%d]%s %s%s%s …\n' "$C_BLUE" "$i" "$N_TESTS" "$C_RESET" "$C_BOLD" "$TEST_NAME" "$C_RESET"
 
   T_START=$(now_ms)
-  OUT=$(devenv shell -- go test ./cmd/ -run "^${TEST_NAME}\$" -v -timeout 180s -count=1 2>&1)
-  RC=$?
+  # Stream test output live to the terminal (dimmed so it stands apart
+  # from our own log lines) and capture it for the PASS/FAIL/SKIP parse.
+  TMP_OUT=$(mktemp)
+  devenv shell -- go test ./cmd/ -run "^${TEST_NAME}\$" -v -timeout 180s -count=1 2>&1 \
+    | tee "$TMP_OUT" \
+    | sed "s/^/    ${C_DIM}│${C_RESET} /"
+  RC=${PIPESTATUS[0]}
+  OUT=$(cat "$TMP_OUT")
+  rm -f "$TMP_OUT"
   T_END=$(now_ms)
   T_MS=$(( T_END - T_START ))
 
@@ -174,20 +201,14 @@ while IFS= read -r TEST_NAME; do
 
   if echo "$OUT" | grep -q -- '--- SKIP'; then
     N_SKIP=$((N_SKIP + 1))
-    printf '%sSKIP%s %sms\n' "$C_YELLOW" "$C_RESET" "$T_MS"
-    REASON=$(echo "$OUT" | grep -E 'security_e2e_test.go:[0-9]+:' | head -1 | sed 's/^[[:space:]]*//')
-    [[ -n "$REASON" ]] && echo "    ${C_DIM}$REASON${C_RESET}"
+    printf '  %s→ SKIP%s %sms\n' "$C_YELLOW" "$C_RESET" "$T_MS"
   elif [[ $RC -eq 0 ]] && echo "$OUT" | grep -q -- '--- PASS'; then
     N_PASS=$((N_PASS + 1))
-    printf '%sPASS%s %sms\n' "$C_GREEN" "$C_RESET" "$T_MS"
+    printf '  %s→ PASS%s %sms\n' "$C_GREEN" "$C_RESET" "$T_MS"
   else
     N_FAIL=$((N_FAIL + 1))
     FAILED_TESTS+=("$TEST_NAME")
-    printf '%sFAIL%s %sms (exit %s)\n' "$C_RED" "$C_RESET" "$T_MS" "$RC"
-    # Always show the full output of failing tests so I can debug.
-    echo "    ${C_DIM}---------- output ----------${C_RESET}"
-    echo "$OUT" | sed "s/^/    /"
-    echo "    ${C_DIM}----------------------------${C_RESET}"
+    printf '  %s→ FAIL%s %sms (exit %s)\n' "$C_RED" "$C_RESET" "$T_MS" "$RC"
   fi
 done <<< "$TESTS"
 
