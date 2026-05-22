@@ -13,6 +13,14 @@ claude-container - run multiple Claude Code instances in isolated containers
 ## QUICK START
 
 ```sh
+# Drop-in safe replacement for `claude`: just cd in and run.
+cd ~/code/my-project
+claude-container
+
+# Bare invocation creates a worktree at <repo>/.worktrees/<name>/ in a git
+# repo, or a pwd-mounted session otherwise. All other commands are
+# preserved.
+
 # Fix a bug on an isolated branch, hands-free
 claude-container work --yolo -p "fix the race condition in src/worker.go"
 
@@ -24,16 +32,17 @@ claude-container work -b -p "migrate the config from YAML to TOML" &
 # One-shot task piped to a file
 claude-container task -p "explain the authentication flow" > auth-docs.md
 
-# Interactive session with network proxy for approval-based internet access
-claude-container run --preset=work --profile=med
+# Open the TUI dashboard (formerly the default bare-invoke behavior)
+claude-container tui
 ```
 
 ## SYNOPSIS
 
 ```
-claude-container                          # TUI dashboard
-claude-container run [flags]              # quick-start in current dir
-claude-container work [flags]             # quick-start with worktree
+claude-container [flags]                  # bare invoke: create + attach session in cwd
+claude-container tui                      # TUI dashboard (formerly bare invoke)
+claude-container run [flags]              # quick-start in current dir (pwd mount, no worktree)
+claude-container work [flags]             # quick-start with a worktree
 claude-container task [flags]             # run task, print result to stdout
 claude-container new [flags]              # create session (wizard)
 claude-container ps [--json]              # list sessions
@@ -77,8 +86,17 @@ Code, common Unix tools, and baked-in sandbox settings.
 ```sh
 claude-container auth          # authenticate (once, or use host ~/.claude/)
 claude-container doctor        # verify everything is set up
-claude-container run --yolo    # quick-start an interactive session
+cd ~/code/my-project           # drop into your repo
+claude-container               # bare invoke: creates a session in this dir
 ```
+
+**Bare invoke** is the primary entry point. It feels like running `claude`
+directly, except the session runs in an isolated, sandboxed Docker container
+with a per-session HTTP proxy. In a git repo it creates a worktree at
+`<repo>/.worktrees/<name>/`; otherwise it pwd-mounts the directory.
+
+Run `claude-container tui` to open the dashboard (the old bare-invoke
+behavior).
 
 The Docker image is loaded automatically on first use from the Nix-built
 tarball. No manual `build` step is required.
@@ -107,6 +125,7 @@ Available Commands:
   shell       Drop into a bash shell in a container
   stop        Stop a session (keep worktree)
   task        Run a task and print the result to stdout
+  tui         Open the dashboard
   work        Quick-start an isolated worktree session
   workspace   Manage named workspace definitions
 ```
@@ -419,7 +438,9 @@ cancel operations).
 
 ## TUI DASHBOARD
 
-Run `claude-container` with no arguments to launch the dashboard.
+Run `claude-container tui` to launch the dashboard. (Previously this was
+the default behavior of bare `claude-container`; after the transparent-binary
+refactor, bare invocation creates a session instead.)
 
 ```
 +-----------------------------+------------------------------+
@@ -774,7 +795,7 @@ claude-container task -p "refactor auth" --keep
 claude-container attach myproject-calm-reef
 
 # Launch the TUI dashboard
-claude-container
+claude-container tui
 
 # Create a session with interactive wizard
 claude-container new
