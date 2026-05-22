@@ -73,6 +73,10 @@ func runTask(cmd *cobra.Command) error {
 	opts := session.Opts{
 		Name:            taskName,
 		Mode:            session.ModeTask,
+		// task is always pwd-passthrough — never create a worktree even
+		// when invoked from inside a git repo.
+		WorktreeMode:    session.WorktreeNever,
+		NoWorktree:      true,
 		Profile:         taskProfile,
 		AllowDomains:    taskAllowDomains,
 		DenyPaths:       taskDenyPaths,
