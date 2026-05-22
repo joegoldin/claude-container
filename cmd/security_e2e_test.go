@@ -1456,6 +1456,24 @@ func TestSecurity_AutoProfile_ExistsAndAcceptsDialog(t *testing.T) {
 		t.Errorf("auto profile did not pre-accept the dialog "+
 			"(skipAutoPermissionPrompt missing): %s", text)
 	}
+
+	// AutoMode profiles must have NO static deny rules — a hardcoded
+	// deny on a tool call would interrupt the auto-mode classifier and
+	// surface as a user prompt instead of silently blocking. Verify
+	// neither the dashboard denies nor any user-provided deny rules
+	// leaked through.
+	if strings.Contains(text, `"Bash(*127.0.0.1:8081*)"`) ||
+		strings.Contains(text, `"Bash(*localhost:8081*)"`) {
+		t.Errorf("auto profile contains hardcoded dashboard denies — these will "+
+			"trigger auto-mode classifier interruptions. The dashboard auth "+
+			"token is the real boundary; remove the deny rules for AutoMode: %s", text)
+	}
+	// Sanity: any "deny" array present should be empty.
+	if strings.Contains(text, `"deny":`) && !strings.Contains(text, `"deny": []`) {
+		t.Logf("note: auto profile's managed-settings has a non-empty deny array — "+
+			"verify each entry is intentional (e.g. user-provided via --deny-* flags). %s",
+			text)
+	}
 }
 
 func min(a, b int) int {

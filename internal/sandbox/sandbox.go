@@ -418,24 +418,31 @@ func (p Profile) ManagedSettingsForProxy(httpProxyPort int, extraAllowPerms []st
 	deny := make([]string, 0, len(p.DenyPerms)+len(extraDenyPerms)+4)
 	deny = append(deny, p.DenyPerms...)
 	deny = append(deny, extraDenyPerms...)
-	// Always block any attempt to talk directly to the proxy dashboard or
-	// its resolve API. Claude must never approve its own held flows. The
-	// dashboard is also auth-token-gated, but the deny rule short-circuits
-	// the obvious shell paths so failures surface as permission errors
-	// instead of silently authenticating.
-	// Block any attempt to talk to the dashboard from inside the container.
-	// In shared-netns mode the dashboard lives on loopback, so the deny
-	// patterns target localhost rather than the old proxy container hostname.
-	// The dashboard is also auth-token-gated; this just makes shell-level
-	// failures surface as permission errors instead of silent rejects.
-	deny = append(deny,
-		"Bash(*127.0.0.1:8081*)",
-		"Bash(*localhost:8081*)",
-		"Bash(*api/resolve*)",
-		"Bash(*api/rules*)",
-		"Bash(*api/import*)",
-	)
-	perms["deny"] = deny
+	// Dashboard hardening: block direct talk to the proxy dashboard from
+	// inside the container as defense-in-depth (the real protection is
+	// the X-Auth-Token, which Claude never sees).
+	//
+	// We INTENTIONALLY skip these denies in AutoMode: Claude's auto-mode
+	// classifier treats a static deny on a call it's about to classify
+	// as an interruption signal and asks the user. Removing the denies
+	// in auto mode keeps the classifier in charge; if Claude ever tries
+	// to reach the dashboard, the classifier will flag it as risky and
+	// block on its own. The auth token still backstops any attempt.
+	//
+	// In yolo / non-auto profiles defaultMode is dontAsk, so these denies
+	// silently block without prompting — keep them for the cheap layer.
+	if !p.AutoMode {
+		deny = append(deny,
+			"Bash(*127.0.0.1:8081*)",
+			"Bash(*localhost:8081*)",
+			"Bash(*api/resolve*)",
+			"Bash(*api/rules*)",
+			"Bash(*api/import*)",
+		)
+	}
+	if len(deny) > 0 {
+		perms["deny"] = deny
+	}
 
 	if len(perms) > 0 {
 		settings["permissions"] = perms
