@@ -284,7 +284,8 @@ func (p *proxyAPI) getPending(t *testing.T) []map[string]interface{} {
 
 // waitForPending polls /api/pending until at least one flow matches the
 // host substring, or the timeout expires. Returns the matching flow.
-func (p *proxyAPI) waitForPending(t *testing.T, hostSubstr string, timeout time.Duration) map[string]interface{} {
+// The session arg is used to dump proxy logs on failure.
+func (p *proxyAPI) waitForPending(t *testing.T, session, hostSubstr string, timeout time.Duration) map[string]interface{} {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -296,6 +297,7 @@ func (p *proxyAPI) waitForPending(t *testing.T, hostSubstr string, timeout time.
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+	p.dumpProxyDiagnostics(t, session)
 	t.Fatalf("no pending flow matching host %q after %s", hostSubstr, timeout)
 	return nil
 }
@@ -313,7 +315,8 @@ func (p *proxyAPI) resolve(t *testing.T, flowID, action, pattern string) {
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", p.baseURL+"/api/resolve", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.token)
+	// Proxy auth uses X-Auth-Token (or ?token=...); NOT Authorization: Bearer.
+	req.Header.Set("X-Auth-Token", p.token)
 	resp, err := p.http.Do(req)
 	if err != nil {
 		t.Fatalf("POST /api/resolve: %v", err)
@@ -336,7 +339,7 @@ func (p *proxyAPI) addRule(t *testing.T, ruleType, pattern string) {
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", p.baseURL+"/api/rules", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("X-Auth-Token", p.token)
 	resp, err := p.http.Do(req)
 	if err != nil {
 		t.Fatalf("POST /api/rules: %v", err)
@@ -346,6 +349,18 @@ func (p *proxyAPI) addRule(t *testing.T, ruleType, pattern string) {
 	if resp.StatusCode/100 != 2 {
 		t.Fatalf("POST /api/rules: %d %s", resp.StatusCode, respBody)
 	}
+}
+
+// dumpProxyDiagnostics prints the last N proxy log lines plus the raw
+// /api/pending response. Useful when waitForPending fails so we can see
+// whether the proxy is even receiving traffic.
+func (p *proxyAPI) dumpProxyDiagnostics(t *testing.T, session string) {
+	t.Helper()
+	pending := p.getPending(t)
+	t.Logf("diag: /api/pending returned %d entr(y/ies): %+v", len(pending), pending)
+
+	out, _ := exec.Command("docker", "logs", "--tail", "60", "claude-proxy_"+session).CombinedOutput()
+	t.Logf("diag: last 60 lines of claude-proxy_%s logs:\n%s", session, out)
 }
 
 // ---------------------------------------------------------------------------
@@ -424,7 +439,7 @@ func TestSecurity_ProxyApprove_AllowsFlow(t *testing.T) {
 
 	// Wait for the flow to show up on the host's /api/pending and
 	// approve it. 20s is generous — flows usually appear within ~1s.
-	flow := api.waitForPending(t, "example.com", 20*time.Second)
+	flow := api.waitForPending(t, name, "example.com", 20*time.Second)
 	flowID, _ := flow["id"].(string)
 	if flowID == "" {
 		t.Fatalf("pending flow has no id: %+v", flow)
