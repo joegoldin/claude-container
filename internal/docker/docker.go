@@ -107,6 +107,60 @@ type RunOpts struct {
 	Mode string
 }
 
+// resourceLimitArgs returns docker --pids-limit / --memory / --cpus
+// arguments so the Claude container can't fork-bomb, OOM, or peg the
+// host CPU. Defaults are generous for normal use but bounded; override
+// via env vars for unusual workloads.
+//
+//	CLAUDE_CONTAINER_PIDS_LIMIT   (default 4096)
+//	CLAUDE_CONTAINER_MEMORY       (default 8g)
+//	CLAUDE_CONTAINER_CPUS         (default 4.0)
+//
+// Setting any of these to "0" or "unlimited" removes that specific limit
+// (useful for power users who explicitly opt out).
+func resourceLimitArgs() []string {
+	pids := envOr("CLAUDE_CONTAINER_PIDS_LIMIT", "4096")
+	mem := envOr("CLAUDE_CONTAINER_MEMORY", "8g")
+	cpus := envOr("CLAUDE_CONTAINER_CPUS", "4.0")
+	var args []string
+	if pids != "0" && pids != "unlimited" {
+		args = append(args, "--pids-limit", pids)
+	}
+	if mem != "0" && mem != "unlimited" {
+		// memory-swap == memory means no swap — the container can't
+		// trade RAM pressure for slow disk-backed OOM avoidance.
+		args = append(args, "--memory", mem, "--memory-swap", mem)
+	}
+	if cpus != "0" && cpus != "unlimited" {
+		args = append(args, "--cpus", cpus)
+	}
+	return args
+}
+
+// managedSettingsROMount returns a -v overlay that re-mounts the
+// managed-settings.json file read-only on top of the writable /claude
+// bind mount. This stops Claude from rewriting its own permission rules
+// from inside the container.
+//
+// Layering: /claude is mounted RW so credentials and conversation state
+// can be persisted; the single file managed-settings.json gets a second,
+// RO bind mount on top of it. Docker accepts file-level overlays.
+func managedSettingsROMount(configDir string) []string {
+	if configDir == "" {
+		return nil
+	}
+	src := filepath.Join(configDir, "managed-settings.json")
+	return []string{"-v", src + ":/claude/managed-settings.json:ro"}
+}
+
+// envOr returns os.Getenv(key) if non-empty, else fallback.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 // RunArgs returns the docker run command arguments for a persistent
 // Claude Code container. The container is NOT created with --rm so it
 // can be reattached later.
@@ -201,6 +255,12 @@ func RunArgs(opts RunOpts, detached bool) []string {
 		"-e", fmt.Sprintf("USER_UID=%d", opts.UID),
 		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
 	)
+	// Layer the managed-settings.json file on top of the /claude mount
+	// as read-only so Claude cannot rewrite its own permission rules.
+	args = append(args, managedSettingsROMount(opts.ConfigDir)...)
+
+	// Resource limits — prevent fork bombs, memory bombs, CPU pegging.
+	args = append(args, resourceLimitArgs()...)
 
 	mode := opts.Mode
 	if mode == "" {
@@ -329,6 +389,11 @@ func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
 		"-e", fmt.Sprintf("USER_UID=%d", opts.UID),
 		"-e", fmt.Sprintf("USER_GID=%d", opts.GID),
 	)
+	// Read-only overlay of managed-settings.json (GAP-2 mitigation).
+	args = append(args, managedSettingsROMount(opts.ConfigDir)...)
+
+	// Resource limits (GAP-3 mitigation).
+	args = append(args, resourceLimitArgs()...)
 
 	mode := opts.Mode
 	if mode == "" {
@@ -386,6 +451,8 @@ func ShellArgs(workspace, configDir string, hostClaudeFiles []string, uid, gid i
 		"-e", fmt.Sprintf("USER_UID=%d", uid),
 		"-e", fmt.Sprintf("USER_GID=%d", gid),
 	}
+	args = append(args, managedSettingsROMount(configDir)...)
+	args = append(args, resourceLimitArgs()...)
 	for _, f := range hostClaudeFiles {
 		args = append(args, "-v", f+":/mnt/claude-host/"+filepath.Base(f)+":ro")
 	}

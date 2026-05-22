@@ -64,14 +64,27 @@ let
         tcp dport 8080 accept
         tcp dport 8081 accept
 
-        # DNS (UDP and TCP). Docker's embedded resolver lives at 127.0.0.11
-        # and is reached via loopback above; this covers external resolvers
-        # too if a client is configured with one.
-        udp dport 53 accept
+        # DNS to docker's embedded resolver (127.0.0.11) is allowed via the
+        # oif "lo" rule above. EXTERNAL DNS over UDP/53 is denied so a
+        # confused agent cannot exfiltrate via crafted subdomain queries
+        # (GAP-1 from docs/security/audit-2026-05-22.md). DNS-over-TCP and
+        # DNS-over-HTTPS still pass — but for those, the proxy REDIRECT
+        # catches them and applies the rule store.
+        #
+        # If a workload genuinely needs external UDP DNS (rare — most
+        # callers go through libc's resolver, which hits the docker
+        # embedded resolver), set CLAUDE_PROXY_ALLOW_DNS_UDP=1 in the
+        # proxy image's env to opt back in.
+        # NB: 127.0.0.11 traffic stays on the lo interface, so the explicit
+        # `oif "lo" accept` rule already covers it.
         tcp dport 53 accept
 
         # Kill QUIC so HTTPS clients downgrade to TCP and hit the redirect.
         udp dport 443 drop
+
+        # Kill external UDP/53 explicitly so the drop is visible in the log
+        # prefix below (not just a silent "default policy drop").
+        udp dport 53 log prefix "claude_proxy_fw dns-udp drop: " level debug drop
 
         # Everything else: drop. Logged so we can see what's being blocked
         # during smoke tests; remove the log statement later if noisy.

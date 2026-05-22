@@ -216,6 +216,15 @@ let
           ${suExec} "$USER_NAME" ${gitBin} -C "$repo_dir" worktree add -b "$WORKTREE_BRANCH" "$target_dir"
         fi
       fi
+
+      # GAP-6 mitigation: disable git hook execution for this worktree.
+      # Without this, Claude inside the container could write an executable
+      # .git/hooks/pre-commit (or post-checkout, etc.) which would run on
+      # the host with the user's privileges when they later run `git commit`
+      # — a container-escape vector that bypasses every network and capability
+      # control we apply. Setting core.hooksPath to /dev/null prevents git
+      # from ever invoking a hook for this worktree, host- or container-side.
+      ${gitBin} -C "$target_dir" config core.hooksPath /dev/null 2>/dev/null || true
     }
 
     # For non-root users, grant write access to /workspace so git worktree
