@@ -130,6 +130,61 @@ Available Commands:
   workspace   Manage named workspace definitions
 ```
 
+### (bare invocation)
+
+Bare `claude-container` (no subcommand) creates a sandboxed session in the
+current directory and attaches to it — the drop-in safe replacement for
+running `claude` directly. The flag set is the union of `run` and `work`.
+
+In a git repo, a worktree is created at `<repo>/.worktrees/<name>/` and
+the entry is added to `<repo>/.gitignore` if missing (the modification is
+left in the working tree; commit when convenient). Outside a git repo,
+the current directory is pwd-mounted as the workspace.
+
+```
+Usage:
+  claude-container [flags]
+
+Flags:
+      --allow-command stringArray   shell command pattern to allow (repeatable)
+      --allow-domain stringArray    domain the proxy should allow (repeatable)
+      --allow-perm stringArray      raw permission rule to allow (repeatable)
+  -b, --background                  run detached without attaching
+      --deny-command stringArray    shell command pattern to deny (repeatable)
+      --deny-path stringArray       filesystem path to deny (repeatable)
+      --deny-perm stringArray       raw permission rule to deny (repeatable)
+      --from string                 base branch/ref for the new worktree
+  -w, --mount stringArray           extra host path to mount (repeatable)
+      --name string                 session name (auto-generated if empty)
+      --no-worktree                 pwd passthrough even in a git repo
+      --packages stringArray        extra nixpkgs to install at start
+      --preset string               proxy seed preset
+      --profile string              sandbox profile (low|default|med|high)
+  -p, --prompt string               initial prompt to send
+      --proxy-port int              host port for the proxy dashboard
+      --resume string               resume mode (picker, last, or session id)
+      --rm                          remove container on exit
+  -W, --workspace string            named workspace
+      --yolo                        skip Claude Code permission prompts
+```
+
+On first run after upgrade, a one-line notice points users at
+`claude-container tui` for the old dashboard behavior. Set
+`CLAUDE_CONTAINER_QUIET=1` to suppress the notice.
+
+### tui
+
+Open the Bubble Tea dashboard (previously the default behavior of bare
+`claude-container`). Lists sessions, opens the wizard for new ones, and
+attaches into a running container.
+
+```
+Usage:
+  claude-container tui [flags]
+```
+
+See **TUI DASHBOARD** below for key bindings.
+
 ### run
 
 Create a session without a worktree, using the current directory. Name is
