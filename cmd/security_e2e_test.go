@@ -1088,6 +1088,16 @@ func TestSecurity_Symlink_HostTraversalBlocked(t *testing.T) {
 	requireDockerAndAuth(t)
 	setupIsolatedConfigDir(t)
 
+	// Use a temp workspace so the symlinks the probe creates inside the
+	// container don't land in the project's cmd/ directory. `run -b`
+	// uses cwd as the workspace, so we chdir before starting.
+	ws := t.TempDir()
+	oldCwd, _ := os.Getwd()
+	if err := os.Chdir(ws); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(oldCwd) })
+
 	name := "sec-symlink"
 	startSecurityContainer(t, name, "--yolo")
 
