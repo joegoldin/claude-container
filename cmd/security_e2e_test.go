@@ -49,82 +49,80 @@ func requireSecurityLLMOptIn(t *testing.T) {
 	}
 }
 
-// chownProxyStateBack uses a throwaway claude-proxy container (which has
-// coreutils in its nix store) to chown a host-side bind-mount directory
-// from uid 1500 (the proxy uid) back to the host test user. Without this,
-// Go's t.TempDir cleanup fails with permission denied because the files
-// the proxy wrote are owned by an in-container uid the test user can't
-// touch.
+// chownProxyStateBack uses a throwaway claude-proxy container to remove
+// the proxy-owned subtree from a host-side bind-mount directory before
+// Go's t.TempDir runs RemoveAll. We use *rm -rf* from inside the
+// container rather than chown because rootless Docker maps the proxy's
+// in-container uid 1500 to a host subuid the test user cannot chown but
+// the container's own "root" (= host user via userns remap) CAN delete.
 //
 // Best-effort: if anything fails (e.g. claude-proxy image absent), log
-// and move on — the host can still rm -rf the temp dir manually.
+// and move on — the host can still `sudo rm -rf` the temp dir manually.
 func chownProxyStateBack(t *testing.T, dir string) {
 	t.Helper()
-	uid := os.Getuid()
-	gid := os.Getgid()
-	// Run claude-proxy with a no-op entrypoint (just chown) — the image's
-	// nix store includes coreutils. We discover the chown binary by
-	// asking the entrypoint script (which references it by absolute path).
-	chownPath, err := findChownInProxyImage()
+	rmPath, err := findCoreUtilInProxyImage("rm")
 	if err != nil {
-		t.Logf("could not locate chown in proxy image: %v", err)
+		t.Logf("could not locate rm in proxy image: %v", err)
 		return
 	}
 	cmd := exec.Command("docker", "run", "--rm",
 		"--user", "0:0",
 		"-v", dir+":/x",
-		"--entrypoint", chownPath,
+		"--entrypoint", rmPath,
 		"claude-proxy",
-		"-R", fmt.Sprintf("%d:%d", uid, gid), "/x",
+		"-rf", "/x/claude-container",
 	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Logf("post-test chown via claude-proxy failed (will leak): %v\n%s", err, out)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("post-test rm via claude-proxy failed (will leak): %v\n%s", err, out)
+		return
 	}
+	t.Logf("post-test cleanup removed %s/claude-container", dir)
 }
 
-// findChownInProxyImage memoises the absolute path of `chown` inside the
-// claude-proxy image. The path is in the nix store and changes with each
-// rebuild, so we discover it once per process by reading the entrypoint
-// script (which references coreutils by absolute path).
+// findCoreUtilInProxyImage memoises the absolute path of a coreutils
+// binary (chown/rm/chmod/etc.) inside the claude-proxy image. The path
+// is in the nix store and changes per rebuild, so we discover it once
+// per process: read the entrypoint script (which references chown by
+// absolute path) to locate the coreutils prefix, then assume sibling
+// binaries live in the same /bin/.
 var (
-	chownPathCache    string
-	chownPathCacheErr error
-	chownPathOnce     sync.Once
+	coreutilsBinCache    string
+	coreutilsBinCacheErr error
+	coreutilsBinOnce     sync.Once
 )
 
-func findChownInProxyImage() (string, error) {
-	chownPathOnce.Do(func() {
-		// Get the entrypoint path from the image config.
+func findCoreUtilInProxyImage(bin string) (string, error) {
+	coreutilsBinOnce.Do(func() {
 		out, err := exec.Command("docker", "inspect",
 			"--format={{index .Config.Entrypoint 0}}",
 			"claude-proxy").Output()
 		if err != nil {
-			chownPathCacheErr = fmt.Errorf("docker inspect claude-proxy: %w", err)
+			coreutilsBinCacheErr = fmt.Errorf("docker inspect claude-proxy: %w", err)
 			return
 		}
 		entrypoint := strings.TrimSpace(string(out))
 
-		// Read the entrypoint script, grep for the coreutils chown path.
 		script, err := exec.Command("docker", "run", "--rm",
 			"--entrypoint", "cat",
 			"claude-proxy", entrypoint).Output()
 		if err != nil {
-			chownPathCacheErr = fmt.Errorf("read entrypoint: %w", err)
+			coreutilsBinCacheErr = fmt.Errorf("read entrypoint: %w", err)
 			return
 		}
-		// Look for "/nix/store/<hash>-coreutils-<version>/bin/chown"
+		// Look for "/nix/store/<hash>-coreutils-<version>/bin/chown" and
+		// remember the /bin/ prefix.
 		for _, line := range strings.Split(string(script), "\n") {
 			i := strings.Index(line, "/nix/store/")
 			for i >= 0 {
 				tail := line[i:]
-				// take through next whitespace or quote
 				end := strings.IndexAny(tail, " \t\"'")
 				if end < 0 {
 					end = len(tail)
 				}
 				p := tail[:end]
 				if strings.HasSuffix(p, "/bin/chown") {
-					chownPathCache = p
+					coreutilsBinCache = strings.TrimSuffix(p, "/chown")
 					return
 				}
 				next := strings.Index(tail[1:], "/nix/store/")
@@ -134,9 +132,17 @@ func findChownInProxyImage() (string, error) {
 				i += 1 + next
 			}
 		}
-		chownPathCacheErr = fmt.Errorf("could not find chown path in entrypoint script")
+		coreutilsBinCacheErr = fmt.Errorf("could not find coreutils /bin/ in entrypoint script")
 	})
-	return chownPathCache, chownPathCacheErr
+	if coreutilsBinCacheErr != nil {
+		return "", coreutilsBinCacheErr
+	}
+	return coreutilsBinCache + "/" + bin, nil
+}
+
+// findChownInProxyImage is a back-compat shim. Prefer findCoreUtilInProxyImage("chown").
+func findChownInProxyImage() (string, error) {
+	return findCoreUtilInProxyImage("chown")
 }
 
 // setupIsolatedConfigDir is like setupConfigDir but registers a
@@ -218,9 +224,9 @@ func newProxyAPI(t *testing.T, configDir, session string) *proxyAPI {
 	t.Helper()
 	tokenPath := filepath.Join(configDir, "claude-container", "proxy-state", session, "dashboard-token")
 	// The proxy wrote the token as uid 1500 with mode 0600 — chmod via a
-	// throwaway proxy container so the test process can read it.
-	if cp, err := findChownInProxyImage(); err == nil {
-		chmodPath := strings.TrimSuffix(cp, "/chown") + "/chmod"
+	// throwaway proxy container (root in container can chmod files owned
+	// by any uid in a bind mount) so the test process can read it.
+	if chmodPath, err := findCoreUtilInProxyImage("chmod"); err == nil {
 		exec.Command("docker", "run", "--rm",
 			"--user", "0:0",
 			"-v", configDir+":/x",
