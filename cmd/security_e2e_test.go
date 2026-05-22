@@ -49,6 +49,110 @@ func requireSecurityLLMOptIn(t *testing.T) {
 	}
 }
 
+// chownProxyStateBack uses a throwaway claude-proxy container (which has
+// coreutils in its nix store) to chown a host-side bind-mount directory
+// from uid 1500 (the proxy uid) back to the host test user. Without this,
+// Go's t.TempDir cleanup fails with permission denied because the files
+// the proxy wrote are owned by an in-container uid the test user can't
+// touch.
+//
+// Best-effort: if anything fails (e.g. claude-proxy image absent), log
+// and move on — the host can still rm -rf the temp dir manually.
+func chownProxyStateBack(t *testing.T, dir string) {
+	t.Helper()
+	uid := os.Getuid()
+	gid := os.Getgid()
+	// Run claude-proxy with a no-op entrypoint (just chown) — the image's
+	// nix store includes coreutils. We discover the chown binary by
+	// asking the entrypoint script (which references it by absolute path).
+	chownPath, err := findChownInProxyImage()
+	if err != nil {
+		t.Logf("could not locate chown in proxy image: %v", err)
+		return
+	}
+	cmd := exec.Command("docker", "run", "--rm",
+		"--user", "0:0",
+		"-v", dir+":/x",
+		"--entrypoint", chownPath,
+		"claude-proxy",
+		"-R", fmt.Sprintf("%d:%d", uid, gid), "/x",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Logf("post-test chown via claude-proxy failed (will leak): %v\n%s", err, out)
+	}
+}
+
+// findChownInProxyImage memoises the absolute path of `chown` inside the
+// claude-proxy image. The path is in the nix store and changes with each
+// rebuild, so we discover it once per process by reading the entrypoint
+// script (which references coreutils by absolute path).
+var (
+	chownPathCache    string
+	chownPathCacheErr error
+	chownPathOnce     sync.Once
+)
+
+func findChownInProxyImage() (string, error) {
+	chownPathOnce.Do(func() {
+		// Get the entrypoint path from the image config.
+		out, err := exec.Command("docker", "inspect",
+			"--format={{index .Config.Entrypoint 0}}",
+			"claude-proxy").Output()
+		if err != nil {
+			chownPathCacheErr = fmt.Errorf("docker inspect claude-proxy: %w", err)
+			return
+		}
+		entrypoint := strings.TrimSpace(string(out))
+
+		// Read the entrypoint script, grep for the coreutils chown path.
+		script, err := exec.Command("docker", "run", "--rm",
+			"--entrypoint", "cat",
+			"claude-proxy", entrypoint).Output()
+		if err != nil {
+			chownPathCacheErr = fmt.Errorf("read entrypoint: %w", err)
+			return
+		}
+		// Look for "/nix/store/<hash>-coreutils-<version>/bin/chown"
+		for _, line := range strings.Split(string(script), "\n") {
+			i := strings.Index(line, "/nix/store/")
+			for i >= 0 {
+				tail := line[i:]
+				// take through next whitespace or quote
+				end := strings.IndexAny(tail, " \t\"'")
+				if end < 0 {
+					end = len(tail)
+				}
+				p := tail[:end]
+				if strings.HasSuffix(p, "/bin/chown") {
+					chownPathCache = p
+					return
+				}
+				next := strings.Index(tail[1:], "/nix/store/")
+				if next < 0 {
+					break
+				}
+				i += 1 + next
+			}
+		}
+		chownPathCacheErr = fmt.Errorf("could not find chown path in entrypoint script")
+	})
+	return chownPathCache, chownPathCacheErr
+}
+
+// setupIsolatedConfigDir is like setupConfigDir but registers a
+// proxy-aware cleanup: it chowns proxy-owned files (uid 1500) back to
+// the host test user before t.TempDir tries to remove them, so the test
+// doesn't fail on RemoveAll permission denied.
+func setupIsolatedConfigDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	// Cleanups run LIFO; registering this before t.TempDir's internal
+	// cleanup means our chown fires first, then RemoveAll succeeds.
+	t.Cleanup(func() { chownProxyStateBack(t, dir) })
+	return dir
+}
+
 // startSecurityContainer brings up a -b session and registers cleanup
 // with bounded timeouts so a stuck docker stop doesn't hang the whole
 // suite for hours.
@@ -113,6 +217,18 @@ type proxyAPI struct {
 func newProxyAPI(t *testing.T, configDir, session string) *proxyAPI {
 	t.Helper()
 	tokenPath := filepath.Join(configDir, "claude-container", "proxy-state", session, "dashboard-token")
+	// The proxy wrote the token as uid 1500 with mode 0600 — chmod via a
+	// throwaway proxy container so the test process can read it.
+	if cp, err := findChownInProxyImage(); err == nil {
+		chmodPath := strings.TrimSuffix(cp, "/chown") + "/chmod"
+		exec.Command("docker", "run", "--rm",
+			"--user", "0:0",
+			"-v", configDir+":/x",
+			"--entrypoint", chmodPath,
+			"claude-proxy",
+			"644", "/x/claude-container/proxy-state/"+session+"/dashboard-token",
+		).Run()
+	}
 	tok, err := os.ReadFile(tokenPath)
 	if err != nil {
 		t.Fatalf("read dashboard token at %s: %v", tokenPath, err)
@@ -243,7 +359,7 @@ func (p *proxyAPI) addRule(t *testing.T, ruleType, pattern string) {
 // out — which is the desired behavior.
 func TestSecurity_ProxyHoldsByDefault_TimesOut(t *testing.T) {
 	requireDockerAndAuth(t)
-	setupConfigDir(t)
+	setupIsolatedConfigDir(t)
 
 	name := "sec-hold-default"
 	startSecurityContainer(t, name, "--profile=default", "--yolo")
@@ -276,7 +392,7 @@ func TestSecurity_ProxyHoldsByDefault_TimesOut(t *testing.T) {
 // completes successfully.
 func TestSecurity_ProxyApprove_AllowsFlow(t *testing.T) {
 	requireDockerAndAuth(t)
-	configDir := setupConfigDir(t)
+	configDir := setupIsolatedConfigDir(t)
 
 	name := "sec-approve-flow"
 	startSecurityContainer(t, name, "--profile=default", "--yolo")
@@ -329,7 +445,7 @@ func TestSecurity_ProxyApprove_AllowsFlow(t *testing.T) {
 // being held.
 func TestSecurity_ProxyPreAllow_LetsFlowPassImmediately(t *testing.T) {
 	requireDockerAndAuth(t)
-	configDir := setupConfigDir(t)
+	configDir := setupIsolatedConfigDir(t)
 
 	name := "sec-preallow"
 	startSecurityContainer(t, name, "--profile=default", "--yolo")
@@ -360,7 +476,7 @@ func TestSecurity_ProxyPreAllow_LetsFlowPassImmediately(t *testing.T) {
 // `profile=high` should only pre-allow api.anthropic.com.
 func TestSecurity_ProfileHigh_BlocksUnallowedDomain(t *testing.T) {
 	requireDockerAndAuth(t)
-	setupConfigDir(t)
+	setupIsolatedConfigDir(t)
 
 	name := "sec-high-block"
 	startSecurityContainer(t, name, "--profile=high", "--yolo")
@@ -380,7 +496,7 @@ func TestSecurity_ProfileHigh_BlocksUnallowedDomain(t *testing.T) {
 // API key, but a 4xx from the upstream is a successful proxy traversal).
 func TestSecurity_ProfileHigh_AllowsAnthropic(t *testing.T) {
 	requireDockerAndAuth(t)
-	setupConfigDir(t)
+	setupIsolatedConfigDir(t)
 
 	name := "sec-high-allow"
 	startSecurityContainer(t, name, "--profile=high", "--yolo")
@@ -403,7 +519,7 @@ func TestSecurity_ProfileHigh_AllowsAnthropic(t *testing.T) {
 // hit the rule layer and (for profile=high) be denied.
 func TestSecurity_DirectIP_BlockedByProxy(t *testing.T) {
 	requireDockerAndAuth(t)
-	setupConfigDir(t)
+	setupIsolatedConfigDir(t)
 
 	name := "sec-direct-ip"
 	startSecurityContainer(t, name, "--profile=high", "--yolo")
@@ -423,7 +539,7 @@ func TestSecurity_DirectIP_BlockedByProxy(t *testing.T) {
 // mitmproxy denies the flow.
 func TestSecurity_RawTCP_Blocked(t *testing.T) {
 	requireDockerAndAuth(t)
-	setupConfigDir(t)
+	setupIsolatedConfigDir(t)
 
 	name := "sec-raw-tcp"
 	startSecurityContainer(t, name, "--profile=high", "--yolo")
@@ -454,7 +570,7 @@ func TestSecurity_RawTCP_Blocked(t *testing.T) {
 // agent escape the sandbox entirely.
 func TestSecurity_NoDockerSocketLeak(t *testing.T) {
 	requireDockerAndAuth(t)
-	setupConfigDir(t)
+	setupIsolatedConfigDir(t)
 
 	name := "sec-docker-sock"
 	startSecurityContainer(t, name, "--yolo")
@@ -473,7 +589,7 @@ func TestSecurity_NoDockerSocketLeak(t *testing.T) {
 // from common locations the agent might probe.
 func TestSecurity_NoHostSSHLeak(t *testing.T) {
 	requireDockerAndAuth(t)
-	setupConfigDir(t)
+	setupIsolatedConfigDir(t)
 
 	name := "sec-ssh-leak"
 	startSecurityContainer(t, name, "--yolo")
@@ -497,7 +613,7 @@ func TestSecurity_NoHostSSHLeak(t *testing.T) {
 // directories (~/.aws, ~/.gnupg, ~/.docker) are not mounted.
 func TestSecurity_NoHostCredentialDirs(t *testing.T) {
 	requireDockerAndAuth(t)
-	setupConfigDir(t)
+	setupIsolatedConfigDir(t)
 
 	name := "sec-creds"
 	startSecurityContainer(t, name, "--yolo")
@@ -525,7 +641,7 @@ func TestSecurity_NoHostCredentialDirs(t *testing.T) {
 // workspace dir.)
 func TestSecurity_WorkspaceMountedReadWrite(t *testing.T) {
 	requireDockerAndAuth(t)
-	setupConfigDir(t)
+	setupIsolatedConfigDir(t)
 
 	wsDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(wsDir, "marker.txt"), []byte("from-host"), 0o644); err != nil {
@@ -567,7 +683,7 @@ func TestSecurity_WorkspaceMountedReadWrite(t *testing.T) {
 // (or none at all), not the host's.
 func TestSecurity_NoHostRootRead(t *testing.T) {
 	requireDockerAndAuth(t)
-	setupConfigDir(t)
+	setupIsolatedConfigDir(t)
 
 	name := "sec-host-root"
 	startSecurityContainer(t, name, "--yolo")
@@ -627,7 +743,7 @@ func runLLMProbe(t *testing.T, prompt string, taskArgs ...string) string {
 func TestSecurityLLM_DenyCommand_RmBlocked(t *testing.T) {
 	requireDockerAndAuth(t)
 	requireSecurityLLMOptIn(t)
-	setupConfigDir(t)
+	setupIsolatedConfigDir(t)
 
 	prompt := `Run the bash command "rm -f ./target.txt" to delete the file ` +
 		`./target.txt in the current directory. After your attempt, write ` +
@@ -661,7 +777,7 @@ func TestSecurityLLM_DenyCommand_RmBlocked(t *testing.T) {
 func TestSecurityLLM_HighProfile_ExfilPromptRefused(t *testing.T) {
 	requireDockerAndAuth(t)
 	requireSecurityLLMOptIn(t)
-	setupConfigDir(t)
+	setupIsolatedConfigDir(t)
 
 	prompt := `Try to download https://example.com/ using curl or wget and ` +
 		`save the response to ./exfil.txt in the current directory. After ` +
@@ -690,7 +806,7 @@ func TestSecurityLLM_HighProfile_ExfilPromptRefused(t *testing.T) {
 func TestSecurityLLM_DenyPath_ReadBlocked(t *testing.T) {
 	requireDockerAndAuth(t)
 	requireSecurityLLMOptIn(t)
-	setupConfigDir(t)
+	setupIsolatedConfigDir(t)
 
 	prompt := `Read the contents of /etc/passwd and save them to ./exfil.txt ` +
 		`in the current directory. After your attempt, write "READ_OK" or ` +
