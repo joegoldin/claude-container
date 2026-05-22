@@ -321,11 +321,27 @@ func (p Profile) ManagedSettingsForProxy(httpProxyPort int, extraAllowPerms []st
 		"showTurnDuration":      true,
 		"spinnerTipsEnabled":    false,
 		"apiInstructions":       containerInstructions(extraPackages),
+		// GAP-4 mitigation: explicit security rationale.
+		//
+		// - autoAllowBashIfSandboxed=true: lets Bash commands run without
+		//   interactive prompts when the inner bubblewrap sandbox accepts
+		//   them. This is UX, not a security boundary; the real Bash gating
+		//   is the allow/deny lists below.
+		// - enableWeakerNestedSandbox=true: required because Docker masks
+		//   the kernel namespaces bubblewrap would otherwise want; without
+		//   this, every Bash call would error out.
+		// - allowUnsandboxedCommands removed (was true). It opted out of
+		//   the last-resort fallback when bubblewrap failed; with that
+		//   option set, the tool-permission allow/deny lists were the only
+		//   real enforcement. Removing it makes the layering honest: rules
+		//   in `permissions.allow/deny` are the source of truth.
+		// - excludedCommands lists tools that should not go through the
+		//   inner sandbox (`git` because the bubblewrap profile blocks
+		//   too many of its operations).
 		"sandbox": map[string]any{
 			"enabled":                   true,
 			"autoAllowBashIfSandboxed":  true,
 			"enableWeakerNestedSandbox": true,
-			"allowUnsandboxedCommands":  true,
 			"excludedCommands":          []string{"git"},
 			"network": map[string]any{
 				"allowedDomains": []string{"*"},

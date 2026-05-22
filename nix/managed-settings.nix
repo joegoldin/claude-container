@@ -16,7 +16,9 @@
     enabled = true;
     autoAllowBashIfSandboxed = true;
     enableWeakerNestedSandbox = true;
-    allowUnsandboxedCommands = true;
+    # allowUnsandboxedCommands removed (audit GAP-4): it opted out of the
+    # last-resort sandbox fallback when bubblewrap failed, making the
+    # allow/deny tool rules the only real enforcement. Rely on those.
     excludedCommands = [ "git" ];
     network.allowedDomains = [
       "api.anthropic.com"

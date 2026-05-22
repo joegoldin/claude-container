@@ -155,8 +155,10 @@ func TestRunArgsVolumeMounts(t *testing.T) {
 			volumeCount++
 		}
 	}
-	if volumeCount != 3 {
-		t.Errorf("RunArgs has %d volume mounts, want 3", volumeCount)
+	// 4 mounts now: workspace, /claude RW, /claude/managed-settings.json RO
+	// (audit GAP-2 mitigation), and the persistent nix store volume.
+	if volumeCount != 4 {
+		t.Errorf("RunArgs has %d volume mounts, want 4", volumeCount)
 	}
 
 	// Verify specific mounts are present.
@@ -166,6 +168,9 @@ func TestRunArgsVolumeMounts(t *testing.T) {
 	}
 	if !strings.Contains(joined, "/home/user/.claude-config:/claude") {
 		t.Errorf("RunArgs missing config volume mount in %v", args)
+	}
+	if !strings.Contains(joined, "/home/user/.claude-config/managed-settings.json:/claude/managed-settings.json:ro") {
+		t.Errorf("RunArgs missing managed-settings RO overlay (GAP-2) in %v", args)
 	}
 	if !strings.Contains(joined, "claude-nix-store:/nix/var") {
 		t.Errorf("RunArgs missing nix store volume mount in %v", args)
