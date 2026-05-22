@@ -1,17 +1,15 @@
 package cmd
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
 	"github.com/joegoldin/claude-container/internal/httpproxy"
 	"github.com/joegoldin/claude-container/internal/proxy"
-	sandboxPkg "github.com/joegoldin/claude-container/internal/sandbox"
+	"github.com/joegoldin/claude-container/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -26,6 +24,7 @@ var attachCmd = &cobra.Command{
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeSessionNames,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := cmd.Context()
 		name := args[0]
 
 		store := config.NewStore(config.DefaultDir())
@@ -38,7 +37,7 @@ var attachCmd = &cobra.Command{
 		}
 
 		// Ensure the container is running (start/recreate as needed).
-		if err := ensureRunning(store, name, sess); err != nil {
+		if err := ensureRunning(ctx, store, name, sess); err != nil {
 			return err
 		}
 
@@ -70,8 +69,9 @@ var attachCmd = &cobra.Command{
 }
 
 // ensureRunning makes sure the container for the given session is running,
-// starting or recreating it as needed.
-func ensureRunning(store *config.Store, name string, sess *config.Session) error {
+// starting it (cheap) or recreating it via session.Launch (expensive) as
+// needed. The proxy is always ensured.
+func ensureRunning(ctx context.Context, store *config.Store, name string, sess *config.Session) error {
 	// Always ensure the per-session proxy is running. Rules file is only
 	// seeded if it doesn't already exist; user-added rules accumulated in
 	// a previous attach are preserved.
@@ -99,70 +99,62 @@ func ensureRunning(store *config.Store, name string, sess *config.Session) error
 			return fmt.Errorf("start container: %w", err)
 		}
 		return nil
-	default:
-		// Prepare per-session config dir with selective conversation exposure.
-		reattachConfigDir := store.ContainerConfigDir(name)
-		if sess.RepoPath != "" {
-			var prepErr error
-			reattachConfigDir, prepErr = store.PrepareSessionConfig(name, sess.RepoPath, sess.ResumeID)
-			if prepErr != nil {
-				return fmt.Errorf("prepare session config: %w", prepErr)
-			}
-		}
-
-		// Regenerate managed settings from stored profile.
-		profile := sess.Profile
-		if profile == "" {
-			profile = "default"
-		}
-		if prof, err := sandboxPkg.GetProfile(profile); err == nil {
-			var extraAllowPerms []string
-			if profile != "high" {
-				extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(envExtraAllowCommands())...)
-			}
-			extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(sess.AllowCommands)...)
-			extraAllowPerms = append(extraAllowPerms, sess.AllowPerms...)
-
-			var extraDenyPerms []string
-			for _, p := range sess.DenyPaths {
-				extraDenyPerms = append(extraDenyPerms, fmt.Sprintf("Read(%s)", p))
-			}
-			extraDenyPerms = append(extraDenyPerms, wrapCommandPerms(sess.DenyCommands)...)
-			extraDenyPerms = append(extraDenyPerms, sess.DenyPerms...)
-
-			settingsJSON, _ := json.MarshalIndent(
-				prof.ManagedSettingsForProxy(8080, extraAllowPerms, extraDenyPerms, sess.Packages), "", "  ")
-			os.WriteFile(filepath.Join(reattachConfigDir, "managed-settings.json"), settingsJSON, 0o644)
-		}
-
-		if sess.ResumeID != "" {
-			fmt.Printf("Recreating container with --resume %s...\n", sess.ResumeID)
-		} else {
-			fmt.Println("Recreating container with --continue...")
-		}
-		detachedArgs := docker.RunArgs(docker.RunOpts{
-			Name:            name,
-			Workspace:       sess.WorktreePath,
-			ConfigDir:       reattachConfigDir,
-			HostClaudeFiles: config.HostClaudeCredentialFiles(),
-			UID:             docker.ContainerUID(),
-			GID:             docker.ContainerGID(),
-			Yolo:            sess.Yolo,
-			Resume:          sess.ResumeID,
-			Continue:        sess.ResumeID == "",
-			ExtraWorkspaces: sess.ExtraWorkspaces,
-			ProxyEnabled:       true,
-			ProxyCACertDir:     httpproxy.CACertDir(config.DefaultDir()),
-			ProxyDashboardPort: sess.ProxyPort,
-			Packages:           sess.Packages,
-		}, true)
-		startCmd := exec.Command("docker", detachedArgs...)
-		startCmd.Stderr = os.Stderr
-		if err := startCmd.Run(); err != nil {
-			return fmt.Errorf("recreate container: %w", err)
-		}
-		return nil
 	}
+
+	// Container is missing — recreate via session.Launch. We pass the
+	// stored worktree path as Cwd and force WorktreeNever so Launch mounts
+	// it directly rather than trying to (re-)create a worktree the
+	// entrypoint already provisioned.
+	cwd := sess.WorktreePath
+	if cwd == "" {
+		cwd = sess.RepoPath
+	}
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("getwd: %w", err)
+		}
+	}
+
+	if sess.ResumeID != "" {
+		fmt.Printf("Recreating container with --resume %s...\n", sess.ResumeID)
+	} else {
+		fmt.Println("Recreating container with --continue...")
+	}
+
+	opts := session.Opts{
+		Name:            name,
+		Mode:            session.ModeTTY,
+		Cwd:             cwd,
+		WorktreeMode:    session.WorktreeNever,
+		NoWorktree:      true,
+		Profile:         sess.Profile,
+		Yolo:            sess.Yolo,
+		AllowDomains:    sess.AllowDomains,
+		DenyPaths:       sess.DenyPaths,
+		AllowCommands:   sess.AllowCommands,
+		DenyCommands:    sess.DenyCommands,
+		AllowPerms:      sess.AllowPerms,
+		DenyPerms:       sess.DenyPerms,
+		Mounts:          sess.ExtraWorkspaces,
+		Resume:          sess.ResumeID,
+		Continue:        sess.ResumeID == "",
+		Packages:        sess.Packages,
+		AutoRemove:      sess.AutoRemove,
+		ProxySeedPreset: sess.ProxySeedPreset,
+		ProxyPort:       sess.ProxyPort,
+	}
+
+	// session.Launch starts the container detached but also returns a
+	// Handle whose cleanup closure would tear the container down on exit.
+	// For ensureRunning we just want the container started — discard the
+	// Handle (no Cleanup call). The container is then attached to by the
+	// caller via proxy.Run.
+	if _, err := session.Launch(ctx, store, opts); err != nil {
+		return fmt.Errorf("recreate container: %w", err)
+	}
+	return nil
 }
 
 func init() {

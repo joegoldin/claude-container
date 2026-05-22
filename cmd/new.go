@@ -308,17 +308,4 @@ func envExtraAllowCommands() []string {
 	return cmds
 }
 
-// wrapCommandPerms wraps bare command patterns as Bash() permission rules.
-// Example: "docker *" → "Bash(docker *)". Still used by cmd/attach.go for
-// the recreate-on-missing-container path.
-func wrapCommandPerms(commands []string) []string {
-	if len(commands) == 0 {
-		return nil
-	}
-	perms := make([]string, len(commands))
-	for i, cmd := range commands {
-		perms[i] = fmt.Sprintf("Bash(%s)", cmd)
-	}
-	return perms
-}
 
