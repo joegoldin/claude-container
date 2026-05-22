@@ -1,21 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joegoldin/claude-container/internal/config"
-	"github.com/joegoldin/claude-container/internal/docker"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
-	"github.com/joegoldin/claude-container/internal/httpproxy"
-	"github.com/joegoldin/claude-container/internal/proxy"
-	sandboxPkg "github.com/joegoldin/claude-container/internal/sandbox"
+	"github.com/joegoldin/claude-container/internal/session"
 	"github.com/joegoldin/claude-container/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -35,40 +29,40 @@ var (
 	newProfile       string
 	newAllowDomains  []string
 	newDenyPaths     []string
-	newProxyPreset string // --preset
-	newProxyPort   int
-	newResume         string
-	newAllowCommands  []string
-	newDenyCommands   []string
-	newAllowPerms     []string
-	newDenyPerms      []string
-	newPackages       []string
+	newProxyPreset   string
+	newProxyPort     int
+	newResume        string
+	newAllowCommands []string
+	newDenyCommands  []string
+	newAllowPerms    []string
+	newDenyPerms     []string
+	newPackages      []string
 )
 
 // createOpts holds the resolved options for creating a new session.
 type createOpts struct {
-	name         string
-	worktree     string
-	from         string
-	noWorktree   bool
-	yolo         bool
-	prompt       string
-	resume       string   // --resume flag value
-	cont         bool     // "continue" is a keyword
-	background   bool     // don't auto-attach after creation
-	autoRemove   bool     // clean up session when it stops
-	mounts       []string // -w flag: ad-hoc folder paths
-	workspace    string   // -W flag: named workspace
-	profile      string   // --profile flag
-	allowDomains  []string // --allow-domain flag
-	denyPaths     []string // --deny-path flag
-	allowCommands []string // --allow-command flag
-	denyCommands  []string // --deny-command flag
-	allowPerms    []string // --allow-perm flag (raw permission rules)
-	denyPerms     []string // --deny-perm flag (raw deny rules)
-	proxySeedPreset string // optional preset to seed proxy rules from
+	name            string
+	worktree        string
+	from            string
+	noWorktree      bool
+	yolo            bool
+	prompt          string
+	resume          string
+	cont            bool
+	background      bool
+	autoRemove      bool
+	mounts          []string
+	workspace       string
+	profile         string
+	allowDomains    []string
+	denyPaths       []string
+	allowCommands   []string
+	denyCommands    []string
+	allowPerms      []string
+	denyPerms       []string
+	proxySeedPreset string
 	proxyPort       int
-	packages      []string // --packages flag
+	packages        []string
 }
 
 var newCmd = &cobra.Command{
@@ -76,6 +70,7 @@ var newCmd = &cobra.Command{
 	Short: "Create a new Claude Code session",
 	Long:  `Create a new session with an interactive wizard, or use flags to skip the wizard.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := cmd.Context()
 		// If no identifying flags were provided, launch the interactive wizard.
 		if newName == "" && newWorktree == "" && !newNoWorktree {
 			cwd, err := os.Getwd()
@@ -103,91 +98,64 @@ var newCmd = &cobra.Command{
 			if resolvedWorkspace == "" {
 				resolvedWorkspace = newWorkspaceName
 			}
-			var wizPackages []string
-			if res.Packages != "" {
-				for _, p := range strings.Split(res.Packages, ",") {
-					p = strings.TrimSpace(p)
-					if p != "" {
-						wizPackages = append(wizPackages, p)
-					}
-				}
-			}
-			resolvedPackages := wizPackages
+			resolvedPackages := splitCSV([]string{res.Packages})
 			if len(newPackages) > 0 {
 				resolvedPackages = newPackages
 			}
-			var wizAllowPerms []string
-			if res.AllowPerms != "" {
-				for _, p := range strings.Split(res.AllowPerms, ",") {
-					p = strings.TrimSpace(p)
-					if p != "" {
-						wizAllowPerms = append(wizAllowPerms, p)
-					}
-				}
-			}
-			var wizDenyPerms []string
-			if res.DenyPerms != "" {
-				for _, p := range strings.Split(res.DenyPerms, ",") {
-					p = strings.TrimSpace(p)
-					if p != "" {
-						wizDenyPerms = append(wizDenyPerms, p)
-					}
-				}
-			}
-			resolvedAllowPerms := wizAllowPerms
+			resolvedAllowPerms := splitCSV([]string{res.AllowPerms})
 			if len(newAllowPerms) > 0 {
 				resolvedAllowPerms = newAllowPerms
 			}
-			resolvedDenyPerms := wizDenyPerms
+			resolvedDenyPerms := splitCSV([]string{res.DenyPerms})
 			if len(newDenyPerms) > 0 {
 				resolvedDenyPerms = newDenyPerms
 			}
-			return createSession(createOpts{
-				name:          res.Name,
-				worktree:      res.Worktree,
-				from:          res.From,
-				noWorktree:    res.NoWorktree,
-				yolo:          res.Yolo,
-				prompt:        res.Prompt,
-				background:    res.Background,
-				mounts:        newMounts,
-				workspace:     resolvedWorkspace,
-				profile:       resolvedProfile,
-				allowDomains:  newAllowDomains,
-				denyPaths:     newDenyPaths,
-				allowCommands: newAllowCommands,
-				denyCommands:  newDenyCommands,
-				allowPerms:    resolvedAllowPerms,
-				denyPerms:     resolvedDenyPerms,
+			return createSession(ctx, createOpts{
+				name:            res.Name,
+				worktree:        res.Worktree,
+				from:            res.From,
+				noWorktree:      res.NoWorktree,
+				yolo:            res.Yolo,
+				prompt:          res.Prompt,
+				background:      res.Background,
+				mounts:          newMounts,
+				workspace:       resolvedWorkspace,
+				profile:         resolvedProfile,
+				allowDomains:    newAllowDomains,
+				denyPaths:       newDenyPaths,
+				allowCommands:   newAllowCommands,
+				denyCommands:    newDenyCommands,
+				allowPerms:      resolvedAllowPerms,
+				denyPerms:       resolvedDenyPerms,
 				proxySeedPreset: newProxyPreset,
 				proxyPort:       newProxyPort,
-				packages:      resolvedPackages,
+				packages:        resolvedPackages,
 			})
 		}
 
-		return createSession(createOpts{
-			name:          newName,
-			worktree:      newWorktree,
-			from:          newFrom,
-			noWorktree:    newNoWorktree,
-			yolo:          newYolo,
-			prompt:        newPrompt,
-			resume:        newResume,
-			cont:          newContinue,
-			background:    newBackground,
-			autoRemove:    newAutoRemove,
-			mounts:        newMounts,
-			workspace:     newWorkspaceName,
-			profile:       newProfile,
-			allowDomains:  newAllowDomains,
-			denyPaths:     newDenyPaths,
-			allowCommands: newAllowCommands,
-			denyCommands:  newDenyCommands,
-			allowPerms:    newAllowPerms,
-			denyPerms:     newDenyPerms,
+		return createSession(ctx, createOpts{
+			name:            newName,
+			worktree:        newWorktree,
+			from:            newFrom,
+			noWorktree:      newNoWorktree,
+			yolo:            newYolo,
+			prompt:          newPrompt,
+			resume:          newResume,
+			cont:            newContinue,
+			background:      newBackground,
+			autoRemove:      newAutoRemove,
+			mounts:          newMounts,
+			workspace:       newWorkspaceName,
+			profile:         newProfile,
+			allowDomains:    newAllowDomains,
+			denyPaths:       newDenyPaths,
+			allowCommands:   newAllowCommands,
+			denyCommands:    newDenyCommands,
+			allowPerms:      newAllowPerms,
+			denyPerms:       newDenyPerms,
 			proxySeedPreset: newProxyPreset,
 			proxyPort:       newProxyPort,
-			packages:      newPackages,
+			packages:        newPackages,
 		})
 	},
 }
@@ -213,10 +181,6 @@ func init() {
 	newCmd.Flags().StringArrayVar(&newDenyCommands, "deny-command", nil, "Add command pattern to deny list (e.g., 'rm -rf *')")
 	newCmd.Flags().StringArrayVar(&newAllowPerms, "allow-perm", nil, "Add raw permission allow rule (e.g., 'Bash(docker *)', 'Read')")
 	newCmd.Flags().StringArrayVar(&newDenyPerms, "deny-perm", nil, "Add raw permission deny rule (e.g., 'Read(/etc/**)')")
-	// --preset seeds the per-session proxy with rules from a saved JSON
-	// file at <configDir>/proxy-presets/<name>.json. Empty = blank slate
-	// (sandbox-profile rules still apply on top). --proxy-profile is the
-	// legacy flag name kept for backwards compatibility; same semantics.
 	newCmd.Flags().StringVar(&newProxyPreset, "preset", "",
 		"Seed the proxy with rules from a saved preset name")
 	newCmd.Flags().IntVar(&newProxyPort, "proxy-port", 0,
@@ -225,94 +189,30 @@ func init() {
 	rootCmd.AddCommand(newCmd)
 }
 
-// resolveWorkspaces merges named workspace paths with ad-hoc mount paths,
-// validates all paths exist, and checks for basename collisions.
-func resolveWorkspaces(workspaceName string, mounts []string) ([]string, error) {
-	var paths []string
-
-	if workspaceName != "" {
-		ws := config.NewWorkspaceStore(config.DefaultDir())
-		wsPaths, err := ws.Get(workspaceName)
-		if err != nil {
-			return nil, err
-		}
-		paths = append(paths, wsPaths...)
-	}
-
-	for _, m := range mounts {
-		abs, err := filepath.Abs(m)
-		if err != nil {
-			return nil, fmt.Errorf("resolve path %q: %w", m, err)
-		}
-		paths = append(paths, abs)
-	}
-
-	if len(paths) == 0 {
-		return nil, nil
-	}
-
-	seen := make(map[string]string)
-	for _, p := range paths {
-		if _, err := os.Stat(p); err != nil {
-			return nil, fmt.Errorf("workspace path %q does not exist", p)
-		}
-		base := filepath.Base(p)
-		if existing, ok := seen[base]; ok {
-			return nil, fmt.Errorf("basename collision: %q and %q both have basename %q", existing, p, base)
-		}
-		seen[base] = p
-	}
-
-	return paths, nil
-}
-
-func createSession(opts createOpts) error {
+// createSession builds session.Opts from createOpts, runs the launcher,
+// and dispatches to AttachTTY or RunBackground.
+//
+// It performs the command-layer concerns (resume+continue conflict, yolo
+// profile compatibility, name derivation from --worktree, MigrateToPerRepo
+// one-shot, env-var-driven extra allow commands) before delegating the
+// container/proxy/config wiring to session.Launch.
+func createSession(ctx context.Context, opts createOpts) error {
 	if opts.resume != "" && opts.cont {
 		return fmt.Errorf("--resume and --continue cannot be used together")
 	}
 
-	// a. Get cwd and resolve repo root.
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
-	}
-
-	repoRoot, repoErr := gitpkg.RepoRoot(cwd)
-	if repoErr != nil && !opts.noWorktree {
-		return fmt.Errorf("not inside a git repository (use --no-worktree to skip worktree creation): %w", repoErr)
-	}
-	if repoRoot == "" {
-		repoRoot = cwd // non-git directory uses CWD as repo identity
-	}
-
-	// Resolve extra workspaces from -W and -w flags.
-	extraWorkspaces, err := resolveWorkspaces(opts.workspace, opts.mounts)
-	if err != nil {
-		return err
-	}
-
-	// Resolve sandbox profile.
 	profile := opts.profile
 	if opts.yolo && profile != "" && profile != "low" && profile != "default" {
 		return fmt.Errorf("--yolo and --profile=%s conflict; --yolo implies a yolo profile (low or default)", profile)
 	}
-	if opts.yolo && profile == "" {
-		profile = "default"
-	}
-	if profile == "" {
-		profile = "default"
-	}
 
-	// b. Determine session name.
+	// Derive name from --worktree when --name is missing (matches the old
+	// "name = SanitizeName(worktree)" fallback).
 	name := opts.name
 	if name == "" && opts.worktree != "" {
 		name = config.SanitizeName(opts.worktree)
 	}
-	if name == "" {
-		return fmt.Errorf("session name is required: use --name or --worktree")
-	}
 
-	// c. Check no existing session with that name.
 	store := config.NewStore(config.DefaultDir())
 
 	// One-time migration of shared conversation history to per-repo storage.
@@ -322,272 +222,75 @@ func createSession(opts createOpts) error {
 		fmt.Fprintf(os.Stderr, "Migrated %d conversations to per-repo storage\n", n)
 	}
 
-	if _, err := store.Get(name); err == nil {
-		return fmt.Errorf("session %q already exists", name)
-	}
-
-	// d. Ensure docker image is loaded.
-	if err := docker.EnsureImage(config.DefaultDir()); err != nil {
-		return err
-	}
-
-	// Start the per-session proxy sidecar (always). Each session owns its
-	// own proxy container, network namespace, rules file, and dashboard
-	// token. The optional preset name seeds the rules file with a saved
-	// JSON snapshot before sandbox-derived rules are layered on top.
-	seedPreset := opts.proxySeedPreset
-	if !httpproxy.ImageExists() {
-		tarball := os.Getenv("CLAUDE_PROXY_IMAGE_TARBALL")
-		if tarball != "" {
-			loadCmd := exec.Command("docker", "load", "-i", tarball)
-			loadCmd.Stdout = os.Stdout
-			loadCmd.Stderr = os.Stderr
-			if err := loadCmd.Run(); err != nil {
-				return fmt.Errorf("load proxy image: %w", err)
-			}
-		} else {
-			return fmt.Errorf("proxy image %q not found; set CLAUDE_PROXY_IMAGE_TARBALL", httpproxy.ImageTag())
+	if name != "" {
+		if _, err := store.Get(name); err == nil {
+			return fmt.Errorf("session %q already exists", name)
 		}
-	}
-
-	// Write proxy rules from profile before starting proxy.
-	prof, err := sandboxPkg.GetProfile(profile)
-	if err != nil {
-		return err
-	}
-	// When packages are requested, auto-allow nix domains through the proxy
-	// so the entrypoint can download packages without manual approval.
-	proxyAllowDomains := opts.allowDomains
-	if len(opts.packages) > 0 {
-		proxyAllowDomains = append(proxyAllowDomains,
-			"cache.nixos.org",
-			"*.cache.nixos.org",
-			"channels.nixos.org",
-			"releases.nixos.org",
-			"github.com",
-			"*.github.com",
-			"*.githubusercontent.com",
-		)
-	}
-	proxyRules := prof.ProxyRules(proxyAllowDomains)
-	rulesJSON, err := json.MarshalIndent(proxyRules, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal proxy rules: %w", err)
-	}
-
-	// Seed from preset (or create empty rules file). Then layer the
-	// sandbox-profile-derived rules on top so both apply.
-	if err := httpproxy.EnsureSessionRules(config.DefaultDir(), name, seedPreset); err != nil {
-		return fmt.Errorf("seed proxy rules: %w", err)
-	}
-	if err := httpproxy.AppendSessionRules(config.DefaultDir(), name, rulesJSON); err != nil {
-		return fmt.Errorf("write proxy rules: %w", err)
-	}
-
-	var resolvedPort int
-	var started bool
-	started, resolvedPort, err = httpproxy.EnsureRunning(httpproxy.ProxyOpts{
-		Session:       name,
-		ConfigDir:     config.DefaultDir(),
-		DashboardPort: opts.proxyPort,
-		ForceRestart:  true, // always restart so proxy picks up fresh rules
-	})
-	if err != nil {
-		return fmt.Errorf("start proxy: %w", err)
-	}
-	if err := httpproxy.WaitForDashboardToken(config.DefaultDir(), name, 30*time.Second); err != nil {
-		return err
-	}
-	dashURL := httpproxy.DashboardURLWithToken(config.DefaultDir(), name, resolvedPort)
-	if started {
-		fmt.Printf("Proxy started for session %q — dashboard at %s\n", name, dashURL)
-	} else {
-		fmt.Printf("Reusing proxy for session %q — dashboard at %s\n", name, dashURL)
-	}
-	if err := httpproxy.WaitForCACert(config.DefaultDir()); err != nil {
-		return err
-	}
-
-	// e. Resolve workspace directory.
-	workspace := cwd
-	branch := opts.worktree
-
-	if opts.worktree != "" && !opts.noWorktree {
-		// Don't create worktree on host — the container entrypoint will
-		// create it from the mounted repo at /mnt/repo.
-		workspace = ""
-	}
-
-	// For no-worktree mode, try to get the current branch name.
-	if opts.noWorktree && repoErr == nil {
-		if b, err := gitpkg.CurrentBranch(cwd); err == nil {
-			branch = b
-		}
-	}
-
-	// When extra workspaces are provided, don't mount cwd as primary workspace.
-	// In worktree mode, extra workspaces that are git repos become worktree
-	// repos (mounted at /mnt/repos/ with worktrees at /workspace/).
-	var worktreeRepos []string
-	if len(extraWorkspaces) > 0 {
-		workspace = ""
-		if opts.worktree != "" && !opts.noWorktree {
-			// All extra workspaces become worktree repos.
-			for _, ws := range extraWorkspaces {
-				if _, err := gitpkg.RepoRoot(ws); err != nil {
-					return fmt.Errorf("worktree mode: %q is not a git repository", ws)
-				}
-				worktreeRepos = append(worktreeRepos, ws)
-			}
-			extraWorkspaces = nil // don't direct-mount, entrypoint creates worktrees
-		}
-	}
-
-	// f. Ensure per-repo Claude config dir exists.
-	repoConfigDir := store.RepoConfigDir(repoRoot)
-	if err := os.MkdirAll(repoConfigDir, 0o755); err != nil {
-		return fmt.Errorf("create repo config dir: %w", err)
-	}
-	if err := store.UpsertRepo(repoRoot); err != nil {
-		return fmt.Errorf("update repo index: %w", err)
-	}
-
-	// Prepare per-session config dir with selective conversation exposure.
-	claudeConfigDir, err := store.PrepareSessionConfig(name, repoRoot, opts.resume)
-	if err != nil {
-		return fmt.Errorf("prepare session config: %w", err)
 	}
 
 	if err := requireAuth(store); err != nil {
 		return err
 	}
 
-	// Build extra allow perms: env var commands (skip for high profile) + CLI flags + raw perms.
-	var extraAllowPerms []string
+	// Determine WorktreeMode. --worktree without --no-worktree means
+	// explicit worktree (use worktree string as branch name); --no-worktree
+	// forces pwd; otherwise let Auto decide (used by `new` defaults).
+	worktreeMode := session.WorktreeAuto
+	if opts.noWorktree {
+		worktreeMode = session.WorktreeNever
+	} else if opts.worktree != "" {
+		worktreeMode = session.WorktreeAlways
+	}
+
+	// Merge env-var allow commands when profile permits (skipped for high).
+	allowCommands := opts.allowCommands
 	if profile != "high" {
-		extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(envExtraAllowCommands())...)
-	}
-	extraAllowPerms = append(extraAllowPerms, wrapCommandPerms(opts.allowCommands)...)
-	extraAllowPerms = append(extraAllowPerms, opts.allowPerms...)
-
-	// Build extra deny perms: --deny-path as Read() rules + --deny-command as Bash() rules + raw deny perms.
-	var extraDenyPerms []string
-	for _, p := range opts.denyPaths {
-		extraDenyPerms = append(extraDenyPerms, fmt.Sprintf("Read(%s)", p))
-	}
-	extraDenyPerms = append(extraDenyPerms, wrapCommandPerms(opts.denyCommands)...)
-	extraDenyPerms = append(extraDenyPerms, opts.denyPerms...)
-
-	settingsJSON, err := json.MarshalIndent(
-		prof.ManagedSettingsForProxy(8080, extraAllowPerms, extraDenyPerms, opts.packages), "", "  ")
-	if err != nil {
-		return err
-	}
-	settingsPath := filepath.Join(claudeConfigDir, "managed-settings.json")
-	if err := os.WriteFile(settingsPath, settingsJSON, 0o644); err != nil {
-		return fmt.Errorf("write managed settings: %w", err)
-	}
-
-	runOpts := docker.RunOpts{
-		Name:            name,
-		Workspace:       workspace,
-		ConfigDir:       claudeConfigDir,
-		HostClaudeFiles: config.HostClaudeCredentialFiles(),
-		UID:             docker.ContainerUID(),
-		GID:             docker.ContainerGID(),
-		Yolo:            prof.Yolo,
-		Prompt:          opts.prompt,
-		Resume:          opts.resume,
-		Continue:        opts.cont && opts.resume == "",
-		ExtraWorkspaces: extraWorkspaces,
-		ProxyEnabled:       true,
-		ProxyCACertDir:     httpproxy.CACertDir(config.DefaultDir()),
-		ProxyDashboardPort: resolvedPort,
-		Packages:           opts.packages,
-	}
-
-	// When using worktree mode, pass repo info so the container entrypoint
-	// creates the worktree inside the container (fixing broken .git refs).
-	if opts.worktree != "" && !opts.noWorktree {
-		runOpts.WorktreeBranch = branch
-		runOpts.WorktreeFrom = opts.from
-		if len(worktreeRepos) > 0 {
-			// Multi-repo: worktrees at /workspace/<basename> for each repo.
-			// Don't mount primary repo at /mnt/repo (would conflict with /workspace/).
-			runOpts.WorktreeRepos = worktreeRepos
-		} else {
-			// Single-repo: worktree at /workspace from cwd repo.
-			runOpts.RepoPath = repoRoot
+		if envCmds := envExtraAllowCommands(); len(envCmds) > 0 {
+			allowCommands = append(append([]string(nil), envCmds...), allowCommands...)
 		}
 	}
 
-	// g. Save session to store before running so it's tracked even if
-	// the user detaches quickly.
-	// For container-created worktrees, WorktreePath is empty (no host path).
-	worktreePath := workspace
-	if opts.worktree != "" && !opts.noWorktree {
-		worktreePath = ""
-	}
-	sess := &config.Session{
+	sessOpts := session.Opts{
 		Name:            name,
-		Branch:          branch,
-		WorktreePath:    worktreePath,
-		RepoPath:        repoRoot,
-		ContainerName:   docker.ContainerName(name),
-		Yolo:            prof.Yolo,
-		AutoRemove:      opts.autoRemove,
-		CreatedAt:       time.Now(),
+		Mode:            session.ModeTTY,
+		WorktreeMode:    worktreeMode,
+		NoWorktree:      opts.noWorktree,
+		From:            opts.from,
+		WorktreeName:    opts.worktree,
 		Profile:         profile,
-		ExtraWorkspaces: extraWorkspaces,
-		WorktreeRepos:   worktreeRepos,
+		Yolo:            opts.yolo,
 		AllowDomains:    opts.allowDomains,
 		DenyPaths:       opts.denyPaths,
-		AllowCommands:   opts.allowCommands,
+		AllowCommands:   allowCommands,
 		DenyCommands:    opts.denyCommands,
 		AllowPerms:      opts.allowPerms,
 		DenyPerms:       opts.denyPerms,
+		Mounts:          opts.mounts,
+		WorkspaceName:   opts.workspace,
+		AutoRemove:      opts.autoRemove,
+		Background:      opts.background,
+		Prompt:          opts.prompt,
+		Resume:          opts.resume,
+		Continue:        opts.cont,
 		Packages:        opts.packages,
-		ProxySeedPreset: seedPreset,
-		ProxyPort:       resolvedPort,
-	}
-	if err := store.Save(sess); err != nil {
-		return fmt.Errorf("save session: %w", err)
+		ProxySeedPreset: opts.proxySeedPreset,
+		ProxyPort:       opts.proxyPort,
 	}
 
-	// h. Background mode: start detached, return immediately.
+	h, err := session.Launch(ctx, store, sessOpts)
+	if err != nil {
+		return err
+	}
+
 	if opts.background {
-		dockerArgs := docker.RunArgs(runOpts, true)
-		if err := docker.RunDetached(dockerArgs); err != nil {
-			return fmt.Errorf("create container: %w", err)
-		}
-		fmt.Printf("Session %q created (background).\n", name)
-		fmt.Printf("  Attach: claude-container attach %s\n", name)
-		return nil
+		fmt.Printf("Session %q created (background).\n", h.Name)
+		fmt.Printf("  Attach: claude-container attach %s\n", h.Name)
+		return h.RunBackground()
 	}
-
-	// i. Foreground mode: start container detached, then attach via proxy.
-	// Starting detached allows Ctrl+B d to detach without killing the container.
-	containerName := docker.ContainerName(name)
-	detachedArgs := docker.RunArgs(runOpts, true)
-	startCmd := exec.Command("docker", detachedArgs...)
-	startCmd.Stderr = os.Stderr
-	if err := startCmd.Run(); err != nil {
-		return fmt.Errorf("start container: %w", err)
-	}
-	fmt.Printf("Session %q created.\n", name)
-	proxyErr := proxy.Run(proxy.Opts{
-		DockerArgs:    []string{"attach", containerName},
-		ContainerName: containerName,
-		StatusBar:     proxy.StatusBarInfo{Name: name, Branch: branch, Yolo: prof.Yolo, ProxyPort: resolvedPort},
-		AutoRemove:    opts.autoRemove,
-		Cleanup:       func(_ string) { removeSession(store, name) },
-	})
-	// Save resume ID from container logs so future reattach uses --resume.
-	saveResumeID(store, name)
-	if err := store.SaveNewConversations(name, repoRoot); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to save conversations: %v\n", err)
-	}
-	return proxyErr
+	fmt.Printf("Session %q created.\n", h.Name)
+	attachErr := h.AttachTTY()
+	saveResumeID(store, h.Name)
+	return attachErr
 }
 
 // envExtraAllowCommands reads command patterns from the
@@ -606,7 +309,8 @@ func envExtraAllowCommands() []string {
 }
 
 // wrapCommandPerms wraps bare command patterns as Bash() permission rules.
-// Example: "docker *" → "Bash(docker *)".
+// Example: "docker *" → "Bash(docker *)". Still used by cmd/attach.go for
+// the recreate-on-missing-container path.
 func wrapCommandPerms(commands []string) []string {
 	if len(commands) == 0 {
 		return nil
@@ -617,3 +321,4 @@ func wrapCommandPerms(commands []string) []string {
 	}
 	return perms
 }
+

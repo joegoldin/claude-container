@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,7 +22,7 @@ var tuiCmd = &cobra.Command{
 	Short: "Open the dashboard",
 	Long:  `Open the Bubble Tea dashboard — list, create, attach, and remove sessions interactively. This is what bare 'claude-container' used to do.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runTUI()
+		return runTUI(cmd.Context())
 	},
 }
 
@@ -31,7 +32,7 @@ func init() {
 
 // runTUI launches the dashboard loop. Lifted verbatim from cmd/root.go's
 // previous RunE body so behavior is preserved.
-func runTUI() error {
+func runTUI(ctx context.Context) error {
 	store := config.NewStore(config.DefaultDir())
 	if err := requireAuth(store); err != nil {
 		return err
@@ -188,7 +189,7 @@ func runTUI() error {
 			// From dashboard, always create in background mode so we
 			// return to the dashboard loop. Then auto-attach unless
 			// the user pressed ctrl+b in the wizard.
-			if err := createSession(createOpts{
+			if err := createSession(ctx, createOpts{
 				name:       res.Name,
 				worktree:   res.Worktree,
 				from:       res.From,
