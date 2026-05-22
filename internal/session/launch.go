@@ -157,8 +157,8 @@ func Launch(ctx context.Context, store *config.Store, opts Opts) (handle *Handle
 	if err != nil {
 		return nil, fmt.Errorf("start proxy: %w", err)
 	}
-	if err := httpproxy.WaitForDashboardToken(config.DefaultDir(), opts.Name, 30*time.Second); err != nil {
-		return nil, err
+	if err := httpproxy.WaitForDashboardToken(config.DefaultDir(), opts.Name, proxyStartupTimeout()); err != nil {
+		return nil, dumpProxyLogsOnErr(opts.Name, err)
 	}
 	if err := httpproxy.WaitForCACert(config.DefaultDir()); err != nil {
 		return nil, err
@@ -283,6 +283,47 @@ func Launch(ctx context.Context, store *config.Store, opts Opts) (handle *Handle
 		},
 		cleanup: cleanup,
 	}, nil
+}
+
+// proxyStartupTimeout returns how long Launch should wait for the proxy
+// container to publish its dashboard token. Defaults to 60s — cold-start
+// mitmproxy + first-time CA generation can exceed the old 30s default on
+// modest hardware. Override with CLAUDE_CONTAINER_PROXY_TIMEOUT (any
+// duration string accepted by time.ParseDuration).
+func proxyStartupTimeout() time.Duration {
+	if raw := os.Getenv("CLAUDE_CONTAINER_PROXY_TIMEOUT"); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 60 * time.Second
+}
+
+// dumpProxyLogsOnErr captures the last 80 lines of the proxy container's
+// stderr and appends them to the returned error so the caller (typically
+// a test or an interactive user) can see *why* mitmproxy never came up.
+// Best-effort; if `docker logs` itself fails we just return the original
+// error.
+func dumpProxyLogsOnErr(session string, base error) error {
+	proxyContainer := "claude-proxy_" + session
+	out, _ := exec.Command("docker", "logs", "--tail", "80", proxyContainer).CombinedOutput()
+	if len(bytesTrim(out)) == 0 {
+		return base
+	}
+	return fmt.Errorf("%w\n--- last 80 lines of %s logs ---\n%s", base, proxyContainer, out)
+}
+
+// bytesTrim trims surrounding whitespace. Tiny inline helper to keep the
+// dump helper from pulling in another import.
+func bytesTrim(b []byte) []byte {
+	i, j := 0, len(b)
+	for i < j && (b[i] == ' ' || b[i] == '\n' || b[i] == '\t' || b[i] == '\r') {
+		i++
+	}
+	for j > i && (b[j-1] == ' ' || b[j-1] == '\n' || b[j-1] == '\t' || b[j-1] == '\r') {
+		j--
+	}
+	return b[i:j]
 }
 
 // resolveMounts merges -W (named workspace) and -w (ad-hoc paths) into

@@ -40,6 +40,10 @@ trap on_abort INT TERM
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Give the proxy plenty of headroom for cold-start CA generation.
+# Tests use isolated XDG_CONFIG_HOME dirs so every run is a cold start.
+export CLAUDE_CONTAINER_PROXY_TIMEOUT="${CLAUDE_CONTAINER_PROXY_TIMEOUT:-120s}"
+
 OUT_DIR="$REPO_ROOT/tmp/security-tests"
 mkdir -p "$OUT_DIR"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
