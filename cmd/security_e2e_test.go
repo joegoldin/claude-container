@@ -283,22 +283,26 @@ func (p *proxyAPI) getPending(t *testing.T) []map[string]interface{} {
 }
 
 // waitForPending polls /api/pending until at least one flow matches the
-// host substring, or the timeout expires. Returns the matching flow.
-// The session arg is used to dump proxy logs on failure.
+// host or url substring, or the timeout expires. Returns the matching
+// flow. The session arg is used to dump proxy logs on failure.
+//
+// Note: the proxy stores the resolved IP in the `host` field; the
+// original hostname only appears in the `url` field. We match on both.
 func (p *proxyAPI) waitForPending(t *testing.T, session, hostSubstr string, timeout time.Duration) map[string]interface{} {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		for _, flow := range p.getPending(t) {
 			h, _ := flow["host"].(string)
-			if strings.Contains(h, hostSubstr) {
+			u, _ := flow["url"].(string)
+			if strings.Contains(h, hostSubstr) || strings.Contains(u, hostSubstr) {
 				return flow
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
 	p.dumpProxyDiagnostics(t, session)
-	t.Fatalf("no pending flow matching host %q after %s", hostSubstr, timeout)
+	t.Fatalf("no pending flow matching host or url %q after %s", hostSubstr, timeout)
 	return nil
 }
 
@@ -440,13 +444,15 @@ func TestSecurity_ProxyApprove_AllowsFlow(t *testing.T) {
 	// Wait for the flow to show up on the host's /api/pending and
 	// approve it. 20s is generous — flows usually appear within ~1s.
 	flow := api.waitForPending(t, name, "example.com", 20*time.Second)
-	flowID, _ := flow["id"].(string)
+	// The API returns the flow id under "flow_id", not "id".
+	flowID, _ := flow["flow_id"].(string)
 	if flowID == "" {
-		t.Fatalf("pending flow has no id: %+v", flow)
+		t.Fatalf("pending flow has no flow_id: %+v", flow)
 	}
-	host, _ := flow["host"].(string)
-	t.Logf("approving held flow %s → %s", flowID, host)
-	api.resolve(t, flowID, "allow", host)
+	// Approve using the hostname pattern (so future requests to example.com
+	// also pass without re-prompting), not the resolved IP.
+	t.Logf("approving held flow %s → example.com", flowID)
+	api.resolve(t, flowID, "allow", "example.com")
 
 	// Wait for the in-container curl to finish.
 	select {
