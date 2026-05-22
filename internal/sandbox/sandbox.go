@@ -12,13 +12,17 @@ type Profile struct {
 	Name           string
 	Description    string
 	Yolo           bool     // use --dangerously-skip-permissions
+	AutoMode       bool     // use --enable-auto-mode (Claude classifies + auto-approves safe calls)
 	AllowedDomains []string // for proxy rules
 	AllowPerms     []string // permissions.allow rules
 	DenyPerms      []string // permissions.deny rules
 }
 
 // ProfileOrder defines the display order of profiles from least to most restrictive.
-var ProfileOrder = []string{"low", "default", "med", "high"}
+// "auto" sits next to "default" because both enable the full tool surface; the
+// difference is who decides whether each individual call runs (yolo: always,
+// auto: Claude's per-call classifier).
+var ProfileOrder = []string{"low", "default", "auto", "med", "high"}
 
 // --- Domain allowlists ---
 
@@ -130,6 +134,18 @@ var profiles = map[string]Profile{
 		Name:           "default",
 		Description:    "Full tool access with network allowlist (GitHub, npm, PyPI, Nix, Rust).",
 		Yolo:           true,
+		AllowedDomains: defaultDomains,
+		AllowPerms:     allToolsAllow,
+		DenyPerms:      nil,
+	},
+	"auto": {
+		Name:        "auto",
+		Description: "Auto mode: Claude classifies each tool call for risk and auto-approves safe ones. Network allowlist same as default.",
+		// AutoMode + Yolo are mutually exclusive at the launcher level —
+		// Yolo passes --dangerously-skip-permissions which would short
+		// circuit auto-mode's classifier. We pick AutoMode.
+		Yolo:           false,
+		AutoMode:       true,
 		AllowedDomains: defaultDomains,
 		AllowPerms:     allToolsAllow,
 		DenyPerms:      nil,
@@ -368,11 +384,26 @@ func (p Profile) ManagedSettingsForProxy(httpProxyPort int, extraAllowPerms []st
 		},
 	}
 
-	// dontAsk mode enforces permissions via allow/deny lists without
-	// interactive prompts. Required for all profiles in rootless Docker
-	// where --dangerously-skip-permissions cannot be used (Claude refuses
-	// it as root). Also correct for non-yolo profiles in standard Docker.
-	settings["defaultMode"] = "dontAsk"
+	// Per-mode defaults:
+	//   - AutoMode profiles use Claude's auto-mode classifier (it judges
+	//     each tool call for risk before executing). The classifier is
+	//     active in the container same as on a developer machine.
+	//   - Everything else uses dontAsk: permissions enforced via
+	//     allow/deny lists without interactive prompts. Required in
+	//     rootless Docker where --dangerously-skip-permissions cannot
+	//     be used (Claude refuses it as root) and correct for non-yolo
+	//     profiles in standard Docker.
+	if p.AutoMode {
+		settings["defaultMode"] = "auto"
+		// Pre-accept the first-launch "Enable auto mode?" dialog so the
+		// container doesn't sit at a prompt waiting for a keypress. The
+		// container provides the security boundary, not the dialog.
+		settings["skipAutoPermissionPrompt"] = true
+		// During plan mode also use auto-mode semantics for consistency.
+		settings["useAutoModeDuringPlan"] = true
+	} else {
+		settings["defaultMode"] = "dontAsk"
+	}
 
 	// Build permissions block.
 	perms := map[string]any{}

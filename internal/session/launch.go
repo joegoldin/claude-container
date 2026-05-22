@@ -189,6 +189,7 @@ func Launch(ctx context.Context, store *config.Store, opts Opts) (handle *Handle
 		UID:                docker.ContainerUID(),
 		GID:                docker.ContainerGID(),
 		Yolo:               prof.Yolo,
+		AutoMode:           prof.AutoMode,
 		Prompt:             opts.Prompt,
 		Resume:             opts.Resume,
 		Continue:           opts.Continue && opts.Resume == "",

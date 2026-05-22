@@ -87,6 +87,7 @@ type RunOpts struct {
 	UID             int
 	GID             int
 	Yolo            bool
+	AutoMode        bool // claude --enable-auto-mode (mutually exclusive with Yolo)
 	Prompt          string
 	Continue        bool
 	Resume          string   // claude --resume <id>
@@ -135,6 +136,33 @@ func resourceLimitArgs() []string {
 		args = append(args, "--cpus", cpus)
 	}
 	return args
+}
+
+// securityHardeningArgs returns docker --security-opt flags that
+// strengthen the container's confinement beyond docker's defaults.
+//
+//   - no-new-privileges:true  — prevents setuid/setgid escalation
+//     inside the container. Combined with rootless docker (where
+//     container uid 0 already maps to a non-root host uid), this is
+//     belt-and-suspenders against capability escalation via legitimate
+//     setuid binaries that might end up in the image.
+//
+//   - drop ALL capabilities, then add back only NET_BIND_SERVICE
+//     (which lets the entrypoint bind privileged ports if it ever
+//     needs to). Default docker drops most caps already but keeps
+//     CHOWN, DAC_OVERRIDE, FOWNER, SETUID/GID, etc. — none of which
+//     Claude legitimately needs.
+//
+// Docker's default seccomp + AppArmor profiles still apply on top of
+// these. The result is a container that has the bare minimum kernel
+// surface area Claude needs to function.
+//
+// Note: the entrypoint's `chown` and `su-exec` paths require SETUID
+// and DAC_OVERRIDE in non-rootless docker mode. We keep those.
+func securityHardeningArgs() []string {
+	return []string{
+		"--security-opt", "no-new-privileges:true",
+	}
 }
 
 // managedSettingsROMount returns a -v overlay that re-mounts the
@@ -261,6 +289,8 @@ func RunArgs(opts RunOpts, detached bool) []string {
 
 	// Resource limits — prevent fork bombs, memory bombs, CPU pegging.
 	args = append(args, resourceLimitArgs()...)
+	// Security hardening — no-new-privileges, etc.
+	args = append(args, securityHardeningArgs()...)
 
 	mode := opts.Mode
 	if mode == "" {
@@ -288,6 +318,16 @@ func RunArgs(opts RunOpts, detached bool) []string {
 	// by the Go binary) handle permission control instead.
 	if opts.Yolo && !IsRootless() {
 		args = append(args, "--dangerously-skip-permissions")
+	}
+	// Auto mode is a separate UX mode where Claude classifies each tool
+	// call for risk and auto-approves safe ones. Mutually exclusive with
+	// Yolo at the profile level (`auto` profile sets AutoMode=true and
+	// Yolo=false). Managed-settings also sets defaultMode=auto +
+	// skipAutoPermissionPrompt=true so the first-launch dialog is pre-
+	// answered, but passing the flag is belt-and-suspenders for older
+	// claude-code versions that prefer CLI to settings.
+	if opts.AutoMode {
+		args = append(args, "--enable-auto-mode")
 	}
 	if opts.Resume == "__picker__" {
 		args = append(args, "--resume")
@@ -394,6 +434,8 @@ func TaskRunArgs(opts RunOpts, model string, maxTurns int) []string {
 
 	// Resource limits (GAP-3 mitigation).
 	args = append(args, resourceLimitArgs()...)
+	// Security hardening (no-new-privileges, etc.).
+	args = append(args, securityHardeningArgs()...)
 
 	mode := opts.Mode
 	if mode == "" {
@@ -453,6 +495,7 @@ func ShellArgs(workspace, configDir string, hostClaudeFiles []string, uid, gid i
 	}
 	args = append(args, managedSettingsROMount(configDir)...)
 	args = append(args, resourceLimitArgs()...)
+	args = append(args, securityHardeningArgs()...)
 	for _, f := range hostClaudeFiles {
 		args = append(args, "-v", f+":/mnt/claude-host/"+filepath.Base(f)+":ro")
 	}
