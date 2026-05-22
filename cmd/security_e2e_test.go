@@ -1464,15 +1464,13 @@ func TestSecurity_AutoProfile_ExistsAndAcceptsDialog(t *testing.T) {
 	// leaked through.
 	if strings.Contains(text, `"Bash(*127.0.0.1:8081*)"`) ||
 		strings.Contains(text, `"Bash(*localhost:8081*)"`) {
-		t.Errorf("auto profile contains hardcoded dashboard denies — these will "+
-			"trigger auto-mode classifier interruptions. The dashboard auth "+
-			"token is the real boundary; remove the deny rules for AutoMode: %s", text)
+		const msg = "auto profile contains hardcoded dashboard denies — these will trigger auto-mode classifier interruptions. The dashboard auth token is the real boundary; remove the deny rules for AutoMode: %s"
+		t.Errorf(msg, text)
 	}
 	// Sanity: any "deny" array present should be empty.
 	if strings.Contains(text, `"deny":`) && !strings.Contains(text, `"deny": []`) {
-		t.Logf("note: auto profile's managed-settings has a non-empty deny array — "+
-			"verify each entry is intentional (e.g. user-provided via --deny-* flags). %s",
-			text)
+		const msg = "note: auto profile's managed-settings has a non-empty deny array — verify each entry is intentional (e.g. user-provided via --deny-* flags). %s"
+		t.Logf(msg, text)
 	}
 }
 
