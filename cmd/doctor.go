@@ -67,8 +67,17 @@ var doctorCmd = &cobra.Command{
 			return fmt.Errorf("doctor found issues")
 		}
 		fmt.Println("\nAll checks passed.")
+		printQuickstartHint(os.Stdout)
 		return nil
 	},
+}
+
+// printQuickstartHint prints the bare-invoke + TUI usage hint. Extracted
+// so a unit test can assert the wording survives refactors.
+func printQuickstartHint(w *os.File) {
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Quickstart: cd <your repo> && claude-container")
+	fmt.Fprintln(w, "Dashboard:  claude-container tui")
 }
 
 func init() {
