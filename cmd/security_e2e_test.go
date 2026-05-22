@@ -916,10 +916,10 @@ func TestSecurityLLM_DenyPath_Documentation_BashEscapes(t *testing.T) {
 		}
 	}
 	if colonLines == 0 {
-		t.Logf("regression: Bash cat /etc/passwd did NOT exfil content " +
-			"(exfil empty/short). If --deny-path was tightened to block Bash too, " +
-			"update README's NETWORK PROXY/profiles docs and remove this test. " +
-			"exfil.txt:\n" + limitString(string(data), 200))
+		t.Logf("regression: Bash cat /etc/passwd did NOT exfil content "+
+			"(exfil empty/short). If --deny-path was tightened to block Bash too, "+
+			"update README's NETWORK PROXY/profiles docs and remove this test. "+
+			"exfil.txt:\n%s", limitString(string(data), 200))
 	}
 }
 
@@ -1074,8 +1074,8 @@ func TestSecurity_DNS_ExternalUDP53_Blocked(t *testing.T) {
 		"timeout 6 nslookup -timeout=3 example.com 1.1.1.1 2>&1; echo rc=$?")
 	t.Logf("DNS-to-1.1.1.1 probe output:\n%s", out)
 	if strings.Contains(out, "rc=0") {
-		t.Errorf("external DNS over UDP/53 succeeded — proxy nftables ruleset " +
-			"did not block the query: " + out)
+		t.Errorf("external DNS over UDP/53 succeeded — proxy nftables ruleset "+
+			"did not block the query: %s", out)
 	}
 }
 
@@ -1229,8 +1229,8 @@ func TestSecurity_GitHook_DisabledInWorktree(t *testing.T) {
 	}
 	t.Logf("core.hooksPath probe: %s", out)
 	if !strings.Contains(out, "/dev/null") {
-		t.Errorf("core.hooksPath is NOT set to /dev/null — a Claude-written hook would " +
-			"execute on the host when the user runs `git commit`: " + out)
+		t.Errorf("core.hooksPath is NOT set to /dev/null — a Claude-written hook would "+
+			"execute on the host when the user runs `git commit`: %s", out)
 	}
 }
 
