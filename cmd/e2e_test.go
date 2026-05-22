@@ -2468,3 +2468,121 @@ func TestE2E_ParallelWorkWithWorkspace(t *testing.T) {
 	runCLI(t, "rm", name1)
 	runCLI(t, "rm", name2)
 }
+
+// ---------------------------------------------------------------------------
+// Bare-invoke + TUI subcommand E2E tests (Phase 5)
+// ---------------------------------------------------------------------------
+
+// runCLIIn is like runCLI but lets the test control the working directory.
+func runCLIIn(t *testing.T, dir string, args ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	cmd := exec.Command(testBinary, args...)
+	cmd.Env = os.Environ()
+	cmd.Dir = dir
+	var outBuf, errBuf strings.Builder
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	exitCode = 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			t.Fatalf("exec error: %v", err)
+		}
+	}
+	return outBuf.String(), errBuf.String(), exitCode
+}
+
+// TestE2E_TUISubcommand asserts the dashboard relocated to `tui` is
+// reachable and its help text identifies it. No Docker needed.
+func TestE2E_TUISubcommand(t *testing.T) {
+	stdout, _, exit := runCLI(t, "tui", "--help")
+	if exit != 0 {
+		t.Fatalf("tui --help exit=%d, want 0", exit)
+	}
+	if !strings.Contains(stdout, "dashboard") {
+		t.Errorf("tui --help missing 'dashboard' in output: %q", stdout)
+	}
+}
+
+// TestE2E_BareInvoke_GitRepo_CreatesWorktree asserts bare claude-container
+// in a git repo creates a .worktrees/<name>/ directory and persists a
+// session record.
+func TestE2E_BareInvoke_GitRepo_CreatesWorktree(t *testing.T) {
+	requireDockerAndAuth(t)
+	xdg := setupConfigDir(t)
+	repo := setupGitRepo(t)
+
+	_, _, exit := runCLIIn(t, repo, "-b", "-p", "noop")
+	if exit != 0 {
+		t.Fatalf("bare invoke exit=%d, want 0", exit)
+	}
+
+	sessions := readSessionsJSON(t, xdg)
+	if len(sessions) != 1 {
+		t.Fatalf("want 1 session, got %d", len(sessions))
+	}
+	name, _ := sessions[0]["name"].(string)
+	if name == "" {
+		t.Fatalf("session name should be auto-generated, got empty")
+	}
+	cleanupContainer(t, name)
+	cleanupProxy(t, name)
+
+	// .worktrees/ should exist in the repo (gitignore was added too).
+	if info, err := os.Stat(filepath.Join(repo, ".worktrees")); err != nil {
+		t.Fatalf(".worktrees not created: %v", err)
+	} else if !info.IsDir() {
+		t.Errorf(".worktrees is not a directory")
+	}
+
+	gi, _ := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	if !strings.Contains(string(gi), ".worktrees/") {
+		t.Errorf(".gitignore missing .worktrees/ entry: %q", gi)
+	}
+
+	// Cleanup the session record + container.
+	runCLI(t, "rm", name)
+}
+
+// TestE2E_BareInvoke_NonGit_PwdMount asserts bare claude-container in a
+// non-git directory pwd-mounts that directory as the workspace.
+func TestE2E_BareInvoke_NonGit_PwdMount(t *testing.T) {
+	requireDockerAndAuth(t)
+	xdg := setupConfigDir(t)
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "marker.txt"), []byte("BARE_NON_GIT\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, exit := runCLIIn(t, dir, "-b", "-p", "noop")
+	if exit != 0 {
+		t.Fatalf("bare invoke exit=%d, want 0", exit)
+	}
+
+	sessions := readSessionsJSON(t, xdg)
+	if len(sessions) != 1 {
+		t.Fatalf("want 1 session, got %d", len(sessions))
+	}
+	name, _ := sessions[0]["name"].(string)
+	cleanupContainer(t, name)
+	cleanupProxy(t, name)
+
+	// The container should have the temp dir mounted at /workspace.
+	mounts := dockerContainerMounts(name)
+	if !strings.Contains(mounts, dir) {
+		t.Errorf("container mounts missing %q: %s", dir, mounts)
+	}
+
+	// The session record should NOT report worktree mode.
+	if _, ok := sessions[0]["worktree_path"]; ok {
+		wp, _ := sessions[0]["worktree_path"].(string)
+		if wp != dir {
+			t.Errorf("worktree_path = %q, want %q (pwd passthrough)", wp, dir)
+		}
+	}
+
+	runCLI(t, "rm", name)
+}
