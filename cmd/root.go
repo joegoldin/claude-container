@@ -34,6 +34,8 @@ var (
 	rootPackages      []string
 	rootProxyPreset   string
 	rootProxyPort     int
+	rootPublishRange  int
+	rootPublishBase   int
 	rootFrom          string
 	rootNoWorktree    bool
 	rootResume        string
@@ -71,6 +73,10 @@ func init() {
 	f.StringArrayVar(&rootPackages, "packages", nil, "extra nixpkgs to install at start (comma- or repeat-separated)")
 	f.StringVar(&rootProxyPreset, "preset", "", "proxy seed preset")
 	f.IntVar(&rootProxyPort, "proxy-port", 0, "host port for the proxy dashboard")
+	f.IntVar(&rootPublishRange, "publish-range", 0,
+		"ports per session reserved for inbound publish (default 10)")
+	f.IntVar(&rootPublishBase, "publish-base", 0,
+		"first host port the inbound publish pool may use (default 30000)")
 	f.StringVar(&rootFrom, "from", "", "base branch/ref for the new worktree")
 	f.BoolVar(&rootNoWorktree, "no-worktree", false, "pwd passthrough even in a git repo")
 	f.StringVar(&rootResume, "resume", "", "resume mode (picker, last, or session id)")
@@ -124,6 +130,8 @@ func runDefault(ctx context.Context) error {
 		Packages:        splitCSV(rootPackages),
 		ProxySeedPreset: rootProxyPreset,
 		ProxyPort:       rootProxyPort,
+		PublishRange:    rootPublishRange,
+		PublishBase:     rootPublishBase,
 	}
 
 	h, err := session.Launch(ctx, store, opts)
