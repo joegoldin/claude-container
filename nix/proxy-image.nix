@@ -12,19 +12,12 @@ let
 
   proxySource = ../proxy;
 
-  publishMgr = pkgs.buildGo126Module {
+  publishMgr = pkgs.buildGoModule {
     pname = "publish-mgr";
     version = "0.1.0";
     src = ../proxy/publish-mgr;
-    vendorHash = null;  # no external deps
+    vendorHash = null;  # no external deps — stdlib only
     subPackages = [ "." ];
-    # The pinned nixpkgs has go_1_26 = go-1.26.0; patch the go directive
-    # in go.mod to match so the toolchain version-check passes inside the
-    # nix sandbox.  This is safe: the source only uses stdlib APIs that
-    # exist in go 1.26.0.
-    postPatch = ''
-      substituteInPlace go.mod --replace 'go 1.26.2' 'go 1.26.0'
-    '';
   };
 
   # Dedicated uid for the mitmproxy process so the firewall rules in the
