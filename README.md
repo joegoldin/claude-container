@@ -609,6 +609,36 @@ make an informed decision. DNS via the docker embedded resolver
 UDP/443 (QUIC) is dropped at the firewall before NFQUEUE — clients fall
 back to TCP, which mitmproxy already gates.
 
+### Custom firewall escape hatch (Phase 3)
+
+The dashboard's **Custom Firewall** tab lets you add accept-only
+nftables rules to a `user_allow` sub-chain that's jumped from both
+`input` and `output` immediately before the final drop. Two modes:
+
+**Templates** — pick a common shape (outbound ICMP echo, inbound TCP
+CIDR, outbound UDP CIDR, etc.), fill in an address or CIDR + port, and
+click Add. The dashboard compiles the parameters into an nft statement
+and submits it.
+
+**Raw mode** — type a full nft expression like
+`ip daddr 10.0.0.0/8 tcp dport 22 accept`. The expression is validated
+twice before it can affect the chain:
+
+1. A keyword blacklist rejects any statement containing `drop`,
+   `reject`, `policy`, `flush`, `delete`, `table`, or `chain` — words
+   that could weaken the boundary.
+2. `nft --check` parses the statement; malformed syntax is rejected.
+
+Rules persist in the session's `rules.json` with `proto: "nft"` so
+they're invisible to the HTTP/UDP matchers. On proxy restart,
+`publish-mgr` replays every persisted `nft_statement` into the
+`user_allow` chain — your rules survive restarts without manual
+re-entry.
+
+This is the only place a process inside the Claude container can
+influence its own firewall, and only via the dashboard (which the
+container has no privileged access to).
+
 ### Default allowed domains by profile
 
 The sandbox profile (`--profile`) determines which domains are pre-allowed
