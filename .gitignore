@@ -16,3 +16,23 @@ proxy/publish-mgr/publish-mgr
 
 # udp-redir build output
 proxy/udp-redir/udp-redir
+
+# Editor / IDE
+.idea
+.vscode
+
+# Stray shell rc files (container mount leakage)
+.bash_profile
+.bashrc
+.profile
+.zprofile
+.zshrc
+
+# Stray dotfiles (container mount leakage)
+.mcp.json
+.ripgreprc
+
+# Claude container mount artifacts
+.claude/agents
+.claude/commands
+.claude/skills
