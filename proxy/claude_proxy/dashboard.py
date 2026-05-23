@@ -270,11 +270,13 @@ async def delete_rule(request: Request) -> JSONResponse:
 
 
 async def resolve_pending(request: Request) -> JSONResponse:
-    """Resolve a pending flow. Body: {flow_id, action, pattern, label?, expires_at?}."""
+    """Resolve a pending flow. Body: {flow_id, action, pattern, label?, expires_at?}.
+
+    flow_ids prefixed with "udp-" are forwarded to the udp-redir daemon;
+    everything else is handled by the addon as before.
+    """
     if not _check_auth(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
-    if _addon is None:
-        return JSONResponse({"error": "not configured"}, status_code=503)
     body = await request.json()
     flow_id = body.get("flow_id")
     action = body.get("action")
@@ -283,6 +285,24 @@ async def resolve_pending(request: Request) -> JSONResponse:
         return JSONResponse(
             {"error": "flow_id, action, and pattern are required"}, status_code=400
         )
+
+    # UDP flows live in udp-redir's hold buffer.
+    if flow_id.startswith("udp-"):
+        try:
+            with httpx.Client(transport=_udp_redir_transport) as c:
+                r = c.post("http://udp-redir/resolve",
+                           json={"flow_id": flow_id, "action": action,
+                                 "pattern": pattern},
+                           timeout=5)
+            await broadcast({"type": "resolved",
+                             "data": {"flow_id": flow_id, "action": action,
+                                      "pattern": pattern}})
+            return JSONResponse(r.json(), status_code=r.status_code)
+        except Exception as exc:
+            return JSONResponse({"error": f"udp-redir: {exc}"}, status_code=502)
+
+    if _addon is None:
+        return JSONResponse({"error": "not configured"}, status_code=503)
     label = body.get("label", "")
     expires_at = body.get("expires_at")
     found = _addon.resolve(flow_id, action, pattern, label, expires_at=expires_at)

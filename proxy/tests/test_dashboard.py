@@ -364,3 +364,27 @@ def test_pending_endpoint_merges_udp_holds(client, monkeypatch):
     udp = [i for i in items if i.get("kind") == "udp"]
     assert len(udp) == 1
     assert udp[0]["dns_name"] == "example.com"
+
+
+def test_resolve_endpoint_forwards_udp_flow(client, monkeypatch):
+    """POST /api/resolve with a udp- flow_id forwards to udp-redir socket."""
+    import httpx
+    calls = []
+    class FakeTransport(httpx.BaseTransport):
+        def handle_request(self, request):
+            calls.append((request.method, request.url.path,
+                          request.read().decode()))
+            return httpx.Response(200, json={"ok": True})
+
+    from claude_proxy import dashboard
+    monkeypatch.setattr(dashboard, "_udp_redir_transport", FakeTransport())
+
+    resp = client.post("/api/resolve", json={
+        "flow_id": "udp-abcdef",
+        "action": "allow",
+        "pattern": "1.1.1.1",
+    })
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert len(calls) == 1
+    assert calls[0][1].endswith("/resolve")
