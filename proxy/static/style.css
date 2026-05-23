@@ -658,3 +658,59 @@ select:focus {
     padding: 2px 8px;
     font-size: 0.85em;
 }
+
+/* --- Rules tab polish (Phase 4) --- */
+.rules-controls {
+    display: flex;
+    gap: 0.5em;
+    margin-bottom: 0.5em;
+}
+
+.rules-controls input[type="text"] {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+.rules-controls select {
+    padding: 4px 8px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+.rules-group-header td {
+    background: #f5f5f7;
+    font-weight: 600;
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #555;
+    padding: 8px 12px;
+    border-bottom: 1px solid #ddd;
+    border-top: 1px solid #eaeaea;
+}
+
+.rules-group-count {
+    color: #999;
+    font-weight: 400;
+    font-size: 0.9em;
+}
+
+.rule-proto {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85em;
+    background: #e8e8ea;
+    padding: 1px 6px;
+    border-radius: 3px;
+    color: #444;
+}
+
+.rule-counter {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85em;
+    color: #666;
+    white-space: nowrap;
+}
