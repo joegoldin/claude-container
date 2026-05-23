@@ -60,8 +60,10 @@ class TestRulesPersistence:
             assert len(data) == 1
             rule = data[0]
             assert rule["id"] == rule_id
-            assert rule["rule_type"] == "allow"
-            assert rule["pattern"] == r"^https?://example\.com(/.*)?$"
+            assert rule["action"] == "allow"
+            assert rule["direction"] == "out"
+            assert rule["proto"] == "any"
+            assert rule["match"] == {"host_regex": r"^https?://example\.com(/.*)?$"}
             assert rule["label"] == "example.com"
             assert rule["source"] == "api"
             assert rule["expires_at"] is not None
