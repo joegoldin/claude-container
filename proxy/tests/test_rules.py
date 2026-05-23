@@ -154,3 +154,42 @@ def test_rule_has_new_schema_fields():
     r2 = Rule(action="allow", match={"host_regex": "github"})
     assert r2.direction == "out"
     assert r2.proto == "any"
+
+
+def test_from_dict_normalizes_old_shape():
+    from claude_proxy.rules import Rule
+    old = {
+        "id": "abc",
+        "rule_type": "allow",
+        "pattern": "github.com",
+        "label": "github",
+        "created_at": 1000.0,
+        "expires_at": None,
+        "source": "preset",
+    }
+    r = Rule.from_dict(old)
+    assert r.action == "allow"
+    assert r.direction == "out"
+    assert r.proto == "any"
+    assert r.match == {"host_regex": "github.com"}
+    assert r.label == "github"
+    assert r.source == "preset"
+
+
+def test_from_dict_accepts_new_shape():
+    from claude_proxy.rules import Rule
+    new = {
+        "id": "def",
+        "direction": "in",
+        "proto": "tcp",
+        "match": {"port": 3000},
+        "action": "allow",
+        "label": "vite",
+        "created_at": 2000.0,
+        "expires_at": None,
+        "source": "interactive",
+    }
+    r = Rule.from_dict(new)
+    assert r.direction == "in"
+    assert r.proto == "tcp"
+    assert r.match == {"port": 3000}

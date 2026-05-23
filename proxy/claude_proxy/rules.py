@@ -68,20 +68,36 @@ class Rule:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Rule":
-        """Deserialize a rule from a dict (accepts old or new shape)."""
-        # Old shape has rule_type + pattern; translate to new canonical fields.
-        rule_type = data.get("rule_type", "allow")
-        pattern = data.get("pattern", "")
-        match = data.get("match") or ({"host_regex": pattern} if pattern else {})
-        action = data.get("action", rule_type)
+        """Deserialize a rule from a dict. Accepts both old and new shapes.
+
+        Old shape:
+            {id, rule_type, pattern, label, created_at, expires_at, source}
+        New shape:
+            {id, direction, proto, match, action, label, created_at,
+             expires_at, source}
+        """
+        # New shape if any of these keys are present:
+        if "action" in data or "direction" in data or "proto" in data:
+            return cls(
+                id=data["id"],
+                direction=data.get("direction", "out"),
+                proto=data.get("proto", "any"),
+                match=data.get("match", {}),
+                action=data.get("action", "allow"),
+                label=data.get("label", ""),
+                created_at=data.get("created_at", time.time()),
+                expires_at=data.get("expires_at"),
+                source=data.get("source", "interactive"),
+            )
+        # Otherwise normalize old shape.
         return cls(
             id=data["id"],
-            action=action,
-            direction=data.get("direction", "out"),
-            proto=data.get("proto", "any"),
-            match=match,
+            direction="out",
+            proto="any",
+            match={"host_regex": data.get("pattern", "")},
+            action=data.get("rule_type", "allow"),
             label=data.get("label", ""),
-            created_at=data["created_at"],
+            created_at=data.get("created_at", time.time()),
             expires_at=data.get("expires_at"),
             source=data.get("source", "interactive"),
         )
