@@ -1605,3 +1605,76 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// ---------------------------------------------------------------------------
+// Group F: Inbound port publishing (publish-mgr integration)
+// ---------------------------------------------------------------------------
+
+// publishResult mirrors the JSON returned by publish-mgr.
+type publishResult struct {
+	HostPort      int    `json:"host_port"`
+	ContainerPort int    `json:"container_port"`
+	Protocol      string `json:"protocol"`
+	OK            bool   `json:"ok"`
+	Error         string `json:"error,omitempty"`
+}
+
+// publish calls POST /api/publish via the dashboard and returns the
+// result. t.Fatal on non-200.
+func (p *proxyAPI) publish(t *testing.T, proto string, contPort int, label string) publishResult {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"protocol":       proto,
+		"container_port": contPort,
+		"label":          label,
+	})
+	req, _ := http.NewRequest("POST", p.baseURL+"/api/publish", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Auth-Token", p.token)
+	resp, err := p.http.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/publish: %v", err)
+	}
+	defer resp.Body.Close()
+	var out publishResult
+	json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode != 200 || !out.OK {
+		t.Fatalf("publish failed: status=%d body=%+v", resp.StatusCode, out)
+	}
+	return out
+}
+
+// TestSecurity_Publish_TCP_RoundTrip verifies the dashboard /api/publish
+// endpoint allocates a host port, the firewall accepts inbound on it,
+// and a host-side curl reaches the container.
+func TestSecurity_Publish_TCP_RoundTrip(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	name := "sec-pub-tcp"
+	startSecurityContainer(t, name, "--yolo", "--publish-range=10")
+
+	// Start an HTTP echo server inside the container, bound to 0.0.0.0.
+	go boundedDockerExec(t, 30*time.Second, name, "sh", "-c",
+		"echo 'HELLO PUBLISH' > /tmp/payload && "+
+			"python3 -m http.server 3000 --bind 0.0.0.0 --directory /tmp")
+	time.Sleep(2 * time.Second) // let the server bind
+
+	// POST /api/publish via the dashboard.
+	api := newProxyAPI(t, configDir, name)
+	pub := api.publish(t, "tcp", 3000, "")
+	t.Logf("published: %+v", pub)
+
+	// Host-side curl should now reach the echo server through the
+	// allocated host port (e.g., 30000).
+	url := fmt.Sprintf("http://127.0.0.1:%d/payload", pub.HostPort)
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("host curl: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "HELLO PUBLISH") {
+		t.Errorf("body=%q, want HELLO PUBLISH", body)
+	}
+}
