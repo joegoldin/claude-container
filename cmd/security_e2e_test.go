@@ -2124,3 +2124,64 @@ func TestSecurity_UserAllow_PersistsAcrossProxyRestart(t *testing.T) {
 		t.Errorf("rule did NOT survive proxy restart:\n%s", out)
 	}
 }
+
+// TestSecurity_Counters_TickOnUserAllowTraffic verifies that a
+// user_allow rule's counter increments when matching traffic flows
+// through the chain.
+func TestSecurity_Counters_TickOnUserAllowTraffic(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	name := "sec-counters"
+	startSecurityContainer(t, name, "--yolo")
+
+	api := newProxyAPI(t, configDir, name)
+
+	// Install an outbound ICMP rule for 127.0.0.1.
+	body, _ := json.Marshal(map[string]any{
+		"template": "outbound_icmp_echo",
+		"params":   map[string]any{"addr": "127.0.0.1"},
+		"label":    "loopback ping",
+	})
+	req, _ := http.NewRequest("POST", api.baseURL+"/api/user-allow",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Auth-Token", api.token)
+	resp, err := api.http.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("user-allow add failed: %v status=%d", err, resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Trigger an ICMP echo from the container.
+	boundedDockerExec(t, 5*time.Second, name, "sh", "-c",
+		"ping -c 2 -W 1 127.0.0.1 >/dev/null 2>&1 || true")
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Read counters.
+	cresp, err := http.Get(api.baseURL + "/api/counters")
+	if err != nil {
+		t.Fatalf("GET /api/counters: %v", err)
+	}
+	defer cresp.Body.Close()
+	var snap struct {
+		PublishIn []map[string]any `json:"publish_in"`
+		UserAllow []map[string]any `json:"user_allow"`
+	}
+	json.NewDecoder(cresp.Body).Decode(&snap)
+
+	found := false
+	for _, e := range snap.UserAllow {
+		stmt, _ := e["stmt"].(string)
+		pkts, _ := e["packets"].(float64)
+		if strings.Contains(stmt, "127.0.0.1") && pkts > 0 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected non-zero counter for loopback ICMP rule, got: %+v",
+			snap.UserAllow)
+	}
+}
