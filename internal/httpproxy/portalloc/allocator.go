@@ -76,3 +76,62 @@ func (a *Allocator) save(m map[string]Allocation) error {
 	}
 	return os.Rename(tmp, a.path)
 }
+
+// Claim reserves a contiguous range for the named session. If the
+// session already has an allocation, that allocation is returned
+// unchanged. Size 0 uses the configured defaultSize.
+func (a *Allocator) Claim(sessionName string, size int) (Allocation, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if size == 0 {
+		size = a.defaultSz
+	}
+
+	m, err := a.load()
+	if err != nil {
+		return Allocation{}, err
+	}
+
+	// Idempotent: existing session keeps its range.
+	if existing, ok := m[sessionName]; ok {
+		return existing, nil
+	}
+
+	// Build a sorted list of occupied ranges so we can scan for a gap.
+	type occ struct{ start, end int }
+	occupied := make([]occ, 0, len(m))
+	for _, al := range m {
+		occupied = append(occupied, occ{al.Base, al.Base + al.Size - 1})
+	}
+	for i := range occupied {
+		for j := i + 1; j < len(occupied); j++ {
+			if occupied[j].start < occupied[i].start {
+				occupied[i], occupied[j] = occupied[j], occupied[i]
+			}
+		}
+	}
+
+	// Walk the pool looking for a gap of `size` ports.
+	cursor := a.poolStart
+	for _, o := range occupied {
+		if cursor+size-1 < o.start {
+			// fits before this range
+			break
+		}
+		cursor = o.end + 1
+	}
+	if cursor+size-1 > a.poolEnd {
+		return Allocation{}, fmt.Errorf(
+			"portalloc: pool %d-%d exhausted (cannot fit %d ports for session %q); "+
+				"override with --publish-base / --publish-range",
+			a.poolStart, a.poolEnd, size, sessionName)
+	}
+
+	al := Allocation{Base: cursor, Size: size}
+	m[sessionName] = al
+	if err := a.save(m); err != nil {
+		return Allocation{}, err
+	}
+	return al, nil
+}
