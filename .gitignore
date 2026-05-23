@@ -31,8 +31,3 @@ proxy/udp-redir/udp-redir
 # Stray dotfiles (container mount leakage)
 .mcp.json
 .ripgreprc
-
-# Claude container mount artifacts
-.claude/agents
-.claude/commands
-.claude/skills
