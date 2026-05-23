@@ -1717,3 +1717,37 @@ open('/tmp/got', 'w').write(data.decode())
 		t.Errorf("container received %q, want HELLO UDP", got)
 	}
 }
+
+// TestSecurity_Publish_ConcurrentSessions_NoCollision verifies two
+// simultaneous sessions get non-overlapping ranges and can both publish.
+func TestSecurity_Publish_ConcurrentSessions_NoCollision(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	nameA, nameB := "sec-pub-a", "sec-pub-b"
+	startSecurityContainer(t, nameA, "--yolo", "--publish-range=10")
+	startSecurityContainer(t, nameB, "--yolo", "--publish-range=10")
+
+	// Inspect allocations file directly.
+	data, err := os.ReadFile(filepath.Join(configDir,
+		"claude-container", "published-port-allocations.json"))
+	if err != nil {
+		t.Fatalf("read alloc file: %v", err)
+	}
+	var allocs map[string]struct {
+		Base int `json:"base"`
+		Size int `json:"size"`
+	}
+	if err := json.Unmarshal(data, &allocs); err != nil {
+		t.Fatalf("parse allocs: %v", err)
+	}
+	a, b := allocs[nameA], allocs[nameB]
+	if a.Base == b.Base {
+		t.Errorf("sessions %s and %s got the same base %d",
+			nameA, nameB, a.Base)
+	}
+	if a.Base < b.Base && a.Base+a.Size-1 >= b.Base {
+		t.Errorf("ranges overlap: A=%d-%d B=%d-%d",
+			a.Base, a.Base+a.Size-1, b.Base, b.Base+b.Size-1)
+	}
+}
