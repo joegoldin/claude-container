@@ -1973,3 +1973,60 @@ except Exception as e:
 		t.Errorf("container did not receive DNS response after approve: out=%q err=%v", out, err)
 	}
 }
+
+// TestSecurity_UserAllow_TemplateInstallAllowsTraffic verifies that
+// adding an outbound TCP CIDR template via the dashboard actually
+// installs the nft rule and allows the corresponding traffic.
+func TestSecurity_UserAllow_TemplateInstallAllowsTraffic(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	name := "sec-ua-tcp"
+	startSecurityContainer(t, name, "--yolo")
+
+	// Host server: TCP echo on a random loopback port.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	hostPort := ln.Addr().(*net.TCPAddr).Port
+
+	// Accept loop — write a marker and close.
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write([]byte("UA-OK"))
+	}()
+
+	// Add the user_allow rule via the dashboard.
+	api := newProxyAPI(t, configDir, name)
+	body, _ := json.Marshal(map[string]any{
+		"template": "outbound_tcp_cidr",
+		"params":   map[string]any{"cidr": "127.0.0.1", "port": hostPort},
+		"label":    "test-tcp",
+	})
+	req, _ := http.NewRequest("POST", api.baseURL+"/api/user-allow", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Auth-Token", api.token)
+	resp, err := api.http.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/user-allow: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("user-allow add: status=%d", resp.StatusCode)
+	}
+
+	// Verify the rule got installed in the user_allow nft chain.
+	out, _ := boundedDockerExec(t, 10*time.Second, name, "sh", "-c",
+		"nft list chain inet claude_proxy_fw user_allow")
+	expected := fmt.Sprintf("ip daddr 127.0.0.1 tcp dport %d accept", hostPort)
+	if !strings.Contains(out, expected) {
+		t.Errorf("user_allow chain missing expected rule:\nwant: %s\ngot:\n%s",
+			expected, out)
+	}
+}
