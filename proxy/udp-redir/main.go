@@ -25,16 +25,22 @@ const (
 
 // state is the live verdict-engine state shared between the queue
 // callback and the (later) Unix-socket API. Rules are reloaded on file
-// mtime change; the hold buffer is added in Task 7.
+// mtime change; held holds packets pending a resolve decision.
 type state struct {
 	rulesPath  string
 	rulesMu    sync.RWMutex
 	rules      []Rule
 	rulesMtime time.Time
+
+	held *HoldBuf
+	nf   *nfqueue.Nfqueue // for issuing deferred verdicts from outside the queue callback
 }
 
 func newState(rulesPath string) *state {
-	return &state{rulesPath: rulesPath}
+	return &state{
+		rulesPath: rulesPath,
+		held:      newHoldBuf(defaultMax, defaultTTL),
+	}
 }
 
 // reloadIfChanged re-reads the rules file if its mtime has advanced.
@@ -96,6 +102,7 @@ func main() {
 		log.Fatalf("udp-redir: open nfqueue: %v", err)
 	}
 	defer nf.Close()
+	st.nf = nf
 
 	var pktCount, allowCount, denyCount atomic.Uint64
 
@@ -134,10 +141,16 @@ func main() {
 			denyCount.Add(1)
 			_ = nf.SetVerdict(id, nfqueue.NfDrop)
 		default:
-			// No rule matched. Task 7 will hold; for now we drop —
-			// the firewall is default-deny anyway.
-			denyCount.Add(1)
-			_ = nf.SetVerdict(id, nfqueue.NfDrop)
+			// No rule — hold the packet. The kernel keeps it queued
+			// until we issue a verdict (in /resolve or via TTL).
+			key := flowKey{
+				DstIP:   d.DstIP.String(),
+				DstPort: d.DstPort,
+				DNSName: dnsName,
+			}
+			if dropped := st.held.Add(key, id); dropped != 0 {
+				_ = nf.SetVerdict(dropped, nfqueue.NfDrop)
+			}
 		}
 		return 0
 	}
@@ -164,6 +177,21 @@ func main() {
 			case <-t.C:
 				log.Printf("udp-redir: pkts=%d allow=%d deny=%d",
 					pktCount.Load(), allowCount.Load(), denyCount.Load())
+			}
+		}
+	}()
+
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				for _, exp := range st.held.EvictExpired() {
+					_ = nf.SetVerdict(exp.ID, nfqueue.NfDrop)
+				}
 			}
 		}
 	}()
