@@ -1878,3 +1878,34 @@ s.sendto(b'HELLO UDP', ('host.docker.internal' if False else '127.0.0.1', %d))
 		t.Errorf("got %q, want HELLO UDP", buf[:n])
 	}
 }
+
+// TestSecurity_UDPOutbound_DeniedByDefault verifies that with the
+// default rules (no UDP allowlist), an outbound UDP datagram is dropped
+// — the host listener never sees it.
+func TestSecurity_UDPOutbound_DeniedByDefault(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	name := "sec-udp-deny"
+	startSecurityContainer(t, name, "--yolo")
+
+	srv, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer srv.Close()
+	hostAddr := srv.LocalAddr().(*net.UDPAddr)
+
+	go boundedDockerExec(t, 6*time.Second, name, "sh", "-c",
+		fmt.Sprintf(`python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.sendto(b'SHOULD NOT ARRIVE', ('127.0.0.1', %d))
+"`, hostAddr.Port))
+
+	srv.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 256)
+	if n, _, err := srv.ReadFrom(buf); err == nil {
+		t.Errorf("UDP arrived despite default deny: %q", buf[:n])
+	}
+}
