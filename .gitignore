@@ -10,3 +10,9 @@ __pycache__/
 # Dev shell
 .devenv/
 tmp/
+
+# publish-mgr build output
+proxy/publish-mgr/publish-mgr
+
+# udp-redir build output
+proxy/udp-redir/udp-redir
