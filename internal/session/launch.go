@@ -13,6 +13,7 @@ import (
 	"github.com/joegoldin/claude-container/internal/docker"
 	gitpkg "github.com/joegoldin/claude-container/internal/git"
 	"github.com/joegoldin/claude-container/internal/httpproxy"
+	"github.com/joegoldin/claude-container/internal/httpproxy/portalloc"
 	"github.com/joegoldin/claude-container/internal/proxy"
 	sandboxPkg "github.com/joegoldin/claude-container/internal/sandbox"
 )
@@ -30,7 +31,8 @@ func Launch(ctx context.Context, store *config.Store, opts Opts) (handle *Handle
 		return nil, err
 	}
 
-	var proxyUp, containerUp bool
+	var alloc *portalloc.Allocator
+	var proxyUp, containerUp, allocClaimed bool
 	defer func() {
 		if retErr == nil {
 			return
@@ -43,6 +45,9 @@ func Launch(ctx context.Context, store *config.Store, opts Opts) (handle *Handle
 			_ = httpproxy.Stop(opts.Name)
 			_ = httpproxy.RemoveSessionState(config.DefaultDir(), opts.Name)
 			_ = httpproxy.RemoveNetwork(opts.Name)
+		}
+		if allocClaimed {
+			_ = alloc.Release(opts.Name)
 		}
 	}()
 
@@ -148,11 +153,30 @@ func Launch(ctx context.Context, store *config.Store, opts Opts) (handle *Handle
 	if err := httpproxy.AppendSessionRules(config.DefaultDir(), opts.Name, rulesJSON); err != nil {
 		return nil, fmt.Errorf("append proxy rules: %w", err)
 	}
+	// Claim a host-port range for inbound publishing. Released in the
+	// cleanup closure below when the session is removed.
+	allocPath := filepath.Join(config.DefaultDir(), "published-port-allocations.json")
+	var allocErr error
+	alloc, allocErr = portalloc.New(
+		allocPath, opts.PublishBase,
+		opts.PublishBase+1000-1, // 100 sessions of size 10 by default
+		opts.PublishRange,
+	)
+	if allocErr != nil {
+		return nil, fmt.Errorf("portalloc: %w", allocErr)
+	}
+	allocation, allocErr := alloc.Claim(opts.Name, opts.PublishRange)
+	if allocErr != nil {
+		return nil, fmt.Errorf("claim port range: %w", allocErr)
+	}
+	allocClaimed = true
+
 	_, resolvedPort, err := httpproxy.EnsureRunning(httpproxy.ProxyOpts{
 		Session:       opts.Name,
 		ConfigDir:     config.DefaultDir(),
 		DashboardPort: opts.ProxyPort,
 		ForceRestart:  true,
+		PublishRange:  httpproxy.PortRange{Base: allocation.Base, Size: allocation.Size},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start proxy: %w", err)
@@ -265,6 +289,7 @@ func Launch(ctx context.Context, store *config.Store, opts Opts) (handle *Handle
 			_ = httpproxy.Stop(opts.Name)
 			_ = httpproxy.RemoveSessionState(config.DefaultDir(), opts.Name)
 			_ = httpproxy.RemoveNetwork(opts.Name)
+			_ = alloc.Release(opts.Name)
 			_ = store.Delete(opts.Name)
 		}
 		_ = store.SaveNewConversations(opts.Name, repoRoot)

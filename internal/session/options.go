@@ -67,6 +67,10 @@ type Opts struct {
 	Packages        []string
 	ProxySeedPreset string
 	ProxyPort       int
+
+	// Inbound port publishing — pool and size are configurable.
+	PublishBase  int // first host port the pool may use (default 30000)
+	PublishRange int // ports per session (default 10)
 }
 
 // ApplyDefaults fills in per-mode defaults for fields the caller did not set.
@@ -74,6 +78,12 @@ type Opts struct {
 func (o *Opts) ApplyDefaults() {
 	if o.NoWorktree {
 		o.WorktreeMode = WorktreeNever
+	}
+	if o.PublishBase == 0 {
+		o.PublishBase = 30000
+	}
+	if o.PublishRange == 0 {
+		o.PublishRange = 10
 	}
 	switch o.Mode {
 	case ModeTask:
