@@ -230,6 +230,7 @@
         renderUserAllowFields();
         refreshUserAllow();
       }
+      if (target === "rules") refreshRuleCounters();
     });
   });
 
@@ -888,6 +889,59 @@
     await fetch("/api/user-allow/" + encodeURIComponent(id), { method: "DELETE" });
     refreshUserAllow();
   });
+
+  // --- Rule counters polling ---
+  // Poll publish-mgr's counter snapshot every 5 seconds and update the
+  // "Pkts/Bytes" cells of nft-managed rules in the Rules tab. Non-nft
+  // rules (HTTP/TCP/UDP regex) have no live counter in this phase.
+  async function refreshRuleCounters() {
+    let snap;
+    try {
+      const r = await fetch("/api/counters");
+      snap = await r.json();
+    } catch (err) {
+      return; // soft-fail
+    }
+    const allEntries = (snap.user_allow || []).concat(snap.publish_in || []);
+    // Build a map: stmt → "packets/bytes". Stmt comparison is exact
+    // because the publish-mgr parser elides the counter fragment for us.
+    const byStmt = {};
+    for (const e of allEntries) {
+      byStmt[e.stmt] = formatPktBytes(e.packets, e.bytes);
+    }
+    for (const rule of rules) {
+      const cell = document.querySelector(
+        '[data-rule-counter="' + cssEscape(rule.id) + '"]');
+      if (!cell) continue;
+      const m = rule.match || {};
+      const stmt = m.nft_statement;
+      if (stmt) {
+        cell.textContent = byStmt[stmt] || "0 / 0";
+      } else {
+        cell.textContent = "—";
+      }
+    }
+  }
+
+  function formatPktBytes(pkts, bytes) {
+    return (pkts || 0) + " / " + formatBytes(bytes || 0);
+  }
+
+  function formatBytes(b) {
+    if (b < 1024) return b + " B";
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KiB";
+    return (b / 1024 / 1024).toFixed(1) + " MiB";
+  }
+
+  // CSS.escape may not be available in very old browsers; provide a
+  // minimal fallback that escapes the few characters that appear in
+  // our rule ids (UUIDs use [0-9a-f-]).
+  function cssEscape(s) {
+    if (typeof CSS !== "undefined" && CSS.escape) return CSS.escape(s);
+    return String(s).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+  }
+
+  setInterval(refreshRuleCounters, 5000);
 
   // --- Init ---
   requestNotificationPermission();
