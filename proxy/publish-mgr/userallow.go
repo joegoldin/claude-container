@@ -47,3 +47,46 @@ func validateUserAllowStmt(stmt string) error {
 	}
 	return nil
 }
+
+// nftAddUserAllow appends the validated statement to the user_allow
+// chain. The validator must run BEFORE this — the helper does not
+// re-validate (callers should fail fast on validation errors).
+func nftAddUserAllow(stmt string) error {
+	// Build argv by splitting the statement on whitespace.
+	args := []string{"add", "rule", "inet", "claude_proxy_fw", "user_allow"}
+	args = append(args, strings.Fields(stmt)...)
+	cmd := exec.Command("nft", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("nft add user_allow rule failed: %v: %s", err, out)
+	}
+	return nil
+}
+
+// nftDelUserAllow finds the handle for a rule matching stmt and deletes
+// it. Mirrors nftDelInputAccept's pattern. The needle is the trimmed
+// statement followed by " # handle " to avoid false-positive matches.
+func nftDelUserAllow(stmt string) error {
+	out, err := exec.Command("nft", "-a", "list", "chain", "inet",
+		"claude_proxy_fw", "user_allow").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("nft list user_allow: %v: %s", err, out)
+	}
+	needle := strings.TrimSpace(stmt) + " # handle "
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, needle) {
+			continue
+		}
+		i := strings.LastIndex(line, "handle ")
+		if i < 0 {
+			continue
+		}
+		h := strings.TrimSpace(line[i+len("handle "):])
+		delCmd := exec.Command("nft", "delete", "rule", "inet",
+			"claude_proxy_fw", "user_allow", "handle", h)
+		if err := delCmd.Run(); err != nil {
+			return fmt.Errorf("nft delete handle %s: %w", h, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("no matching user_allow rule for %q", stmt)
+}
