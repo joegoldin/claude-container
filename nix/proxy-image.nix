@@ -112,6 +112,11 @@ let
         # output continues evaluating.
         udp drop
 
+        # User-supplied accept-only rules. The validator on the Unix
+        # socket side rejects any rule that would weaken the boundary,
+        # so this jump only ever surfaces additional accepts.
+        jump user_allow
+
         # Everything else: drop. Logged so we can see what's being blocked
         # during smoke tests; remove the log statement later if noisy.
         log prefix "claude_proxy_fw drop: " level debug
@@ -129,11 +134,20 @@ let
         # publish-mgr appends accept rules to this regular chain at runtime
         # for user-published ports.
         jump publish_in
+        jump user_allow
         log prefix "claude_proxy_fw input drop: " level debug
       }
 
       chain publish_in {
         # publish-mgr adds dport accept rules here for each /publish call.
+      }
+
+      chain user_allow {
+        # publish-mgr appends user-supplied accept rules here after the
+        # /user-allow/add endpoint validates them. Accept-only by
+        # design — the validator rejects any statement containing drop,
+        # reject, policy, flush, delete, table, or chain keywords, and
+        # then pipes through `nft --check` before committing.
       }
 
       chain prerouting_nat {
@@ -159,6 +173,7 @@ let
     # uid ${proxyUid}) can connect.
     ${pkgs.coreutils}/bin/mkdir -p /run
     PROXY_UID=${proxyUid} PROXY_GID=${proxyGid} \
+      PROXY_SESSION="$PROXY_SESSION" \
       ${publishMgr}/bin/publish-mgr &
 
     # udp-redir owns NFQUEUE 0 and gates outbound UDP via the rule store.
