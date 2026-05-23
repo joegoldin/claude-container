@@ -84,6 +84,9 @@ func (a *Allocator) Claim(sessionName string, size int) (Allocation, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	if size < 0 {
+		return Allocation{}, fmt.Errorf("portalloc: size must be >= 0, got %d", size)
+	}
 	if size == 0 {
 		size = a.defaultSz
 	}
