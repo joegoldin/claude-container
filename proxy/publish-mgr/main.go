@@ -213,12 +213,15 @@ func nftDelInputAccept(proto string, port int) error {
 	if err != nil {
 		return fmt.Errorf("nft list: %v: %s", err, out)
 	}
-	needle := fmt.Sprintf("%s dport %d accept", proto, port)
+	// Anchor the needle: nft prints "<proto> dport <port> accept # handle N".
+	// Requiring " accept # handle " right after our rule body prevents
+	// false-positive matches against rules like "accept counter" or rules
+	// that just happen to mention the same port elsewhere.
+	needle := fmt.Sprintf("%s dport %d accept # handle ", proto, port)
 	for _, line := range strings.Split(string(out), "\n") {
 		if !strings.Contains(line, needle) {
 			continue
 		}
-		// Format: "         tcp dport 3000 accept # handle 12"
 		i := strings.LastIndex(line, "handle ")
 		if i < 0 {
 			continue
