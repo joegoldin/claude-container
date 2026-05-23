@@ -350,6 +350,7 @@
           <span class="countdown ${remaining < 30 ? "urgent" : ""}" data-expires="${item.expiresAt}">${remaining}s</span>
         </div>
         <div class="url">${htmlEscape(item.url)}</div>
+        ${item.dns_name ? `<div class="pending-dns">DNS query for <strong>${htmlEscape(item.dns_name)}</strong></div>` : ""}
         <div class="options">
           <div class="option-group">
             <label>Pattern</label>
