@@ -151,6 +151,11 @@ async def add_rule(request: Request) -> JSONResponse:
         label = body.get("label", "")
         expires_at = body.get("expires_at")
         source = body.get("source", "interactive")
+        if action not in ("allow", "deny", "hold"):
+            return JSONResponse(
+                {"error": f"action must be allow/deny/hold, got {action!r}"},
+                status_code=400,
+            )
         rule_id = _store.add_structured(
             direction=direction, proto=proto, match=match,
             action=action, label=label,
@@ -172,6 +177,11 @@ async def add_rule(request: Request) -> JSONResponse:
             proto_part, action_part = parts
         else:
             proto_part, action_part = "any", rule_type
+        if action_part not in ("allow", "deny", "hold"):
+            return JSONResponse(
+                {"error": f"action must be allow/deny/hold, got {action_part!r}"},
+                status_code=400,
+            )
         rule_id = _store.add_structured(
             direction="out",
             proto=proto_part if proto_part in ("http", "tcp", "udp", "any") else "any",
