@@ -653,6 +653,37 @@ Per-session live state lives at:
     ~/.config/claude-container/proxy-state/<session>/rules.json
     ~/.config/claude-container/proxy-state/<session>/dashboard-token
 
+### Inbound port publishing
+
+Each session reserves a contiguous host port range for inbound traffic
+(default: 10 ports starting at 30000). The dashboard's **Published
+Ports** tab lets you map a container port to a host port from that
+range without restarting the session.
+
+The reserved range is `127.0.0.1`-bound only — never reachable from
+your LAN. Dev servers inside the container must bind to `0.0.0.0:PORT`
+(not `127.0.0.1:PORT`) for the docker port forward to reach them.
+
+Flags:
+
+    --publish-range int         ports per session reserved for inbound publish (default 10)
+    --publish-base int          first host port the inbound publish pool may use (default 30000)
+    --publish-pool-size int     size of the inbound publish pool in ports (default 1000)
+
+By default the pool is `30000-30999` (1000 ports), so up to 100
+concurrent sessions of size 10 fit without collision. Allocation is
+first-fit across a per-host JSON ledger at
+`~/.config/claude-container/published-port-allocations.json`. Override
+`--publish-base` if your firewall reserves the default range for
+something else.
+
+To publish a port: open the dashboard, go to **Published Ports**, enter
+the container port + protocol (TCP or UDP), optionally a label, and
+click Publish. The dashboard returns an assigned host port and shows
+`http://127.0.0.1:<port>` you can open from your host browser. Click
+**Unpublish** to close it. The proxy container's nftables firewall is
+mutated live — no session restart needed.
+
 ## EXTRACTING CONVERSATIONS
 
 `claude-container extract <session>` pulls a Claude Code conversation
