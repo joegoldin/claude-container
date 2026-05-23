@@ -138,31 +138,42 @@ func resourceLimitArgs() []string {
 	return args
 }
 
-// securityHardeningArgs returns docker --security-opt flags that
-// strengthen the container's confinement beyond docker's defaults.
+// securityHardeningArgs returns docker --security-opt and --cap-drop
+// flags that strengthen the container's confinement beyond docker's
+// defaults.
 //
 //   - no-new-privileges:true  — prevents setuid/setgid escalation
-//     inside the container. Combined with rootless docker (where
-//     container uid 0 already maps to a non-root host uid), this is
-//     belt-and-suspenders against capability escalation via legitimate
-//     setuid binaries that might end up in the image.
+//     inside the container via execve of suid binaries.
 //
-//   - drop ALL capabilities, then add back only NET_BIND_SERVICE
-//     (which lets the entrypoint bind privileged ports if it ever
-//     needs to). Default docker drops most caps already but keeps
-//     CHOWN, DAC_OVERRIDE, FOWNER, SETUID/GID, etc. — none of which
-//     Claude legitimately needs.
+//   - --cap-drop SETUID and --cap-drop SETGID (rootless mode only) —
+//     closes the setuid-bypass-of-netfilter-skuid-exemption attack
+//     (audit-2026-05-23 §Finding 1). The proxy container's nftables
+//     ruleset has `meta skuid 1500 accept` rules that exempt
+//     mitmproxy from filtering. Without these cap drops, a process
+//     in the Claude container running as container uid 0 could call
+//     setuid(1500) and inherit the exemption — every outbound TCP
+//     and UDP packet would skip mitmproxy and udp-redir. Dropping
+//     CAP_SETUID/CAP_SETGID makes that syscall fail with EPERM.
+//
+//     We only apply the drop in rootless mode because non-rootless
+//     mode uses `su-exec` in the entrypoint to switch from container
+//     uid 0 to USER_UID — su-exec calls setuid() and needs the cap.
+//     Rootless mode runs the entire container as container uid 0 = the
+//     host user, so su-exec is never invoked.
 //
 // Docker's default seccomp + AppArmor profiles still apply on top of
-// these. The result is a container that has the bare minimum kernel
-// surface area Claude needs to function.
-//
-// Note: the entrypoint's `chown` and `su-exec` paths require SETUID
-// and DAC_OVERRIDE in non-rootless docker mode. We keep those.
+// these.
 func securityHardeningArgs() []string {
-	return []string{
+	args := []string{
 		"--security-opt", "no-new-privileges:true",
 	}
+	if IsRootless() {
+		args = append(args,
+			"--cap-drop", "SETUID",
+			"--cap-drop", "SETGID",
+		)
+	}
+	return args
 }
 
 // managedSettingsROMount returns a -v overlay that re-mounts the

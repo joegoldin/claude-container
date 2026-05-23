@@ -212,6 +212,15 @@ func (m *manager) handlePublish(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, publishResp{Error: "container_port must be 1024-65535"})
 		return
 	}
+	// Defense-in-depth (audit 2026-05-23 Finding 4): even though the
+	// docker portmap is fixed at create time to rangeLo..rangeHi, an
+	// nft accept on a container port OUTSIDE that range is a dead rule
+	// today — but would become a live inbound opening if the portmap
+	// ever changes. Reject up front.
+	if req.ContainerPort < m.rangeLo || req.ContainerPort > m.rangeHi {
+		writeJSON(w, 400, publishResp{Error: "container_port outside session publish range"})
+		return
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()

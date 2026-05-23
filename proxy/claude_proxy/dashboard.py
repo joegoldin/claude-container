@@ -149,7 +149,14 @@ async def get_pending(request: Request) -> JSONResponse:
 
 
 async def get_rules(request: Request) -> JSONResponse:
-    """Return list of current rules from the store."""
+    """Return list of current rules from the store.
+
+    Auth-gated: the rule store reveals the user's allowlist, which is
+    sensitive info the agent shouldn't have. Per audit 2026-05-23
+    Finding 2.
+    """
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
     if _store is None:
         return JSONResponse({"error": "not configured"}, status_code=503)
     return JSONResponse(_store.list_rules())
@@ -410,6 +417,9 @@ async def unpublish(request: Request) -> JSONResponse:
 
 
 async def list_published(request: Request) -> JSONResponse:
+    """Auth-gated per audit 2026-05-23 Finding 2 — leaks published-port labels."""
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
     try:
         with httpx.Client(transport=_publish_mgr_transport) as c:
             r = c.get("http://publish-mgr/list", timeout=5)
@@ -478,7 +488,13 @@ async def user_allow_add(request: Request) -> JSONResponse:
 
 
 async def user_allow_list(request: Request) -> JSONResponse:
-    """List currently-applied user_allow rules (live from publish-mgr)."""
+    """List currently-applied user_allow rules (live from publish-mgr).
+
+    Auth-gated per audit 2026-05-23 Finding 2 — leaks full nft
+    statement text including CIDRs and ports.
+    """
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
     try:
         with httpx.Client(transport=_publish_mgr_transport) as c:
             r = c.get("http://publish-mgr/user-allow/list", timeout=5)
@@ -490,9 +506,15 @@ async def user_allow_list(request: Request) -> JSONResponse:
 async def counters(request: Request) -> JSONResponse:
     """Return per-rule counters from publish-mgr.
 
+    Auth-gated per audit 2026-05-23 Finding 2 — counter response
+    includes the full nft statement text per rule (CIDRs, ports,
+    DNS names), revealing the user's allowlist topology.
+
     Failure soft: if publish-mgr is unreachable, return empty arrays
     instead of a 5xx so the dashboard UI keeps rendering rules.
     """
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
     try:
         with httpx.Client(transport=_publish_mgr_transport) as c:
             r = c.get("http://publish-mgr/counters", timeout=2)
