@@ -205,7 +205,57 @@ func (m *manager) handlePublish(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func nftDelInputAccept(proto string, port int) error {
+	// nft delete by handle is the clean path; first list to find the
+	// handle for our rule, then delete by it.
+	out, err := exec.Command("nft", "-a", "list", "chain", "inet",
+		"claude_proxy_fw", "input").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("nft list: %v: %s", err, out)
+	}
+	needle := fmt.Sprintf("%s dport %d accept", proto, port)
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, needle) {
+			continue
+		}
+		// Format: "         tcp dport 3000 accept # handle 12"
+		i := strings.LastIndex(line, "handle ")
+		if i < 0 {
+			continue
+		}
+		h := strings.TrimSpace(line[i+len("handle "):])
+		delCmd := exec.Command("nft", "delete", "rule", "inet",
+			"claude_proxy_fw", "input", "handle", h)
+		if err := delCmd.Run(); err != nil {
+			return fmt.Errorf("nft delete handle %s: %w", h, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("no matching nft rule for %s/%d", proto, port)
+}
+
 func (m *manager) handleUnpublish(w http.ResponseWriter, r *http.Request) {
-	// Task 16 implements this.
-	writeJSON(w, 501, publishResp{Error: "not implemented yet"})
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, publishResp{Error: "POST only"})
+		return
+	}
+	var req unpublishReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, 400, publishResp{Error: "bad json: " + err.Error()})
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := fmt.Sprintf("%s/%d", req.Protocol, req.HostPort)
+	entry, ok := m.published[key]
+	if !ok {
+		writeJSON(w, 404, publishResp{Error: "not published"})
+		return
+	}
+	if err := nftDelInputAccept(req.Protocol, entry.ContainerPort); err != nil {
+		writeJSON(w, 500, publishResp{Error: err.Error()})
+		return
+	}
+	delete(m.published, key)
+	writeJSON(w, 200, publishResp{OK: true})
 }
