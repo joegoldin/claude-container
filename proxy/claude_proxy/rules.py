@@ -32,8 +32,10 @@ class Rule:
     expires_at: Optional[float] = None
     source: str = "interactive"
 
-    # Backward-compat fields preserved for code that still reads them.
-    # to_dict emits the NEW shape; from_dict accepts both.
+    # Backward-compat properties so existing callers (RuleStore.match,
+    # tests, serialization) can keep reading rule_type / pattern while
+    # Tasks 2-4 migrate them. to_dict still emits the old shape until
+    # Task 3 flips it; from_dict already accepts both.
     @property
     def rule_type(self) -> str:
         return self.action
