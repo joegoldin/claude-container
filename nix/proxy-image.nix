@@ -98,9 +98,19 @@ let
         # Kill QUIC so HTTPS clients downgrade to TCP and hit the redirect.
         udp dport 443 drop
 
-        # Kill external UDP/53 explicitly so the drop is visible in the log
-        # prefix below (not just a silent "default policy drop").
-        udp dport 53 log prefix "claude_proxy_fw dns-udp drop: " level debug drop
+        # ----- UDP outbound via NFQUEUE -----
+        # Queue every other outbound UDP packet (from non-mitmproxy uids)
+        # to userspace. udp-redir reads queue 0 and verdicts each packet
+        # against the rule store. The "bypass" flag means: if the daemon
+        # is not listening, packets fall through to the final drop below
+        # — UDP fails closed.
+        meta l4proto udp meta skuid != ${proxyUid} queue num 0 bypass
+
+        # Fallback: if NFQUEUE bypassed (daemon down), drop any UDP that
+        # made it this far. This rule will NOT fire when udp-redir is up
+        # because the queue verdicts (ACCEPT/DROP) are applied before
+        # output continues evaluating.
+        udp drop
 
         # Everything else: drop. Logged so we can see what's being blocked
         # during smoke tests; remove the log statement later if noisy.
@@ -150,6 +160,14 @@ let
     ${pkgs.coreutils}/bin/mkdir -p /run
     PROXY_UID=${proxyUid} PROXY_GID=${proxyGid} \
       ${publishMgr}/bin/publish-mgr &
+
+    # udp-redir owns NFQUEUE 0 and gates outbound UDP via the rule store.
+    # Same root + chown-socket pattern as publish-mgr: needs CAP_NET_ADMIN
+    # to bind to the queue, but the dashboard reaches it through a
+    # uid-1500-owned Unix socket.
+    PROXY_UID=${proxyUid} PROXY_GID=${proxyGid} \
+      PROXY_SESSION="$PROXY_SESSION" \
+      ${udpRedir}/bin/udp-redir &
 
     # ----- Run mitmproxy as the dedicated uid -----
     exec ${pkgs.su-exec}/bin/su-exec ${proxyUid}:${proxyGid} \
