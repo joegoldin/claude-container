@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -89,4 +92,55 @@ func nftDelUserAllow(stmt string) error {
 		return nil
 	}
 	return fmt.Errorf("no matching user_allow rule for %q", stmt)
+}
+
+// rulesFileRule is the minimal subset of the rules.json schema that
+// startup replay needs. Phase 0's RuleStore.to_dict writes more fields,
+// but Go's json.Decoder ignores extras silently.
+type rulesFileRule struct {
+	ID    string         `json:"id"`
+	Proto string         `json:"proto"`
+	Match map[string]any `json:"match"`
+	Label string         `json:"label"`
+}
+
+// replayUserAllowFromRules reads rules.json at the given path and runs
+// nftAddUserAllow for every entry that has match.nft_statement set.
+// Errors are logged but do not abort startup — a single broken rule
+// shouldn't take the proxy down.
+//
+// Returns the (id → entry) map for the caller to seed the manager.
+func replayUserAllowFromRules(path string) (map[string]userAllowEntry, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]userAllowEntry{}, nil
+		}
+		return nil, fmt.Errorf("publish-mgr: read %s: %w", path, err)
+	}
+	var rs []rulesFileRule
+	if err := json.Unmarshal(data, &rs); err != nil {
+		return nil, fmt.Errorf("publish-mgr: parse %s: %w", path, err)
+	}
+	out := make(map[string]userAllowEntry)
+	for _, r := range rs {
+		stmt, _ := r.Match["nft_statement"].(string)
+		if stmt == "" {
+			continue
+		}
+		if err := validateUserAllowStmt(stmt); err != nil {
+			log.Printf("publish-mgr: replay skip rule %s: %v", r.ID, err)
+			continue
+		}
+		if err := nftAddUserAllow(stmt); err != nil {
+			log.Printf("publish-mgr: replay apply rule %s: %v", r.ID, err)
+			continue
+		}
+		out[r.ID] = userAllowEntry{
+			ID:    r.ID,
+			Stmt:  strings.TrimSpace(stmt),
+			Label: r.Label,
+		}
+	}
+	return out, nil
 }

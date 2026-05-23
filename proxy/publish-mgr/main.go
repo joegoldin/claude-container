@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,6 +106,21 @@ func main() {
 	}
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		log.Fatalf("publish-mgr: chmod socket: %v", err)
+	}
+
+	// Replay user_allow rules saved in the rule store. On a clean
+	// proxy startup the chain is empty and this seeds it from whatever
+	// the dashboard persisted before the previous shutdown.
+	if session := os.Getenv("PROXY_SESSION"); session != "" {
+		rulesPath := filepath.Join("/config", "proxy-state", session, "rules.json")
+		seeded, err := replayUserAllowFromRules(rulesPath)
+		if err != nil {
+			log.Printf("publish-mgr: user_allow replay: %v", err)
+		} else if len(seeded) > 0 {
+			mgr.userAllow = seeded
+			log.Printf("publish-mgr: replayed %d user_allow rules from %s",
+				len(seeded), rulesPath)
+		}
 	}
 
 	mux := http.NewServeMux()
