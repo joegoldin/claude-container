@@ -12,6 +12,21 @@ let
 
   proxySource = ../proxy;
 
+  publishMgr = pkgs.buildGo126Module {
+    pname = "publish-mgr";
+    version = "0.1.0";
+    src = ../proxy/publish-mgr;
+    vendorHash = null;  # no external deps
+    subPackages = [ "." ];
+    # The pinned nixpkgs has go_1_26 = go-1.26.0; patch the go directive
+    # in go.mod to match so the toolchain version-check passes inside the
+    # nix sandbox.  This is safe: the source only uses stdlib APIs that
+    # exist in go 1.26.0.
+    postPatch = ''
+      substituteInPlace go.mod --replace 'go 1.26.2' 'go 1.26.0'
+    '';
+  };
+
   # Dedicated uid for the mitmproxy process so the firewall rules in the
   # shared network namespace can exempt its outbound traffic via
   # `meta skuid` matching. Any other uid in the netns (i.e. the Claude
@@ -119,6 +134,20 @@ let
     }
     NFT
 
+    # Start publish-mgr in the background as the dedicated uid so the
+    # socket is owned by the same uid that the dashboard can reach.
+    # Daemon will set up its socket at /run/publish-mgr.sock and own the
+    # nft rules for inbound publish ports.
+    ${pkgs.coreutils}/bin/mkdir -p /run
+    ${pkgs.coreutils}/bin/chown ${proxyUid}:${proxyGid} /run
+    # NB: publish-mgr runs as the proxy uid (1500) so the socket is
+    # accessible to the dashboard process. This means `nft` invocations
+    # by publish-mgr will fail without additional cap handling — that
+    # gap is addressed in a follow-up (see plan Task 18 / privilege
+    # handling).
+    ${pkgs.su-exec}/bin/su-exec ${proxyUid}:${proxyGid} \
+      ${publishMgr}/bin/publish-mgr &
+
     # ----- Run mitmproxy as the dedicated uid -----
     exec ${pkgs.su-exec}/bin/su-exec ${proxyUid}:${proxyGid} \
       ${python}/bin/python -m claude_proxy.app \
@@ -143,6 +172,7 @@ pkgs.dockerTools.buildLayeredImage {
     pkgs.iproute2
     pkgs.su-exec
     pkgs.shadow
+    publishMgr
   ];
 
   enableFakechroot = true;
