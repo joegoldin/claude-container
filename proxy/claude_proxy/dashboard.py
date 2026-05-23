@@ -36,6 +36,10 @@ _auth_token: Optional[str] = None
 # can monkeypatch it with a fake transport.
 _publish_mgr_transport = httpx.HTTPTransport(uds="/run/publish-mgr.sock")
 
+# Transport for the udp-redir Unix socket. Module-level so tests
+# can monkeypatch it with a fake transport.
+_udp_redir_transport = httpx.HTTPTransport(uds="/run/udp-redir.sock")
+
 
 def set_auth_token(token: str) -> None:
     """Register the auth token required for mutating endpoints."""
@@ -127,10 +131,20 @@ async def health(request: Request) -> JSONResponse:
 
 
 async def get_pending(request: Request) -> JSONResponse:
-    """Return list of pending requests from the addon."""
-    if _addon is None:
-        return JSONResponse({"error": "not configured"}, status_code=503)
-    return JSONResponse(_addon.get_pending())
+    """Return list of pending requests (HTTP/TCP from addon + UDP from udp-redir)."""
+    out: list[dict] = []
+    if _addon is not None:
+        out.extend(_addon.get_pending())
+    # Merge UDP holds; fail soft so HTTP pendings still surface if the
+    # daemon is down.
+    try:
+        with httpx.Client(transport=_udp_redir_transport) as c:
+            r = c.get("http://udp-redir/pending", timeout=2)
+        if r.status_code == 200:
+            out.extend(r.json())
+    except Exception as exc:
+        logger.debug("udp-redir /pending unreachable: %s", exc)
+    return JSONResponse(out)
 
 
 async def get_rules(request: Request) -> JSONResponse:

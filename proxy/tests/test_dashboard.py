@@ -336,3 +336,31 @@ def test_publish_endpoint_calls_publish_mgr(client, monkeypatch):
     assert resp.json()["host_port"] == 30005
     assert len(calls) == 1
     assert calls[0][1].endswith("/publish")
+
+
+def test_pending_endpoint_merges_udp_holds(client, monkeypatch):
+    """GET /api/pending merges udp-redir's held flows into the response."""
+    import httpx
+    class FakeTransport(httpx.BaseTransport):
+        def handle_request(self, request):
+            return httpx.Response(200, json=[{
+                "flow_id": "udp-abcdef",
+                "kind": "udp",
+                "url": "udp://1.1.1.1:53",
+                "host": "1.1.1.1",
+                "port": 53,
+                "dns_name": "example.com",
+                "remaining": 30,
+            }])
+
+    from claude_proxy import dashboard
+    monkeypatch.setattr(dashboard, "_udp_redir_transport", FakeTransport())
+
+    resp = client.get("/api/pending")
+    assert resp.status_code == 200
+    items = resp.json()
+    # The fixture's addon has no pending, but the merge should surface
+    # the UDP entry.
+    udp = [i for i in items if i.get("kind") == "udp"]
+    assert len(udp) == 1
+    assert udp[0]["dns_name"] == "example.com"
