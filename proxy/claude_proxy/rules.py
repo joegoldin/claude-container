@@ -16,24 +16,40 @@ from typing import Optional
 
 @dataclass
 class Rule:
-    """A single allow or deny rule with a regex pattern."""
+    """A single traffic rule.
+
+    New canonical schema (direction + proto + match object + action).
+    Old (rule_type + pattern) is accepted and normalized in from_dict.
+    """
 
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    rule_type: str = "allow"  # "allow" or "deny"
-    pattern: str = ""
+    direction: str = "out"          # "out" | "in"
+    proto: str = "any"              # "http"|"tcp"|"udp"|"icmp"|"any"
+    match: dict = field(default_factory=dict)
+    action: str = "allow"           # "allow"|"deny"|"hold"
     label: str = ""
     created_at: float = field(default_factory=time.time)
     expires_at: Optional[float] = None
     source: str = "interactive"
 
+    # Backward-compat fields preserved for code that still reads them.
+    # to_dict emits the NEW shape; from_dict accepts both.
+    @property
+    def rule_type(self) -> str:
+        return self.action
+
+    @property
+    def pattern(self) -> str:
+        # If the rule was created with the old shape, the host_regex
+        # field carries the original regex pattern.
+        return self.match.get("host_regex", "") or self.match.get("host", "")
+
     def is_expired(self) -> bool:
-        """Return True if the rule has passed its expiration time."""
         if self.expires_at is None:
             return False
         return time.time() > self.expires_at
 
     def compiled(self) -> re.Pattern:
-        """Return the compiled regex pattern (cached)."""
         return _compile_pattern(self.pattern)
 
     def to_dict(self) -> dict:
@@ -50,12 +66,19 @@ class Rule:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Rule":
-        """Deserialize a rule from a dict."""
+        """Deserialize a rule from a dict (accepts old or new shape)."""
+        # Old shape has rule_type + pattern; translate to new canonical fields.
+        rule_type = data.get("rule_type", "allow")
+        pattern = data.get("pattern", "")
+        match = data.get("match") or ({"host_regex": pattern} if pattern else {})
+        action = data.get("action", rule_type)
         return cls(
             id=data["id"],
-            rule_type=data["rule_type"],
-            pattern=data["pattern"],
-            label=data["label"],
+            action=action,
+            direction=data.get("direction", "out"),
+            proto=data.get("proto", "any"),
+            match=match,
+            label=data.get("label", ""),
             created_at=data["created_at"],
             expires_at=data.get("expires_at"),
             source=data.get("source", "interactive"),
@@ -88,8 +111,8 @@ class RuleStore:
     ) -> str:
         """Add a new rule and return its id."""
         rule = Rule(
-            rule_type=rule_type,
-            pattern=pattern,
+            action=rule_type,
+            match={"host_regex": pattern},
             label=label,
             expires_at=expires_at,
             source=source,

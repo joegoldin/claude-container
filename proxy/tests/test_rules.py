@@ -139,3 +139,18 @@ class TestRuleStore:
         rules = store.list_rules()
         assert len(rules) == 1
         assert rules[0]["label"] == "Keep this"
+
+
+def test_rule_has_new_schema_fields():
+    from claude_proxy.rules import Rule
+    r = Rule(action="allow", direction="out", proto="http",
+             match={"host": "github.com"})
+    assert r.action == "allow"
+    assert r.direction == "out"
+    assert r.proto == "http"
+    assert r.match == {"host": "github.com"}
+    # Defaults preserve old behavior: direction defaults to "out",
+    # proto defaults to "any".
+    r2 = Rule(action="allow", match={"host_regex": "github"})
+    assert r2.direction == "out"
+    assert r2.proto == "any"
