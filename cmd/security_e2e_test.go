@@ -1836,3 +1836,45 @@ func TestSecurity_Publish_PoolExhaustionFailsFast(t *testing.T) {
 		t.Errorf("error message should mention pool exhaustion; got: %s", out)
 	}
 }
+
+// TestSecurity_UDPOutbound_AllowedHostPasses verifies that with a
+// pre-allow rule for a destination, outbound UDP from inside the
+// container reaches a host-side UDP server.
+func TestSecurity_UDPOutbound_AllowedHostPasses(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	name := "sec-udp-allow"
+	startSecurityContainer(t, name, "--yolo")
+
+	// Host listens on a random port, container will UDP-send to it.
+	srv, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer srv.Close()
+	hostAddr := srv.LocalAddr().(*net.UDPAddr)
+
+	// Pre-allow the host's IP via the proxy rule store.
+	api := newProxyAPI(t, configDir, name)
+	api.addRule(t, "allow", "127.0.0.1")
+	// Phase 0 stores legacy "allow" as proto=any, so UDP is covered.
+
+	// Container-side: send a single UDP datagram to the host port.
+	go boundedDockerExec(t, 10*time.Second, name, "sh", "-c",
+		fmt.Sprintf(`python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.sendto(b'HELLO UDP', ('host.docker.internal' if False else '127.0.0.1', %d))
+"`, hostAddr.Port))
+
+	srv.SetReadDeadline(time.Now().Add(8 * time.Second))
+	buf := make([]byte, 256)
+	n, _, err := srv.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("ReadFrom timed out (UDP didn't pass through): %v", err)
+	}
+	if string(buf[:n]) != "HELLO UDP" {
+		t.Errorf("got %q, want HELLO UDP", buf[:n])
+	}
+}
