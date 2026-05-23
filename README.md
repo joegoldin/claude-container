@@ -586,6 +586,29 @@ that previously allowed bypass. There is no escape hatch: every TCP
 packet a process in the Claude container emits hits the nftables rule
 first.
 
+### Outbound UDP (Phase 2)
+
+UDP packets from inside the container are also gated by the rule store —
+the path uses NFQUEUE instead of mitmproxy because UDP has no
+`SO_ORIGINAL_DST`. A small Go daemon (`udp-redir`) inside the proxy
+container reads every outbound UDP datagram from netfilter, parses the
+IP/UDP headers (and the DNS question for queries to UDP/53), and either:
+
+- **ACCEPT** if the destination matches a UDP or `proto=any` allow rule
+- **DROP** if a deny rule matches
+- **HOLD** the packet in the kernel queue (up to 16 per `(dst, port)`
+  tuple, 30-second TTL) and surface it on the dashboard's pending list
+  alongside HTTP/TCP flows. When you approve, the held packet is
+  released to the wire.
+
+DNS queries display the queried hostname in the pending UI so you can
+make an informed decision. DNS via the docker embedded resolver
+(`127.0.0.11`) bypasses NFQUEUE entirely (it's loopback), so libc-based
+`getaddrinfo` keeps working without prompting.
+
+UDP/443 (QUIC) is dropped at the firewall before NFQUEUE — clients fall
+back to TCP, which mitmproxy already gates.
+
 ### Default allowed domains by profile
 
 The sandbox profile (`--profile`) determines which domains are pre-allowed
