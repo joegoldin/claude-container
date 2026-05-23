@@ -528,6 +528,9 @@
     return "(any)";
   }
 
+  // Protocol family order — defines section ordering in the rules table.
+  const PROTO_ORDER = ["http", "tcp", "udp", "icmp", "nft", "any"];
+
   function renderRules() {
     if (rules.length === 0) {
       rulesBody.innerHTML =
@@ -535,8 +538,66 @@
       return;
     }
     rulesBody.innerHTML = "";
-    rules.forEach((rule) => rulesBody.appendChild(makeRuleRow(rule)));
+
+    // Apply current filter + sort.
+    const filtered = filterAndSortRules(rules);
+    if (filtered.length === 0) {
+      rulesBody.innerHTML =
+        '<tr class="empty-row"><td colspan="8">No rules match the current filter.</td></tr>';
+      return;
+    }
+
+    // Group by proto. Unknown protocols collapse into "any".
+    const groups = {};
+    for (const r of filtered) {
+      const p = PROTO_ORDER.indexOf(r.proto || "any") >= 0 ? (r.proto || "any") : "any";
+      (groups[p] = groups[p] || []).push(r);
+    }
+    for (const proto of PROTO_ORDER) {
+      const items = groups[proto];
+      if (!items || items.length === 0) continue;
+      const header = document.createElement("tr");
+      header.className = "rules-group-header";
+      header.innerHTML =
+        '<td colspan="8">' + htmlEscape(proto.toUpperCase()) +
+        ' <span class="rules-group-count">(' + items.length + ')</span></td>';
+      rulesBody.appendChild(header);
+      for (const rule of items) rulesBody.appendChild(makeRuleRow(rule));
+    }
   }
+
+  function filterAndSortRules(rs) {
+    const filter = (document.getElementById("rules-filter") || {}).value || "";
+    const sort = (document.getElementById("rules-sort") || {}).value || "proto";
+    const needle = filter.toLowerCase();
+    let out = rs.slice();
+    if (needle) {
+      out = out.filter((r) => {
+        const hay = ((r.label || "") + " " + ruleSummary(r) + " " +
+                     (r.action || "") + " " + (r.proto || "")).toLowerCase();
+        return hay.indexOf(needle) >= 0;
+      });
+    }
+    if (sort === "label") {
+      out.sort((a, b) => (a.label || "").localeCompare(b.label || ""));
+    } else if (sort === "created") {
+      out.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+    } else {
+      // default: proto, then label
+      out.sort((a, b) => {
+        const ap = PROTO_ORDER.indexOf(a.proto || "any");
+        const bp = PROTO_ORDER.indexOf(b.proto || "any");
+        if (ap !== bp) return ap - bp;
+        return (a.label || "").localeCompare(b.label || "");
+      });
+    }
+    return out;
+  }
+
+  const rulesFilterEl = document.getElementById("rules-filter");
+  if (rulesFilterEl) rulesFilterEl.addEventListener("input", renderRules);
+  const rulesSortEl = document.getElementById("rules-sort");
+  if (rulesSortEl) rulesSortEl.addEventListener("change", renderRules);
 
   // --- Countdown timer ---
   function startCountdown() {
