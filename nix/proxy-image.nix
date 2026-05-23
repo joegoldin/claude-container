@@ -20,6 +20,14 @@ let
     subPackages = [ "." ];
   };
 
+  udpRedir = pkgs.buildGoModule {
+    pname = "udp-redir";
+    version = "0.1.0";
+    src = ../proxy/udp-redir;
+    vendorHash = "sha256-6YTnCmswfFDYf65lVJCLCuZB2A9jO4FUIR+VxxxUf0M=";
+    subPackages = [ "." ];
+  };
+
   # Dedicated uid for the mitmproxy process so the firewall rules in the
   # shared network namespace can exempt its outbound traffic via
   # `meta skuid` matching. Any other uid in the netns (i.e. the Claude
@@ -168,6 +176,7 @@ pkgs.dockerTools.buildLayeredImage {
     pkgs.su-exec
     pkgs.shadow
     publishMgr
+    udpRedir
   ];
 
   enableFakechroot = true;
