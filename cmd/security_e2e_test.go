@@ -1909,3 +1909,67 @@ s.sendto(b'SHOULD NOT ARRIVE', ('127.0.0.1', %d))
 		t.Errorf("UDP arrived despite default deny: %q", buf[:n])
 	}
 }
+
+// TestSecurity_UDPOutbound_DNSHoldAndApprove verifies the full DNS UX:
+// container queries an external resolver, udp-redir holds the packet
+// and surfaces it on /api/pending with dns_name, test approves via
+// /api/resolve, the held packet is re-issued and the container's
+// resolver gets a response.
+func TestSecurity_UDPOutbound_DNSHoldAndApprove(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	name := "sec-udp-dns"
+	startSecurityContainer(t, name, "--yolo")
+
+	api := newProxyAPI(t, configDir, name)
+
+	// Send a query for example.com via 1.1.1.1 from inside the container.
+	// This will hit NFQUEUE; the daemon parses the question and HOLDs.
+	go boundedDockerExec(t, 15*time.Second, name, "sh", "-c",
+		`python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(10)
+# RFC 1035 query for example.com, qtype A.
+q = bytes.fromhex('1234010000010000000000000765')+ \
+    b'example' + bytes.fromhex('03') + b'com' + bytes.fromhex('0000010001')
+s.sendto(q, ('1.1.1.1', 53))
+try:
+    data, _ = s.recvfrom(512)
+    open('/tmp/dns-ok','w').write('ok')
+except Exception as e:
+    open('/tmp/dns-err','w').write(str(e))
+"`)
+
+	// Wait for the hold to appear on /api/pending.
+	deadline := time.Now().Add(8 * time.Second)
+	var flowID string
+	for time.Now().Before(deadline) {
+		for _, p := range api.getPending(t) {
+			if k, _ := p["kind"].(string); k == "udp" {
+				if dnsName, _ := p["dns_name"].(string); dnsName == "example.com" {
+					flowID, _ = p["flow_id"].(string)
+					break
+				}
+			}
+		}
+		if flowID != "" {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if flowID == "" {
+		t.Fatalf("never saw a UDP/DNS pending flow for example.com")
+	}
+
+	// Approve via /api/resolve.
+	api.resolve(t, flowID, "allow", "1.1.1.1")
+
+	// Give the container time to receive the response and write /tmp/dns-ok.
+	time.Sleep(3 * time.Second)
+	out, err := boundedDockerExec(t, 3*time.Second, name, "cat", "/tmp/dns-ok")
+	if err != nil || !strings.Contains(out, "ok") {
+		t.Errorf("container did not receive DNS response after approve: out=%q err=%v", out, err)
+	}
+}
