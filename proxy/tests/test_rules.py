@@ -193,3 +193,17 @@ def test_from_dict_accepts_new_shape():
     assert r.direction == "in"
     assert r.proto == "tcp"
     assert r.match == {"port": 3000}
+
+
+def test_to_dict_emits_new_shape():
+    from claude_proxy.rules import Rule
+    r = Rule(direction="in", proto="tcp",
+             match={"port": 5173}, action="allow",
+             label="vite", source="interactive")
+    d = r.to_dict()
+    assert d["direction"] == "in"
+    assert d["proto"] == "tcp"
+    assert d["match"] == {"port": 5173}
+    assert d["action"] == "allow"
+    assert "rule_type" not in d   # old field gone from canonical output
+    assert "pattern" not in d

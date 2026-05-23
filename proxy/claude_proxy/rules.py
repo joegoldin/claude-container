@@ -55,11 +55,13 @@ class Rule:
         return _compile_pattern(self.pattern)
 
     def to_dict(self) -> dict:
-        """Serialize the rule to a JSON-compatible dict."""
+        """Serialize the rule to a JSON-compatible dict (new shape)."""
         return {
             "id": self.id,
-            "rule_type": self.rule_type,
-            "pattern": self.pattern,
+            "direction": self.direction,
+            "proto": self.proto,
+            "match": self.match,
+            "action": self.action,
             "label": self.label,
             "created_at": self.created_at,
             "expires_at": self.expires_at,
