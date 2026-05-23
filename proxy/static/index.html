@@ -13,6 +13,7 @@
             <button class="tab active" data-tab="pending">Pending</button>
             <button class="tab" data-tab="rules">Rules</button>
             <button class="tab" data-tab="published">Published Ports</button>
+            <button class="tab" data-tab="userallow">Custom Firewall</button>
         </nav>
     </header>
 
@@ -135,6 +136,66 @@
                     <tbody>
                         <tr class="empty-row">
                             <td colspan="5">No published ports.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="userallow-view" class="view">
+            <div class="add-rule-form">
+                <h3>Add Firewall Rule</h3>
+                <p class="form-help">
+                    Accept-only nftables rules — common cases via templates,
+                    arbitrary statements via raw mode. Rules persist and are
+                    replayed on proxy restart.
+                </p>
+                <form id="userallow-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Mode</label>
+                            <select name="mode" id="userallow-mode">
+                                <option value="template">Template</option>
+                                <option value="raw">Raw nft statement</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="userallow-template-group">
+                            <label>Template</label>
+                            <select name="template" id="userallow-template"></select>
+                        </div>
+                    </div>
+                    <div class="form-row" id="userallow-fields"></div>
+                    <div class="form-row" id="userallow-raw-group" hidden>
+                        <div class="form-group-grow">
+                            <label>Statement</label>
+                            <textarea name="stmt" rows="2"
+                                placeholder="ip daddr 10.0.0.0/8 tcp dport 22 accept"></textarea>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group-grow">
+                            <label>Label</label>
+                            <input name="label" type="text" placeholder="LAN SSH">
+                        </div>
+                        <div class="form-group">
+                            <label>&nbsp;</label>
+                            <button class="btn btn-add" type="submit">Add Rule</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div id="userallow-table-wrap">
+                <table id="userallow-table">
+                    <thead>
+                        <tr>
+                            <th>Label</th>
+                            <th>nft Statement</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="empty-row">
+                            <td colspan="3">No custom firewall rules.</td>
                         </tr>
                     </tbody>
                 </table>
