@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -1676,5 +1677,43 @@ func TestSecurity_Publish_TCP_RoundTrip(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "HELLO PUBLISH") {
 		t.Errorf("body=%q, want HELLO PUBLISH", body)
+	}
+}
+
+// TestSecurity_Publish_UDP_RoundTrip is the UDP analog: publish a UDP
+// port, send a datagram from the host, verify the in-container echo
+// server received it.
+func TestSecurity_Publish_UDP_RoundTrip(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	name := "sec-pub-udp"
+	startSecurityContainer(t, name, "--yolo", "--publish-range=10")
+
+	// Start a tiny UDP echo in the container, bound to 0.0.0.0:5005.
+	go boundedDockerExec(t, 30*time.Second, name, "sh", "-c",
+		`python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(('0.0.0.0', 5005))
+data, addr = s.recvfrom(1024)
+open('/tmp/got', 'w').write(data.decode())
+"`)
+	time.Sleep(2 * time.Second)
+
+	api := newProxyAPI(t, configDir, name)
+	pub := api.publish(t, "udp", 5005, "udp-echo")
+
+	conn, err := net.Dial("udp", fmt.Sprintf("127.0.0.1:%d", pub.HostPort))
+	if err != nil {
+		t.Fatalf("udp dial: %v", err)
+	}
+	defer conn.Close()
+	conn.Write([]byte("HELLO UDP"))
+	time.Sleep(1 * time.Second)
+
+	got, _ := boundedDockerExec(t, 5*time.Second, name, "cat", "/tmp/got")
+	if !strings.Contains(got, "HELLO UDP") {
+		t.Errorf("container received %q, want HELLO UDP", got)
 	}
 }
