@@ -166,6 +166,70 @@ class RuleStore:
                     allow = True
         return "allow" if allow else None
 
+    def add_rule(self, rule: Rule) -> str:
+        """Append a pre-built Rule to the store. Returns the rule's id."""
+        with self._lock:
+            self._rules.append(rule)
+        return rule.id
+
+    def match_request(self, *, direction: str, proto: str, url: str,
+                      dns_name: Optional[str] = None) -> Optional[str]:
+        """Evaluate the rule store against a request descriptor.
+
+        Returns "allow", "deny", or None (no rule matched — caller
+        decides whether to hold or default-deny).
+
+        Deny rules are evaluated first, then allow.
+        """
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        port = parsed.port
+
+        def matches(rule: Rule) -> bool:
+            # direction must match exactly
+            if rule.direction != direction:
+                return False
+            # proto: "any" wildcards; otherwise must equal
+            if rule.proto != "any" and rule.proto != proto:
+                return False
+            m = rule.match or {}
+            # host (exact, case-insensitive)
+            if "host" in m and m["host"]:
+                if (m["host"] or "").lower() != host.lower():
+                    return False
+            # host_regex
+            if "host_regex" in m and m["host_regex"]:
+                if not re.search(m["host_regex"], host):
+                    # also check against the full URL for back-compat
+                    # with old rules that matched the whole URL.
+                    if not re.search(m["host_regex"], url):
+                        return False
+            # port
+            if "port" in m and m["port"] is not None:
+                if port != m["port"]:
+                    return False
+            # dns_name (only relevant for UDP/53 lookups)
+            if "dns_name" in m and m["dns_name"]:
+                if (dns_name or "").lower() != m["dns_name"].lower():
+                    return False
+            return True
+
+        with self._lock:
+            # Deny first
+            for r in self._rules:
+                if r.is_expired():
+                    continue
+                if r.action == "deny" and matches(r):
+                    return "deny"
+            # Then allow
+            for r in self._rules:
+                if r.is_expired():
+                    continue
+                if r.action == "allow" and matches(r):
+                    return "allow"
+        return None
+
     def list_rules(self) -> list[dict]:
         """Return all non-expired rules as dicts."""
         with self._lock:

@@ -207,3 +207,48 @@ def test_to_dict_emits_new_shape():
     assert d["action"] == "allow"
     assert "rule_type" not in d   # old field gone from canonical output
     assert "pattern" not in d
+
+
+def test_match_filters_by_proto():
+    from claude_proxy.rules import RuleStore, Rule
+    store = RuleStore()
+    store.add_rule(Rule(direction="out", proto="http",
+                        match={"host": "github.com"}, action="allow"))
+    # http request to github.com matches
+    assert store.match_request(direction="out", proto="http",
+                               url="https://github.com/x") == "allow"
+    # tcp request to same host does NOT match the http rule
+    assert store.match_request(direction="out", proto="tcp",
+                               url="tcp://github.com:22") is None
+
+def test_match_uses_host_field():
+    from claude_proxy.rules import RuleStore, Rule
+    store = RuleStore()
+    store.add_rule(Rule(direction="out", proto="http",
+                        match={"host": "github.com"}, action="allow"))
+    assert store.match_request(direction="out", proto="http",
+                               url="https://github.com/foo") == "allow"
+    assert store.match_request(direction="out", proto="http",
+                               url="https://evil.com/foo") is None
+
+def test_match_uses_host_regex_field():
+    from claude_proxy.rules import RuleStore, Rule
+    store = RuleStore()
+    store.add_rule(Rule(direction="out", proto="any",
+                        match={"host_regex": ".*\\.github\\.com"},
+                        action="allow"))
+    assert store.match_request(direction="out", proto="http",
+                               url="https://api.github.com/x") == "allow"
+
+def test_match_proto_any_matches_all():
+    from claude_proxy.rules import RuleStore, Rule
+    store = RuleStore()
+    store.add_rule(Rule(direction="out", proto="any",
+                        match={"host_regex": "github\\.com"},
+                        action="allow"))
+    assert store.match_request(direction="out", proto="http",
+                               url="https://github.com/") == "allow"
+    assert store.match_request(direction="out", proto="tcp",
+                               url="tcp://github.com:22") == "allow"
+    assert store.match_request(direction="out", proto="udp",
+                               url="udp://github.com:53") == "allow"
