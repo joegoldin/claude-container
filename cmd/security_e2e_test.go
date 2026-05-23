@@ -1751,3 +1751,57 @@ func TestSecurity_Publish_ConcurrentSessions_NoCollision(t *testing.T) {
 			a.Base, a.Base+a.Size-1, b.Base, b.Base+b.Size-1)
 	}
 }
+
+// unpublish calls POST /api/unpublish via the dashboard.
+func (p *proxyAPI) unpublish(t *testing.T, proto string, hostPort int) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"protocol":  proto,
+		"host_port": hostPort,
+	})
+	req, _ := http.NewRequest("POST", p.baseURL+"/api/unpublish", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Auth-Token", p.token)
+	resp, err := p.http.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/unpublish: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("unpublish status=%d", resp.StatusCode)
+	}
+}
+
+// TestSecurity_Publish_Unpublish_RemovesFirewallRule verifies that
+// unpublishing closes the port: a fresh curl after unpublish fails.
+func TestSecurity_Publish_Unpublish_RemovesFirewallRule(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	name := "sec-unpub"
+	startSecurityContainer(t, name, "--yolo", "--publish-range=10")
+	go boundedDockerExec(t, 30*time.Second, name, "sh", "-c",
+		"python3 -m http.server 3001 --bind 0.0.0.0 --directory /tmp")
+	time.Sleep(2 * time.Second)
+
+	api := newProxyAPI(t, configDir, name)
+	pub := api.publish(t, "tcp", 3001, "")
+	url := fmt.Sprintf("http://127.0.0.1:%d/", pub.HostPort)
+
+	// Sanity: should reach the server.
+	if _, err := http.Get(url); err != nil {
+		t.Fatalf("pre-unpublish fetch failed: %v", err)
+	}
+
+	api.unpublish(t, "tcp", pub.HostPort)
+
+	// Post-unpublish: should NOT reach the server (firewall dropped).
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err == nil {
+		resp.Body.Close()
+		t.Errorf("unpublish did not close the port — fetch returned %d", resp.StatusCode)
+	}
+}
