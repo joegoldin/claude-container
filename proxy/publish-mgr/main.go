@@ -5,6 +5,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -46,11 +48,30 @@ type listEntry struct {
 	Label         string `json:"label"`
 }
 
+type userAllowReq struct {
+	Stmt  string `json:"stmt"`
+	Label string `json:"label"`
+	ID    string `json:"id,omitempty"` // optional client-supplied UUID
+}
+
+type userAllowResp struct {
+	OK    bool   `json:"ok"`
+	ID    string `json:"id,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+type userAllowEntry struct {
+	ID    string `json:"id"`
+	Stmt  string `json:"stmt"`
+	Label string `json:"label"`
+}
+
 type manager struct {
 	mu        sync.Mutex
 	rangeLo   int
 	rangeHi   int
-	published map[string]listEntry // key: "<proto>/<host_port>"
+	published map[string]listEntry    // key: "<proto>/<host_port>"
+	userAllow map[string]userAllowEntry // key: id
 }
 
 func main() {
@@ -63,6 +84,7 @@ func main() {
 		rangeLo:   lo,
 		rangeHi:   hi,
 		published: make(map[string]listEntry),
+		userAllow: make(map[string]userAllowEntry),
 	}
 
 	_ = os.Remove(socketPath)
@@ -89,6 +111,9 @@ func main() {
 	mux.HandleFunc("/publish", mgr.handlePublish)
 	mux.HandleFunc("/unpublish", mgr.handleUnpublish)
 	mux.HandleFunc("/list", mgr.handleList)
+	mux.HandleFunc("/user-allow/add", mgr.handleUserAllowAdd)
+	mux.HandleFunc("/user-allow/del", mgr.handleUserAllowDel)
+	mux.HandleFunc("/user-allow/list", mgr.handleUserAllowList)
 	log.Printf("publish-mgr listening on %s (range %d-%d)",
 		socketPath, lo, hi)
 	if err := http.Serve(l, mux); err != nil {
@@ -271,4 +296,87 @@ func (m *manager) handleUnpublish(w http.ResponseWriter, r *http.Request) {
 	}
 	delete(m.published, key)
 	writeJSON(w, 200, publishResp{OK: true})
+}
+
+func (m *manager) handleUserAllowAdd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, userAllowResp{Error: "POST only"})
+		return
+	}
+	var req userAllowReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, 400, userAllowResp{Error: "bad json: " + err.Error()})
+		return
+	}
+	if err := validateUserAllowStmt(req.Stmt); err != nil {
+		writeJSON(w, 400, userAllowResp{Error: err.Error()})
+		return
+	}
+	if err := nftAddUserAllow(req.Stmt); err != nil {
+		writeJSON(w, 500, userAllowResp{Error: err.Error()})
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := req.ID
+	if id == "" {
+		id = randomID()
+	}
+	m.userAllow[id] = userAllowEntry{
+		ID:    id,
+		Stmt:  strings.TrimSpace(req.Stmt),
+		Label: req.Label,
+	}
+	writeJSON(w, 200, userAllowResp{OK: true, ID: id})
+}
+
+func (m *manager) handleUserAllowDel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, userAllowResp{Error: "POST only"})
+		return
+	}
+	var req userAllowReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, 400, userAllowResp{Error: "bad json: " + err.Error()})
+		return
+	}
+	if req.ID == "" {
+		writeJSON(w, 400, userAllowResp{Error: "id required"})
+		return
+	}
+	m.mu.Lock()
+	entry, ok := m.userAllow[req.ID]
+	if !ok {
+		m.mu.Unlock()
+		writeJSON(w, 404, userAllowResp{Error: "not found"})
+		return
+	}
+	if err := nftDelUserAllow(entry.Stmt); err != nil {
+		m.mu.Unlock()
+		writeJSON(w, 500, userAllowResp{Error: err.Error()})
+		return
+	}
+	delete(m.userAllow, req.ID)
+	m.mu.Unlock()
+	writeJSON(w, 200, userAllowResp{OK: true})
+}
+
+func (m *manager) handleUserAllowList(w http.ResponseWriter, _ *http.Request) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]userAllowEntry, 0, len(m.userAllow))
+	for _, e := range m.userAllow {
+		out = append(out, e)
+	}
+	writeJSON(w, 200, out)
+}
+
+// randomID returns a 12-hex-character id derived from /dev/urandom.
+// Sufficient for in-memory + rule-store identification; not a security
+// token.
+func randomID() string {
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
