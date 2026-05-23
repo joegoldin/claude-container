@@ -2478,3 +2478,107 @@ func TestSecurity_RulesJson_NotReachableFromContainer(t *testing.T) {
 		}
 	}
 }
+
+// TestSecurity_SetuidBypass_Blocked verifies the critical Finding 1 fix
+// from the 2026-05-23 audit: a process in the Claude container running
+// as container uid 0 cannot call setuid(1500) to inherit the proxy's
+// `meta skuid 1500 accept` netfilter exemption. With CAP_SETUID dropped
+// (in rootless mode), the setuid() syscall fails with EPERM and the
+// agent can never appear to nft as mitmproxy.
+//
+// Pre-fix behavior: setuid(1500) succeeded; outbound TCP/UDP from the
+// setuid'd process bypassed mitmproxy + udp-redir.
+//
+// Post-fix behavior: setuid(1500) raises PermissionError, so the
+// bypass primitive doesn't exist.
+func TestSecurity_SetuidBypass_Blocked(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	name := "sec-setuid-bypass"
+	startSecurityContainer(t, name, "--yolo")
+
+	out, _ := boundedDockerExec(t, 5*time.Second, name, "sh", "-c",
+		`python3 -c "
+import os
+try:
+    os.setuid(1500)
+    print('SETUID_OK_uid=', os.getuid())
+except (PermissionError, OSError) as e:
+    print('SETUID_DENIED:', e)
+"`)
+	if strings.Contains(out, "SETUID_OK") {
+		t.Errorf("CRITICAL: setuid(1500) succeeded — netfilter skuid exemption is bypassable: %s", out)
+	}
+	if !strings.Contains(out, "SETUID_DENIED") {
+		t.Errorf("expected SETUID_DENIED, got: %s", out)
+	}
+}
+
+// TestSecurity_DashboardReadEndpoints_RequireAuth verifies audit
+// Finding 2 fix: /api/rules, /api/counters, /api/published-ports, and
+// /api/user-allow (GET) all reject unauthenticated requests.
+//
+// /api/pending and /api/user-allow/templates are intentionally still
+// open (the proxy-pending hook in nix/image.nix needs unauth /pending;
+// templates is a static registry with no user data).
+func TestSecurity_DashboardReadEndpoints_RequireAuth(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	name := "sec-dash-read-auth"
+	startSecurityContainer(t, name, "--yolo")
+
+	api := newProxyAPI(t, configDir, name)
+	gated := []string{
+		"/api/rules",
+		"/api/counters",
+		"/api/published-ports",
+		"/api/user-allow",
+	}
+	for _, path := range gated {
+		req, _ := http.NewRequest("GET", api.baseURL+path, nil)
+		// deliberately NO X-Auth-Token header
+		resp, err := api.http.Do(req)
+		if err != nil {
+			t.Fatalf("GET %s (no auth): %v", path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 401 {
+			t.Errorf("GET %s without auth: expected 401, got %d", path, resp.StatusCode)
+		}
+	}
+}
+
+// TestSecurity_PublishMgr_ContainerPortMustBeInRange verifies audit
+// Finding 4: publish-mgr rejects container_port outside the session's
+// publish range, not just outside 1024-65535.
+func TestSecurity_PublishMgr_ContainerPortMustBeInRange(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	name := "sec-port-range"
+	startSecurityContainer(t, name, "--yolo", "--publish-range=10",
+		"--publish-base=30000")
+
+	api := newProxyAPI(t, configDir, name)
+	// container_port 22 is in 1024..65535 but outside 30000..30009.
+	body, _ := json.Marshal(map[string]any{
+		"protocol":       "tcp",
+		"container_port": 22,
+		"label":          "out-of-range",
+	})
+	req, _ := http.NewRequest("POST", api.baseURL+"/api/publish",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Auth-Token", api.token)
+	resp, err := api.http.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/publish: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Errorf("expected 400 for out-of-range container_port, got %d",
+			resp.StatusCode)
+	}
+}
