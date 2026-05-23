@@ -2075,3 +2075,52 @@ func TestSecurity_UserAllow_RejectsDangerousRawStatement(t *testing.T) {
 		t.Errorf("user_allow chain has unexpected statements:\n%s", out)
 	}
 }
+
+// TestSecurity_UserAllow_PersistsAcrossProxyRestart verifies that
+// adding a user_allow rule, restarting the proxy container, and
+// listing the chain shows the rule re-applied via startup replay.
+func TestSecurity_UserAllow_PersistsAcrossProxyRestart(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	name := "sec-ua-persist"
+	startSecurityContainer(t, name, "--yolo")
+
+	api := newProxyAPI(t, configDir, name)
+
+	// Add a rule via the dashboard.
+	body, _ := json.Marshal(map[string]any{
+		"template": "outbound_icmp_echo",
+		"params":   map[string]any{"addr": "8.8.8.8"},
+		"label":    "ping google",
+	})
+	req, _ := http.NewRequest("POST", api.baseURL+"/api/user-allow",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Auth-Token", api.token)
+	resp, err := api.http.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("user-allow add failed: %v status=%d", err, resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Confirm the rule is present before restart.
+	out, _ := boundedDockerExec(t, 5*time.Second, name, "sh", "-c",
+		"nft list chain inet claude_proxy_fw user_allow")
+	if !strings.Contains(out, "ip daddr 8.8.8.8 icmp type echo-request accept") {
+		t.Fatalf("rule not installed pre-restart:\n%s", out)
+	}
+
+	// Restart the proxy container.
+	if err := exec.Command("docker", "restart", "claude-proxy_"+name).Run(); err != nil {
+		t.Fatalf("docker restart: %v", err)
+	}
+	// Give publish-mgr time to come up and replay.
+	time.Sleep(5 * time.Second)
+
+	out, _ = boundedDockerExec(t, 5*time.Second, name, "sh", "-c",
+		"nft list chain inet claude_proxy_fw user_allow")
+	if !strings.Contains(out, "ip daddr 8.8.8.8 icmp type echo-request accept") {
+		t.Errorf("rule did NOT survive proxy restart:\n%s", out)
+	}
+}
