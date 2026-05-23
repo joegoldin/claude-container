@@ -23,12 +23,25 @@ import (
 	"time"
 )
 
+// PortRange describes a contiguous host-port range published by the proxy.
+type PortRange struct {
+	Base int // first port (inclusive)
+	Size int // number of contiguous ports
+}
+
+// Last returns the inclusive end of the range.
+func (r PortRange) Last() int { return r.Base + r.Size - 1 }
+
+// IsZero reports whether the range was left at its zero value.
+func (r PortRange) IsZero() bool { return r.Base == 0 && r.Size == 0 }
+
 // ProxyOpts holds options for starting a per-session proxy sidecar.
 type ProxyOpts struct {
-	Session       string // session name; identifies the per-session proxy
-	ConfigDir     string // base config dir (~/.config/claude-container)
-	DashboardPort int    // host port for dashboard (default: pick free)
-	ForceRestart  bool   // stop and restart even if already running (picks up new rules)
+	Session       string    // session name; identifies the per-session proxy
+	ConfigDir     string    // base config dir (~/.config/claude-container)
+	DashboardPort int       // host port for dashboard (default: pick free)
+	ForceRestart  bool      // stop and restart even if already running (picks up new rules)
+	PublishRange  PortRange // optional host-port range to publish from the proxy container
 }
 
 // ContainerName returns the Docker container name for the given session.
@@ -251,11 +264,30 @@ func RunArgs(opts ProxyOpts) []string {
 		"--pids-limit", proxyEnvOr("CLAUDE_PROXY_PIDS_LIMIT", "256"),
 		"--cpus", proxyEnvOr("CLAUDE_PROXY_CPUS", "1.0"),
 		"-p", fmt.Sprintf("%d:8081", opts.DashboardPort),
-		"-v", stateMount + ":/config",
-		"-v", caMount + ":/config/ca",
-		"-e", "PROXY_SESSION=" + opts.Session,
-		ImageTag(),
 	}
+
+	if !opts.PublishRange.IsZero() {
+		spec := fmt.Sprintf("127.0.0.1:%d-%d:%d-%d",
+			opts.PublishRange.Base, opts.PublishRange.Last(),
+			opts.PublishRange.Base, opts.PublishRange.Last())
+		args = append(args,
+			"-p", spec+"/tcp",
+			"-p", spec+"/udp",
+		)
+	}
+
+	args = append(args,
+		"-v", stateMount+":/config",
+		"-v", caMount+":/config/ca",
+		"-e", "PROXY_SESSION="+opts.Session,
+	)
+
+	if !opts.PublishRange.IsZero() {
+		args = append(args, "-e", fmt.Sprintf("PROXY_PUBLISH_RANGE=%d-%d",
+			opts.PublishRange.Base, opts.PublishRange.Last()))
+	}
+
+	args = append(args, ImageTag())
 
 	return args
 }

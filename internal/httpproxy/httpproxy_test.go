@@ -266,6 +266,37 @@ func TestWaitForProxyReady_Timeout(t *testing.T) {
 	}
 }
 
+func TestRunArgs_EmitsPublishRange(t *testing.T) {
+	args := RunArgs(ProxyOpts{
+		Session:       "s1",
+		ConfigDir:     "/tmp/cfg",
+		DashboardPort: 9000,
+		PublishRange:  PortRange{Base: 30000, Size: 10},
+	})
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-p 127.0.0.1:30000-30009:30000-30009/tcp") {
+		t.Errorf("missing TCP publish range; got %s", joined)
+	}
+	if !strings.Contains(joined, "-p 127.0.0.1:30000-30009:30000-30009/udp") {
+		t.Errorf("missing UDP publish range; got %s", joined)
+	}
+	if !strings.Contains(joined, "PROXY_PUBLISH_RANGE=30000-30009") {
+		t.Errorf("missing PROXY_PUBLISH_RANGE env; got %s", joined)
+	}
+}
+
+func TestRunArgs_NoPublishRange_NoExtraArgs(t *testing.T) {
+	args := RunArgs(ProxyOpts{
+		Session:       "s1",
+		ConfigDir:     "/tmp/cfg",
+		DashboardPort: 9000,
+	})
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "PROXY_PUBLISH_RANGE") {
+		t.Errorf("PROXY_PUBLISH_RANGE leaked into args without a range; got %s", joined)
+	}
+}
+
 func TestWaitForProxyReady_DelayedStart(t *testing.T) {
 	// Start server after a delay to simulate proxy startup time.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
