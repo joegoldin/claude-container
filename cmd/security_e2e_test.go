@@ -2030,3 +2030,48 @@ func TestSecurity_UserAllow_TemplateInstallAllowsTraffic(t *testing.T) {
 			expected, out)
 	}
 }
+
+// TestSecurity_UserAllow_RejectsDangerousRawStatement verifies that a
+// raw statement containing a blacklisted keyword is rejected by
+// publish-mgr before reaching the kernel.
+func TestSecurity_UserAllow_RejectsDangerousRawStatement(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	name := "sec-ua-raw"
+	startSecurityContainer(t, name, "--yolo")
+
+	api := newProxyAPI(t, configDir, name)
+	cases := []string{
+		"ip daddr 1.2.3.4 drop",
+		"flush chain inet claude_proxy_fw user_allow",
+		"delete rule inet claude_proxy_fw user_allow handle 1",
+	}
+	for _, stmt := range cases {
+		body, _ := json.Marshal(map[string]any{
+			"stmt":  stmt,
+			"label": "evil",
+		})
+		req, _ := http.NewRequest("POST", api.baseURL+"/api/user-allow",
+			bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Auth-Token", api.token)
+		resp, err := api.http.Do(req)
+		if err != nil {
+			t.Errorf("stmt %q: POST failed: %v", stmt, err)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == 200 {
+			t.Errorf("stmt %q: server accepted dangerous statement", stmt)
+		}
+	}
+
+	// Confirm the chain is still empty.
+	out, _ := boundedDockerExec(t, 5*time.Second, name, "sh", "-c",
+		"nft list chain inet claude_proxy_fw user_allow")
+	if strings.Contains(out, "drop") || strings.Contains(out, "flush") ||
+		strings.Contains(out, "delete") {
+		t.Errorf("user_allow chain has unexpected statements:\n%s", out)
+	}
+}
