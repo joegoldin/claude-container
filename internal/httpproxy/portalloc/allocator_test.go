@@ -62,3 +62,26 @@ func TestClaim_PoolExhaustionErrors(t *testing.T) {
 		t.Fatal("expected exhaustion error, got nil")
 	}
 }
+
+func TestRelease_FreesTheRange(t *testing.T) {
+	dir := t.TempDir()
+	a, _ := New(filepath.Join(dir, "alloc.json"), 30000, 30099, 10)
+	_, _ = a.Claim("session-a", 10)   // 30000-30009
+	_, _ = a.Claim("session-b", 10)   // 30010-30019
+	if err := a.Release("session-a"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	// New session should now get the freed range.
+	got, _ := a.Claim("session-c", 10)
+	if got.Base != 30000 {
+		t.Errorf("after Release, next Claim got base=%d, want 30000", got.Base)
+	}
+}
+
+func TestRelease_UnknownSessionIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	a, _ := New(filepath.Join(dir, "alloc.json"), 30000, 30099, 10)
+	if err := a.Release("never-existed"); err != nil {
+		t.Errorf("Release of unknown session should be a no-op, got %v", err)
+	}
+}

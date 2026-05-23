@@ -135,3 +135,20 @@ func (a *Allocator) Claim(sessionName string, size int) (Allocation, error) {
 	}
 	return al, nil
 }
+
+// Release returns a session's range to the pool. Unknown session names
+// are a no-op (idempotent — safe to call from cleanup paths).
+func (a *Allocator) Release(sessionName string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	m, err := a.load()
+	if err != nil {
+		return err
+	}
+	if _, ok := m[sessionName]; !ok {
+		return nil
+	}
+	delete(m, sessionName)
+	return a.save(m)
+}
