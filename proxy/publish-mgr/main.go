@@ -130,6 +130,7 @@ func main() {
 	mux.HandleFunc("/user-allow/add", mgr.handleUserAllowAdd)
 	mux.HandleFunc("/user-allow/del", mgr.handleUserAllowDel)
 	mux.HandleFunc("/user-allow/list", mgr.handleUserAllowList)
+	mux.HandleFunc("/counters", mgr.handleCounters)
 	log.Printf("publish-mgr listening on %s (range %d-%d)",
 		socketPath, lo, hi)
 	if err := http.Serve(l, mux); err != nil {
@@ -387,6 +388,30 @@ func (m *manager) handleUserAllowList(w http.ResponseWriter, _ *http.Request) {
 		out = append(out, e)
 	}
 	writeJSON(w, 200, out)
+}
+
+type countersResp struct {
+	PublishIn []CounterEntry `json:"publish_in"`
+	UserAllow []CounterEntry `json:"user_allow"`
+}
+
+func (m *manager) handleCounters(w http.ResponseWriter, _ *http.Request) {
+	out := countersResp{
+		PublishIn: listChainCounters("publish_in"),
+		UserAllow: listChainCounters("user_allow"),
+	}
+	writeJSON(w, 200, out)
+}
+
+func listChainCounters(chain string) []CounterEntry {
+	raw, err := exec.Command("nft", "-a", "list", "chain", "inet",
+		"claude_proxy_fw", chain).CombinedOutput()
+	if err != nil {
+		// On error return empty; the dashboard will surface zero
+		// counters instead of failing the whole request.
+		return nil
+	}
+	return parseCounters(string(raw))
 }
 
 // randomID returns a 12-hex-character id derived from /dev/urandom.
