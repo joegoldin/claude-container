@@ -2185,3 +2185,296 @@ func TestSecurity_Counters_TickOnUserAllowTraffic(t *testing.T) {
 			snap.UserAllow)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Group G: Adversarial Phase 0-4 network-boundary tests
+//
+// These verify the threat-model boundary introduced by the Phase 0-4
+// networking features: capability drops, socket isolation, auth-gating,
+// and skuid-bypass prevention.
+// ---------------------------------------------------------------------------
+
+// TestSecurity_Container_NoCapNetAdmin verifies the Claude container
+// cannot invoke nft to mutate the firewall — CAP_NET_ADMIN was dropped
+// at runtime.
+func TestSecurity_Container_NoCapNetAdmin(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	name := "sec-nocap-admin"
+	startSecurityContainer(t, name, "--yolo")
+
+	// Container has no nft? Or nft binary present but lacks privilege?
+	// Both outcomes are acceptable: the agent CANNOT mutate the chain.
+	out, _ := boundedDockerExec(t, 5*time.Second, name, "sh", "-c",
+		"nft flush ruleset 2>&1 || echo BLOCKED")
+	if !strings.Contains(out, "BLOCKED") && !strings.Contains(out, "Operation not permitted") &&
+		!strings.Contains(out, "not found") && !strings.Contains(out, "command not found") {
+		t.Errorf("expected nft to be blocked or absent, got: %s", out)
+	}
+}
+
+// TestSecurity_Container_NoCapNetRaw verifies SOCK_RAW socket creation
+// fails — the agent cannot craft raw IP packets to bypass NFQUEUE.
+func TestSecurity_Container_NoCapNetRaw(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	name := "sec-nocap-raw"
+	startSecurityContainer(t, name, "--yolo")
+
+	// Try to open a raw socket from Python. Without CAP_NET_RAW, this
+	// fails with PermissionError.
+	out, _ := boundedDockerExec(t, 10*time.Second, name, "sh", "-c",
+		`python3 -c "
+import socket
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
+    print('RAW_SOCKET_CREATED')
+except PermissionError:
+    print('RAW_SOCKET_DENIED')
+except OSError as e:
+    print('RAW_SOCKET_ERROR:', e)
+"`)
+	if strings.Contains(out, "RAW_SOCKET_CREATED") {
+		t.Errorf("expected SOCK_RAW to be denied; got: %s", out)
+	}
+}
+
+// TestSecurity_Container_CannotReachPublishMgrSocket verifies the
+// publish-mgr Unix socket inside the proxy container is NOT visible
+// to the Claude container — the two have separate mount namespaces.
+func TestSecurity_Container_CannotReachPublishMgrSocket(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	name := "sec-no-pubmgr-sock"
+	startSecurityContainer(t, name, "--yolo")
+
+	// /run/publish-mgr.sock lives inside the PROXY container, not the
+	// Claude container. The Claude container's /run is its own mount.
+	out, _ := boundedDockerExec(t, 5*time.Second, name, "sh", "-c",
+		"ls -la /run/publish-mgr.sock 2>&1 || echo MISSING")
+	if !strings.Contains(out, "MISSING") && !strings.Contains(out, "No such file") {
+		t.Errorf("publish-mgr socket leaked into Claude container: %s", out)
+	}
+
+	// Also try connecting via Python (covers cases where /run/ has the
+	// socket name but it's stale or owned by a different uid).
+	out, _ = boundedDockerExec(t, 5*time.Second, name, "sh", "-c",
+		`python3 -c "
+import socket
+try:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(2)
+    s.connect('/run/publish-mgr.sock')
+    print('CONNECTED')
+except Exception as e:
+    print('BLOCKED:', e)
+"`)
+	if strings.Contains(out, "CONNECTED") {
+		t.Errorf("Claude container connected to publish-mgr socket: %s", out)
+	}
+}
+
+// TestSecurity_Container_CannotReachUdpRedirSocket — same as above
+// but for the udp-redir Unix socket.
+func TestSecurity_Container_CannotReachUdpRedirSocket(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	name := "sec-no-udpredir-sock"
+	startSecurityContainer(t, name, "--yolo")
+
+	out, _ := boundedDockerExec(t, 5*time.Second, name, "sh", "-c",
+		"ls -la /run/udp-redir.sock 2>&1 || echo MISSING")
+	if !strings.Contains(out, "MISSING") && !strings.Contains(out, "No such file") {
+		t.Errorf("udp-redir socket leaked into Claude container: %s", out)
+	}
+
+	out, _ = boundedDockerExec(t, 5*time.Second, name, "sh", "-c",
+		`python3 -c "
+import socket
+try:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(2)
+    s.connect('/run/udp-redir.sock')
+    print('CONNECTED')
+except Exception as e:
+    print('BLOCKED:', e)
+"`)
+	if strings.Contains(out, "CONNECTED") {
+		t.Errorf("Claude container connected to udp-redir socket: %s", out)
+	}
+}
+
+// TestSecurity_Container_CannotReadDashboardToken verifies the proxy's
+// dashboard auth token is NOT readable from the Claude container.
+// The token lives at /config/proxy-state/<session>/dashboard-token
+// inside the proxy container; the Claude container has no /config
+// mount.
+func TestSecurity_Container_CannotReadDashboardToken(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	name := "sec-no-tok"
+	startSecurityContainer(t, name, "--yolo")
+
+	// Try a few paths the agent might guess.
+	paths := []string{
+		"/config/proxy-state/" + name + "/dashboard-token",
+		"/config/dashboard-token",
+		"/proc/1/root/config/proxy-state/" + name + "/dashboard-token",
+	}
+	for _, p := range paths {
+		out, _ := boundedDockerExec(t, 3*time.Second, name, "sh", "-c",
+			"cat "+p+" 2>&1 || echo MISSING")
+		if !strings.Contains(out, "MISSING") && !strings.Contains(out, "No such") &&
+			!strings.Contains(out, "denied") {
+			t.Errorf("dashboard token reachable at %s: %s", p, out)
+		}
+	}
+}
+
+// TestSecurity_Dashboard_MutatingEndpointsRequireAuth verifies that
+// POST /api/user-allow without an X-Auth-Token header returns 401.
+// (GET endpoints intentionally aren't auth-gated; only mutations are.)
+func TestSecurity_Dashboard_MutatingEndpointsRequireAuth(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	name := "sec-dash-auth2"
+	startSecurityContainer(t, name, "--yolo")
+
+	api := newProxyAPI(t, configDir, name)
+	// newProxyAPI populated api.token; deliberately omit it.
+	body, _ := json.Marshal(map[string]any{
+		"template": "outbound_icmp_echo",
+		"params":   map[string]any{"addr": "8.8.8.8"},
+		"label":    "no auth",
+	})
+	req, _ := http.NewRequest("POST", api.baseURL+"/api/user-allow",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	// NO X-Auth-Token header.
+	resp, err := api.http.Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/user-allow (no auth): %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Errorf("expected 401 without auth, got %d", resp.StatusCode)
+	}
+}
+
+// TestSecurity_UDPOutbound_NoRawSocketBypass — even with creative
+// approaches (multiple Python socket types, scapy if installed, etc.),
+// outbound UDP without an allow rule must not escape the netns.
+// Combined with TestSecurity_Container_NoCapNetRaw (no CAP_NET_RAW),
+// this verifies the NFQUEUE dragnet covers everything.
+func TestSecurity_UDPOutbound_NoRawSocketBypass(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	name := "sec-udp-bypass"
+	startSecurityContainer(t, name, "--yolo")
+
+	// Host listens.
+	srv, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer srv.Close()
+	hostPort := srv.LocalAddr().(*net.UDPAddr).Port
+
+	// Try several smuggling techniques from inside the container.
+	probes := []string{
+		// regular SOCK_DGRAM (caught by NFQUEUE)
+		fmt.Sprintf(`python3 -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.sendto(b'P1', ('127.0.0.1', %d))" 2>&1`, hostPort),
+		// raw socket (should fail — see TestSecurity_Container_NoCapNetRaw)
+		fmt.Sprintf(`python3 -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_RAW,socket.IPPROTO_UDP); s.sendto(b'P2', ('127.0.0.1', %d))" 2>&1`, hostPort),
+		// SOCK_RAW with IPPROTO_RAW (IP_HDRINCL)
+		fmt.Sprintf(`python3 -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_RAW,socket.IPPROTO_RAW); s.sendto(b'P3', ('127.0.0.1', %d))" 2>&1`, hostPort),
+	}
+	for _, probe := range probes {
+		go boundedDockerExec(t, 4*time.Second, name, "sh", "-c", probe)
+	}
+
+	srv.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 256)
+	if n, _, err := srv.ReadFrom(buf); err == nil {
+		t.Errorf("UDP probe arrived despite no allow rule: %q", buf[:n])
+	}
+}
+
+// TestSecurity_Container_CannotSetSkuid1500 verifies the agent inside
+// the container cannot setuid to 1500 (the uid the NFQUEUE rule
+// exempts). Without CAP_SETUID (dropped) and without su/sudo, even if
+// the agent guesses 1500 is "special", it can't reach it.
+func TestSecurity_Container_CannotSetSkuid1500(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	name := "sec-no-setuid"
+	startSecurityContainer(t, name, "--yolo")
+
+	out, _ := boundedDockerExec(t, 5*time.Second, name, "sh", "-c",
+		`python3 -c "
+import os
+try:
+    os.setuid(1500)
+    print('SETUID_OK', os.getuid())
+except (PermissionError, OSError) as e:
+    print('SETUID_DENIED:', e)
+"`)
+	if strings.Contains(out, "SETUID_OK") {
+		t.Errorf("agent successfully setuid to 1500: %s", out)
+	}
+}
+
+// TestSecurity_CountersEndpoint_NoTokenLeak verifies the /api/counters
+// endpoint (which is intentionally NOT auth-gated, since it's
+// read-only) doesn't reveal the dashboard auth token in its output.
+func TestSecurity_CountersEndpoint_NoTokenLeak(t *testing.T) {
+	requireDockerAndAuth(t)
+	configDir := setupIsolatedConfigDir(t)
+
+	name := "sec-counters-leak"
+	startSecurityContainer(t, name, "--yolo")
+
+	api := newProxyAPI(t, configDir, name)
+	resp, err := http.Get(api.baseURL + "/api/counters")
+	if err != nil {
+		t.Fatalf("GET /api/counters: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), api.token) {
+		t.Errorf("/api/counters response contained the dashboard token")
+	}
+}
+
+// TestSecurity_RulesJson_NotReachableFromContainer verifies the
+// rule-store file lives outside the Claude container's filesystem.
+// The container has no /config mount; rules.json is only writable
+// from the proxy container (uid 1500) or the host (uid of the user).
+func TestSecurity_RulesJson_NotReachableFromContainer(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	name := "sec-no-rules-json"
+	startSecurityContainer(t, name, "--yolo")
+
+	paths := []string{
+		"/config/proxy-state/" + name + "/rules.json",
+		"/config/rules.json",
+	}
+	for _, p := range paths {
+		out, _ := boundedDockerExec(t, 3*time.Second, name, "sh", "-c",
+			"echo HACKED > "+p+" 2>&1 || echo BLOCKED")
+		if !strings.Contains(out, "BLOCKED") && !strings.Contains(out, "No such") &&
+			!strings.Contains(out, "denied") {
+			t.Errorf("agent wrote to %s: %s", p, out)
+		}
+	}
+}
