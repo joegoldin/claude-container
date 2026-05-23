@@ -639,6 +639,21 @@ This is the only place a process inside the Claude container can
 influence its own firewall, and only via the dashboard (which the
 container has no privileged access to).
 
+### Rules tab (Phase 4)
+
+The dashboard's **Rules** tab groups rules by protocol family
+(HTTP / TCP / UDP / ICMP / nft / any), with a text filter and a sort
+selector at the top. Each row shows action, protocol, the match
+summary, label, source, and — for rules that nft enforces directly
+(inbound publish + custom firewall) — live packet and byte counters
+polled every 5 seconds.
+
+HTTP, TCP, and UDP regex rules (the ones mitmproxy and udp-redir
+match against URLs) don't have per-rule counters in this release —
+they would need addon-level instrumentation. Their rows show `—` in
+the counter column. The Custom Firewall and Published Ports rules
+both get real numbers.
+
 ### Default allowed domains by profile
 
 The sandbox profile (`--profile`) determines which domains are pre-allowed
