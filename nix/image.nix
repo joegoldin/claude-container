@@ -217,14 +217,17 @@ let
         fi
       fi
 
-      # GAP-6 mitigation: disable git hook execution for this worktree.
-      # Without this, Claude inside the container could write an executable
-      # .git/hooks/pre-commit (or post-checkout, etc.) which would run on
-      # the host with the user's privileges when they later run `git commit`
-      # — a container-escape vector that bypasses every network and capability
-      # control we apply. Setting core.hooksPath to /dev/null prevents git
-      # from ever invoking a hook for this worktree, host- or container-side.
+      # GAP-6 mitigation: disable git hook execution for this worktree
+      # AND for the parent repo. Without this, Claude inside the container
+      # could write an executable .git/hooks/pre-commit (or post-checkout,
+      # etc.) — to either the worktree or the parent .git/ at /mnt/repo —
+      # which would run on the host with the user's privileges when they
+      # later run `git commit` in either location. The parent fix is
+      # important: §4.3 of the adversarial audit flagged that the parent
+      # .git/ at /mnt/repo is RW. Setting core.hooksPath to /dev/null on
+      # BOTH locations covers worktree and parent invocations.
       ${gitBin} -C "$target_dir" config core.hooksPath /dev/null 2>/dev/null || true
+      ${gitBin} -C "$repo_dir"   config core.hooksPath /dev/null 2>/dev/null || true
     }
 
     # For non-root users, grant write access to /workspace so git worktree
@@ -275,6 +278,26 @@ let
       else
         ${suExec} "$USER_NAME" ${pkgs.nix}/bin/nix-store --init 2>>"$ENTRYPOINT_LOG" || log "WARNING: nix-store --init failed"
       fi
+    fi
+
+    # §4.2 mitigation: wipe per-user nix profiles every session start.
+    # The /nix/var volume is shared across sessions for store caching, but
+    # /nix/var/nix/profiles/per-user/* tracks WHICH packages are "installed"
+    # for each user. Without this, a malicious session A could install a
+    # hijacked derivation and persist it into session B's PATH via the
+    # ~/.nix-profile/bin lookup. Resetting the profile manifests (NOT the
+    # store itself) prevents cross-session profile inheritance while
+    # keeping the substituter cache. Only EXTRA_PACKAGES installed in the
+    # current session end up on PATH.
+    if [ -d /nix/var/nix/profiles/per-user ]; then
+      log "resetting per-user nix profiles (cross-session isolation)"
+      ${pkgs.coreutils}/bin/rm -rf /nix/var/nix/profiles/per-user/* 2>>"$ENTRYPOINT_LOG" || true
+    fi
+    # Also clear any pre-existing ~/.nix-profile symlinks from prior sessions.
+    if [ "$USER_NAME" = "root" ]; then
+      ${pkgs.coreutils}/bin/rm -rf /root/.nix-profile /root/.local/state/nix 2>/dev/null || true
+    else
+      ${pkgs.coreutils}/bin/rm -rf "/home/$USER_NAME/.nix-profile" "/home/$USER_NAME/.local/state/nix" 2>/dev/null || true
     fi
 
     # --- Install extra packages ---

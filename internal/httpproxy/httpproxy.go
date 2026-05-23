@@ -239,6 +239,17 @@ func RunArgs(opts ProxyOpts) []string {
 		// netns. The Claude container joins this same netns via
 		// `--network container:`, so the firewall covers it too.
 		"--cap-add", "NET_ADMIN",
+		// no-new-privileges + resource limits — without these, a Claude-driven
+		// flood of held requests (mitmproxy keeps full bodies in memory for
+		// hold_timeout=3600s) can OOM the host docker daemon. The proxy
+		// doesn't need much: ~50 active flows × a few hundred KB each fits
+		// well inside 512MB. Override via CLAUDE_PROXY_MEMORY / _PIDS /
+		// _CPUS if your workload needs more.
+		"--security-opt", "no-new-privileges:true",
+		"--memory", proxyEnvOr("CLAUDE_PROXY_MEMORY", "512m"),
+		"--memory-swap", proxyEnvOr("CLAUDE_PROXY_MEMORY", "512m"),
+		"--pids-limit", proxyEnvOr("CLAUDE_PROXY_PIDS_LIMIT", "256"),
+		"--cpus", proxyEnvOr("CLAUDE_PROXY_CPUS", "1.0"),
 		"-p", fmt.Sprintf("%d:8081", opts.DashboardPort),
 		"-v", stateMount + ":/config",
 		"-v", caMount + ":/config/ca",
@@ -247,6 +258,15 @@ func RunArgs(opts ProxyOpts) []string {
 	}
 
 	return args
+}
+
+// proxyEnvOr returns os.Getenv(key) if non-empty, else fallback. Local
+// helper so we don't reach into the docker package for one util.
+func proxyEnvOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // ClaudeNetworkArgs returns extra docker run arguments that put the Claude

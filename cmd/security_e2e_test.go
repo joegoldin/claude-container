@@ -1439,6 +1439,121 @@ setTimeout(()=>ac.abort(), 6000);
 	}
 }
 
+// TestSecurity_ProxyContainer_HasResourceLimits verifies the proxy
+// sidecar has memory/pids/cpu caps so a flood of held requests (each
+// of which mitmproxy keeps in memory for hold_timeout=3600s) cannot
+// OOM the host docker daemon — closing audit §4.1.
+func TestSecurity_ProxyContainer_HasResourceLimits(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	name := "sec-proxy-limits"
+	startSecurityContainer(t, name, "--yolo")
+
+	// The proxy sidecar's container name is claude-proxy_<session>, not
+	// claude-container_<session>.
+	out, err := exec.Command("docker", "inspect",
+		"--format={{.HostConfig.Memory}} {{.HostConfig.PidsLimit}} {{.HostConfig.NanoCpus}}",
+		"claude-proxy_"+name).Output()
+	if err != nil {
+		t.Fatalf("docker inspect proxy: %v\n%s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	t.Logf("proxy HostConfig.Memory PidsLimit NanoCpus = %s", got)
+
+	fields := strings.Fields(got)
+	if len(fields) < 3 {
+		t.Fatalf("unexpected inspect output: %q", got)
+	}
+	mem, pids, cpus := fields[0], fields[1], fields[2]
+	if mem == "0" {
+		t.Errorf("proxy container has no memory limit — Claude-driven flow flood " +
+			"could OOM the host docker daemon")
+	}
+	if pids == "0" || pids == "-1" {
+		t.Errorf("proxy container has no PIDs limit — fork bomb defense missing on proxy side")
+	}
+	if cpus == "0" {
+		t.Errorf("proxy container has no CPU limit")
+	}
+}
+
+// TestSecurity_ParentRepoHooksPath_Disabled verifies the audit §4.3
+// fix: in worktree mode, BOTH the worktree and the parent repo at
+// /mnt/repo have core.hooksPath=/dev/null so a Claude-written
+// pre-commit hook in either .git/ directory cannot execute on the
+// host.
+func TestSecurity_ParentRepoHooksPath_Disabled(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	repo := setupGitRepo(t)
+	name := "sec-parent-hooks"
+	cleanupContainer(t, name)
+	cleanupProxy(t, name)
+	_, stderr, code := runCLIIn(t, repo, "work", "-b", "--name", name, "--preset", name, "--yolo")
+	if code != 0 {
+		t.Fatalf("work --name %s: exit %d\nstderr: %s", name, code, stderr)
+	}
+	t.Cleanup(func() { runCLI(t, "rm", name) })
+
+	// Both the parent repo (/mnt/repo) and the worktree (/workspace)
+	// should have hooksPath=/dev/null.
+	out, _ := boundedDockerExec(t, 10*time.Second, name, "sh", "-c",
+		"echo -n 'workspace='; git -C /workspace config --get core.hooksPath; "+
+			"echo -n 'parent='; git -C /mnt/repo config --get core.hooksPath")
+	t.Logf("hooksPath probe: %s", out)
+	if !strings.Contains(out, "workspace=/dev/null") {
+		t.Errorf("worktree core.hooksPath is not /dev/null: %s", out)
+	}
+	if !strings.Contains(out, "parent=/dev/null") {
+		const msg = "parent repo /mnt/repo core.hooksPath is NOT /dev/null — a Claude-written hook in the parent .git/hooks/ would fire on the host (audit §4.3): %s"
+		t.Errorf(msg, out)
+	}
+}
+
+// TestSecurity_NixProfiles_ResetAcrossSessions verifies audit §4.2:
+// the claude-nix-store volume is shared across sessions for caching,
+// but /nix/var/nix/profiles/per-user/* and ~/.nix-profile must be
+// reset on every entrypoint run so a malicious session A cannot leave
+// poisoned binaries on session B's PATH.
+func TestSecurity_NixProfiles_ResetAcrossSessions(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	// Session A: install a marker binary into the profile.
+	nameA := "sec-nix-profile-a"
+	startSecurityContainer(t, nameA, "--yolo")
+	// Plant a sentinel file in the per-user profile dir to simulate
+	// "session A left state behind". We bypass nix-profile-install and
+	// just touch a file in the shared volume — same observable effect.
+	out, err := boundedDockerExec(t, 10*time.Second, nameA, "sh", "-c",
+		"mkdir -p /nix/var/nix/profiles/per-user/root && "+
+			"echo POISONED > /nix/var/nix/profiles/per-user/root/sentinel.txt && "+
+			"ls /nix/var/nix/profiles/per-user/root/")
+	if err != nil {
+		t.Fatalf("plant sentinel: %v\n%s", err, out)
+	}
+	t.Logf("session A planted: %s", out)
+	// Stop session A.
+	exec.Command("docker", "stop", "-t", "5", "claude-container_"+nameA).Run()
+
+	// Session B: same volume, fresh container. The entrypoint should
+	// reset per-user profiles before this session sees them.
+	nameB := "sec-nix-profile-b"
+	startSecurityContainer(t, nameB, "--yolo")
+	out, _ = boundedDockerExec(t, 10*time.Second, nameB, "sh", "-c",
+		"ls /nix/var/nix/profiles/per-user/root/ 2>&1; "+
+			"echo ---; "+
+			"[ -e /nix/var/nix/profiles/per-user/root/sentinel.txt ] && "+
+			"echo LEAKED || echo CLEAN")
+	t.Logf("session B inspect: %s", out)
+	if strings.Contains(out, "LEAKED") {
+		const msg = "session B sees session A's nix profile sentinel — cross-session lateral path via claude-nix-store (audit §4.2): %s"
+		t.Errorf(msg, out)
+	}
+}
+
 // TestSecurity_AutoProfile_ExistsAndAcceptsDialog verifies the new
 // `auto` profile is configured correctly and pre-answers the
 // first-launch "Enable auto mode?" dialog so a container doesn't
