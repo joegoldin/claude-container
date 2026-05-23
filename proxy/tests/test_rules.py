@@ -276,3 +276,24 @@ def test_match_filters_by_direction():
     # inbound request to port 3000 matches
     assert store.match_request(direction="in", proto="tcp",
                                url="tcp://0.0.0.0:3000") == "allow"
+
+
+def test_loads_legacy_preset_format(tmp_path):
+    """Old preset files on disk continue to work without migration."""
+    import json
+    from claude_proxy.rules import RuleStore
+    preset = tmp_path / "legacy.json"
+    preset.write_text(json.dumps([
+        {"id": "1", "rule_type": "allow", "pattern": "github\\.com",
+         "label": "gh", "created_at": 0.0, "expires_at": None,
+         "source": "preset"},
+        {"id": "2", "rule_type": "deny", "pattern": "evil\\.com",
+         "label": "no", "created_at": 0.0, "expires_at": None,
+         "source": "preset"},
+    ]))
+    store = RuleStore()
+    store.load(str(preset))
+    assert store.match_request(direction="out", proto="http",
+                               url="https://github.com/x") == "allow"
+    assert store.match_request(direction="out", proto="http",
+                               url="https://evil.com/x") == "deny"
