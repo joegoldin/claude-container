@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,9 +115,94 @@ func (m *manager) handleList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
+func (m *manager) nextFreePort() (int, bool) {
+	for p := m.rangeLo; p <= m.rangeHi; p++ {
+		used := false
+		for _, e := range m.published {
+			if e.HostPort == p {
+				used = true
+				break
+			}
+		}
+		if !used {
+			return p, true
+		}
+	}
+	return 0, false
+}
+
+func nftAddInputAccept(proto string, port int) error {
+	cmd := exec.Command("nft", "add", "rule", "inet", "claude_proxy_fw",
+		"input", proto, "dport", strconv.Itoa(port), "accept")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("nft add rule failed: %v: %s", err, out)
+	}
+	return nil
+}
+
 func (m *manager) handlePublish(w http.ResponseWriter, r *http.Request) {
-	// Task 15 implements this.
-	writeJSON(w, 501, publishResp{Error: "not implemented yet"})
+	if r.Method != http.MethodPost {
+		writeJSON(w, 405, publishResp{Error: "POST only"})
+		return
+	}
+	var req publishReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, 400, publishResp{Error: "bad json: " + err.Error()})
+		return
+	}
+	if req.Protocol != "tcp" && req.Protocol != "udp" {
+		writeJSON(w, 400, publishResp{Error: "protocol must be tcp or udp"})
+		return
+	}
+	if req.ContainerPort < 1024 || req.ContainerPort > 65535 {
+		writeJSON(w, 400, publishResp{Error: "container_port must be 1024-65535"})
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	hp := req.HostPort
+	if hp == 0 {
+		var ok bool
+		hp, ok = m.nextFreePort()
+		if !ok {
+			writeJSON(w, 409, publishResp{Error: "no free port in range"})
+			return
+		}
+	} else {
+		if hp < m.rangeLo || hp > m.rangeHi {
+			writeJSON(w, 400, publishResp{Error: "host_port outside session range"})
+			return
+		}
+		key := fmt.Sprintf("%s/%d", req.Protocol, hp)
+		if _, exists := m.published[key]; exists {
+			writeJSON(w, 409, publishResp{Error: "host_port already published"})
+			return
+		}
+	}
+
+	// Add the firewall rule for the CONTAINER side (apps listen on that
+	// port inside the netns; docker's portmap forwards host→container).
+	if err := nftAddInputAccept(req.Protocol, req.ContainerPort); err != nil {
+		writeJSON(w, 500, publishResp{Error: err.Error()})
+		return
+	}
+
+	key := fmt.Sprintf("%s/%d", req.Protocol, hp)
+	m.published[key] = listEntry{
+		HostPort:      hp,
+		ContainerPort: req.ContainerPort,
+		Protocol:      req.Protocol,
+		Label:         req.Label,
+	}
+	writeJSON(w, 200, publishResp{
+		HostPort:      hp,
+		ContainerPort: req.ContainerPort,
+		Protocol:      req.Protocol,
+		OK:            true,
+	})
 }
 
 func (m *manager) handleUnpublish(w http.ResponseWriter, r *http.Request) {
