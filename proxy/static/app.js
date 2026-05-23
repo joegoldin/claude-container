@@ -226,6 +226,10 @@
       const target = tab.getAttribute("data-tab");
       document.getElementById(target + "-view").classList.add("active");
       if (target === "published") refreshPublished();
+      if (target === "userallow") {
+        renderUserAllowFields();
+        refreshUserAllow();
+      }
     });
   });
 
@@ -695,6 +699,114 @@
       refreshPublished();
     });
   }
+
+  // --- Custom Firewall (user_allow) ---
+  let userAllowTemplates = null;
+
+  async function loadUserAllowTemplates() {
+    if (userAllowTemplates) return userAllowTemplates;
+    const r = await fetch("/api/user-allow/templates");
+    userAllowTemplates = await r.json();
+    return userAllowTemplates;
+  }
+
+  async function refreshUserAllow() {
+    const r = await fetch("/api/user-allow");
+    const items = await r.json();
+    const tbody = document.querySelector("#userallow-table tbody");
+    tbody.innerHTML = "";
+    if (!Array.isArray(items) || items.length === 0) {
+      tbody.innerHTML =
+        '<tr class="empty-row"><td colspan="3">No custom firewall rules.</td></tr>';
+      return;
+    }
+    for (const it of items) {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td>" + htmlEscape(it.label || "") + "</td>" +
+        "<td><code>" + htmlEscape(it.stmt) + "</code></td>" +
+        '<td><button class="btn btn-secondary userallow-del-btn"' +
+        ' data-id="' + htmlAttrEscape(it.id) + '">Delete</button></td>';
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function renderUserAllowFields() {
+    const templates = await loadUserAllowTemplates();
+    const select = document.querySelector("#userallow-template");
+    select.innerHTML = "";
+    for (const name of Object.keys(templates)) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name.replace(/_/g, " ");
+      select.appendChild(opt);
+    }
+    renderTemplateInputs();
+  }
+
+  function renderTemplateInputs() {
+    const name = document.querySelector("#userallow-template").value;
+    if (!name || !userAllowTemplates) return;
+    const fields = userAllowTemplates[name] || [];
+    const container = document.querySelector("#userallow-fields");
+    container.innerHTML = "";
+    for (const f of fields) {
+      const div = document.createElement("div");
+      div.className = "form-group";
+      div.innerHTML =
+        "<label>" + htmlEscape(f) + "</label>" +
+        '<input name="' + htmlAttrEscape(f) + '" type="text" required>';
+      container.appendChild(div);
+    }
+  }
+
+  document.querySelector("#userallow-mode").addEventListener("change", (e) => {
+    const isRaw = e.target.value === "raw";
+    document.querySelector("#userallow-template-group").hidden = isRaw;
+    document.querySelector("#userallow-fields").hidden = isRaw;
+    document.querySelector("#userallow-raw-group").hidden = !isRaw;
+  });
+
+  document.querySelector("#userallow-template").addEventListener("change", renderTemplateInputs);
+
+  document.querySelector("#userallow-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const mode = document.querySelector("#userallow-mode").value;
+    const label = e.target.querySelector('[name="label"]').value;
+    let body;
+    if (mode === "raw") {
+      const stmt = e.target.querySelector('[name="stmt"]').value;
+      body = { stmt: stmt, label: label };
+    } else {
+      const template = document.querySelector("#userallow-template").value;
+      const params = {};
+      for (const inp of document.querySelectorAll("#userallow-fields input")) {
+        params[inp.name] = inp.value;
+      }
+      body = { template: template, params: params, label: label };
+    }
+    const r = await fetch("/api/user-allow", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ error: "unknown" }));
+      alert("Rule rejected: " + (err.error || r.status));
+      return;
+    }
+    e.target.reset();
+    document.querySelector("#userallow-mode").dispatchEvent(new Event("change"));
+    refreshUserAllow();
+  });
+
+  document.querySelector("#userallow-table tbody").addEventListener("click", async (e) => {
+    if (!e.target.classList.contains("userallow-del-btn")) return;
+    const id = e.target.dataset.id;
+    if (!confirm("Delete this firewall rule?")) return;
+    await fetch("/api/user-allow/" + encodeURIComponent(id), { method: "DELETE" });
+    refreshUserAllow();
+  });
 
   // --- Init ---
   requestNotificationPermission();
