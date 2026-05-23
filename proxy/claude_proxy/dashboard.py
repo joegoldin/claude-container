@@ -21,6 +21,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from claude_proxy.addon import ProxyAddon
 from claude_proxy.rules import RuleStore
+from claude_proxy.userallow import TEMPLATES as _USER_ALLOW_TEMPLATES, compile_template
 
 logger = logging.getLogger(__name__)
 
@@ -417,6 +418,98 @@ async def list_published(request: Request) -> JSONResponse:
         return JSONResponse({"error": f"publish-mgr: {e}"}, status_code=502)
 
 
+async def user_allow_templates(request: Request) -> JSONResponse:
+    """Return the template registry: name → list of required fields."""
+    return JSONResponse({
+        name: fields for name, (_fn, fields) in _USER_ALLOW_TEMPLATES.items()
+    })
+
+
+async def user_allow_add(request: Request) -> JSONResponse:
+    """Add a user_allow nft rule (template or raw).
+
+    Body shape:
+        {template, params, label}  — compile template, forward, persist
+        {stmt, label}              — raw mode, forward verbatim, persist
+    """
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    if _store is None:
+        return JSONResponse({"error": "not configured"}, status_code=503)
+    body = await request.json()
+    label = body.get("label", "")
+    # Compile or accept raw statement.
+    if "template" in body:
+        try:
+            stmt = compile_template(body["template"], body.get("params", {}))
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+    elif "stmt" in body:
+        stmt = body["stmt"]
+    else:
+        return JSONResponse(
+            {"error": "either template+params or stmt required"},
+            status_code=400,
+        )
+    # Forward to publish-mgr.
+    try:
+        with httpx.Client(transport=_publish_mgr_transport) as c:
+            r = c.post("http://publish-mgr/user-allow/add",
+                       json={"stmt": stmt, "label": label},
+                       timeout=5)
+    except Exception as exc:
+        return JSONResponse({"error": f"publish-mgr: {exc}"}, status_code=502)
+    if r.status_code != 200:
+        return JSONResponse(r.json(), status_code=r.status_code)
+    data = r.json()
+    rule_id = data.get("id")
+    # Persist in the rule store (proto="nft" so existing matchers skip it).
+    _store.add_structured(
+        direction="out",  # informational only — match irrelevant for nft rules
+        proto="nft",
+        match={"nft_statement": stmt},
+        action="allow",
+        label=label,
+        source="user-allow",
+    )
+    _save_profile()
+    await broadcast({"type": "rules_changed", "data": _store.list_rules()})
+    return JSONResponse({"ok": True, "id": rule_id, "stmt": stmt})
+
+
+async def user_allow_list(request: Request) -> JSONResponse:
+    """List currently-applied user_allow rules (live from publish-mgr)."""
+    try:
+        with httpx.Client(transport=_publish_mgr_transport) as c:
+            r = c.get("http://publish-mgr/user-allow/list", timeout=5)
+        return JSONResponse(r.json(), status_code=r.status_code)
+    except Exception as exc:
+        return JSONResponse({"error": f"publish-mgr: {exc}"}, status_code=502)
+
+
+async def user_allow_del(request: Request) -> JSONResponse:
+    """Delete a user_allow rule by id (forwards to publish-mgr and unpersists)."""
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    if _store is None:
+        return JSONResponse({"error": "not configured"}, status_code=503)
+    rule_id = request.path_params["rule_id"]
+    try:
+        with httpx.Client(transport=_publish_mgr_transport) as c:
+            r = c.post("http://publish-mgr/user-allow/del",
+                       json={"id": rule_id},
+                       timeout=5)
+    except Exception as exc:
+        return JSONResponse({"error": f"publish-mgr: {exc}"}, status_code=502)
+    if r.status_code != 200:
+        return JSONResponse(r.json(), status_code=r.status_code)
+    # Best-effort: find the matching nft store entry by id and remove.
+    _store.remove(rule_id)
+    _save_profile()
+    await broadcast({"type": "rules_changed", "data": _store.list_rules()})
+    return JSONResponse({"ok": True})
+
+
 def _save_profile() -> None:
     """Persist rules to the profile JSON file."""
     if _store is not None and _profile_path is not None:
@@ -442,6 +535,10 @@ routes = [
     Route("/api/publish", publish, methods=["POST"]),
     Route("/api/unpublish", unpublish, methods=["POST"]),
     Route("/api/published-ports", list_published, methods=["GET"]),
+    Route("/api/user-allow/templates", user_allow_templates, methods=["GET"]),
+    Route("/api/user-allow", user_allow_add, methods=["POST"]),
+    Route("/api/user-allow", user_allow_list, methods=["GET"]),
+    Route("/api/user-allow/{rule_id}", user_allow_del, methods=["DELETE"]),
     WebSocketRoute("/ws", websocket_endpoint),
     Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
 ]

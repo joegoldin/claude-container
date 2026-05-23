@@ -388,3 +388,76 @@ def test_resolve_endpoint_forwards_udp_flow(client, monkeypatch):
     assert resp.json() == {"ok": True}
     assert len(calls) == 1
     assert calls[0][1].endswith("/resolve")
+
+
+def test_user_allow_templates(client):
+    """GET /api/user-allow/templates returns the template metadata."""
+    resp = client.get("/api/user-allow/templates")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "outbound_icmp_echo" in data
+    assert data["outbound_tcp_cidr"] == ["cidr", "port"]
+
+
+def test_user_allow_add_template_forwards(client, monkeypatch):
+    """POST /api/user-allow with a template compiles and forwards to publish-mgr."""
+    import httpx
+    calls = []
+    class FakeTransport(httpx.BaseTransport):
+        def handle_request(self, request):
+            body = request.read().decode()
+            calls.append((request.method, request.url.path, body))
+            return httpx.Response(200, json={"ok": True, "id": "abc123"})
+
+    from claude_proxy import dashboard
+    monkeypatch.setattr(dashboard, "_publish_mgr_transport", FakeTransport())
+
+    resp = client.post("/api/user-allow", json={
+        "template": "outbound_icmp_echo",
+        "params": {"addr": "8.8.8.8"},
+        "label": "ping google",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    # publish-mgr should have received the compiled statement.
+    assert len(calls) == 1
+    body = calls[0][2]
+    assert "ip daddr 8.8.8.8 icmp type echo-request accept" in body
+
+
+def test_user_allow_add_raw_forwards(client, monkeypatch):
+    """POST /api/user-allow with raw stmt bypasses the compiler."""
+    import httpx
+    class FakeTransport(httpx.BaseTransport):
+        def handle_request(self, request):
+            return httpx.Response(200, json={"ok": True, "id": "raw1"})
+
+    from claude_proxy import dashboard
+    monkeypatch.setattr(dashboard, "_publish_mgr_transport", FakeTransport())
+
+    resp = client.post("/api/user-allow", json={
+        "stmt": "ip daddr 1.1.1.1 accept",
+        "label": "raw cloudflare",
+    })
+    assert resp.status_code == 200
+
+
+def test_user_allow_add_rejects_bad_template(client, monkeypatch):
+    """Unknown template returns 400 before reaching publish-mgr."""
+    import httpx
+    called = []
+    class FakeTransport(httpx.BaseTransport):
+        def handle_request(self, request):
+            called.append(1)
+            return httpx.Response(500)
+
+    from claude_proxy import dashboard
+    monkeypatch.setattr(dashboard, "_publish_mgr_transport", FakeTransport())
+
+    resp = client.post("/api/user-allow", json={
+        "template": "delete_chain",
+        "params": {},
+        "label": "nope",
+    })
+    assert resp.status_code == 400
+    assert called == []  # never reached publish-mgr
