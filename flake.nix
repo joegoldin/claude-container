@@ -21,6 +21,12 @@
       lib.mkClaudeContainer =
         {
           pkgs,
+          # Linux pkgs used to build the Docker images. Defaults to `pkgs`,
+          # which works when the host is Linux. On Darwin, callers must pass
+          # a Linux pkgs set (e.g. `import nixpkgs { system = "aarch64-linux"; }`)
+          # so the image derivations — which use dockerTools.buildLayeredImage
+          # with enableFakechroot/proot — execute on a Linux remote builder.
+          pkgsLinux ? pkgs,
           claude-code,
           settings ? { },
           managedSettings ? import ./nix/managed-settings.nix,
@@ -30,7 +36,7 @@
         let
           system = pkgs.stdenv.hostPlatform.system;
 
-          image = pkgs.callPackage ./nix/image.nix {
+          image = pkgsLinux.callPackage ./nix/image.nix {
             inherit
               claude-code
               settings
@@ -39,7 +45,7 @@
               ;
           };
 
-          proxyImage = pkgs.callPackage ./nix/proxy-image.nix { };
+          proxyImage = pkgsLinux.callPackage ./nix/proxy-image.nix { };
 
           # Auto-derive command names from extraPackages so they get allowed
           # in default/med security profiles. Uses meta.mainProgram when
@@ -92,11 +98,30 @@
           inherit system;
           overlays = [ llm-agents.overlays.default ];
         };
+        # dockerTools.buildLayeredImage with enableFakechroot requires proot,
+        # which isn't portable to Darwin. Route image derivations through a
+        # Linux pkgs so they execute on a Linux remote builder when the host
+        # is a Mac. On Linux hosts this just aliases `pkgs`.
+        linuxSystem =
+          if system == "aarch64-darwin" then
+            "aarch64-linux"
+          else if system == "x86_64-darwin" then
+            "x86_64-linux"
+          else
+            system;
+        pkgsLinux =
+          if linuxSystem == system then
+            pkgs
+          else
+            import nixpkgs {
+              system = linuxSystem;
+              overlays = [ llm-agents.overlays.default ];
+            };
         vendorHash = "sha256-usdgGSIdHT9L0ZwWVxN3Og3e14kTRskJTNGRQdMmwNY=";
 
         defaultContainer = self.lib.mkClaudeContainer {
-          inherit pkgs;
-          claude-code = pkgs.llm-agents.claude-code;
+          inherit pkgs pkgsLinux;
+          claude-code = pkgsLinux.llm-agents.claude-code;
         };
       in
       {
