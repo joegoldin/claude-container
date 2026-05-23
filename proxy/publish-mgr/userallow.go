@@ -55,7 +55,14 @@ func validateUserAllowStmt(stmt string) error {
 // chain. The validator must run BEFORE this — the helper does not
 // re-validate (callers should fail fast on validation errors).
 func nftAddUserAllow(stmt string) error {
-	// Build argv by splitting the statement on whitespace.
+	// Insert "counter" before the final "accept" verdict so every
+	// user_allow rule accumulates its own packet+byte counter. If the
+	// statement doesn't end in `accept` (defensive — the validator
+	// should have rejected it), fall through and let nft reject it.
+	stmt = strings.TrimSpace(stmt)
+	if strings.HasSuffix(stmt, " accept") {
+		stmt = strings.TrimSuffix(stmt, " accept") + " counter accept"
+	}
 	args := []string{"add", "rule", "inet", "claude_proxy_fw", "user_allow"}
 	args = append(args, strings.Fields(stmt)...)
 	cmd := exec.Command("nft", args...)
@@ -74,9 +81,12 @@ func nftDelUserAllow(stmt string) error {
 	if err != nil {
 		return fmt.Errorf("nft list user_allow: %v: %s", err, out)
 	}
-	needle := strings.TrimSpace(stmt) + " # handle "
+	// Strip the trailing "accept" so the needle tolerates "counter
+	// packets N bytes M accept" between the rule body and "# handle".
+	stmtNoAccept := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(stmt), " accept"))
+	handleMarker := " # handle "
 	for _, line := range strings.Split(string(out), "\n") {
-		if !strings.Contains(line, needle) {
+		if !strings.Contains(line, stmtNoAccept) || !strings.Contains(line, handleMarker) {
 			continue
 		}
 		i := strings.LastIndex(line, "handle ")

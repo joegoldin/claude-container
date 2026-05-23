@@ -184,7 +184,8 @@ func (m *manager) nextFreePort() (int, bool) {
 
 func nftAddInputAccept(proto string, port int) error {
 	cmd := exec.Command("nft", "add", "rule", "inet", "claude_proxy_fw",
-		"publish_in", proto, "dport", strconv.Itoa(port), "accept")
+		"publish_in", proto, "dport", strconv.Itoa(port),
+		"counter", "accept")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("nft add rule failed: %v: %s", err, out)
@@ -264,13 +265,13 @@ func nftDelInputAccept(proto string, port int) error {
 	if err != nil {
 		return fmt.Errorf("nft list: %v: %s", err, out)
 	}
-	// Anchor the needle: nft prints "<proto> dport <port> accept # handle N".
-	// Requiring " accept # handle " right after our rule body prevents
-	// false-positive matches against rules like "accept counter" or rules
-	// that just happen to mention the same port elsewhere.
-	needle := fmt.Sprintf("%s dport %d accept # handle ", proto, port)
+	// Match by proto/port + handle suffix. The middle (counter and accept)
+	// can vary depending on whether the rule was added with or without a
+	// counter statement.
+	needle := fmt.Sprintf("%s dport %d ", proto, port)
+	handleMarker := " # handle "
 	for _, line := range strings.Split(string(out), "\n") {
-		if !strings.Contains(line, needle) {
+		if !strings.Contains(line, needle) || !strings.Contains(line, handleMarker) {
 			continue
 		}
 		i := strings.LastIndex(line, "handle ")
