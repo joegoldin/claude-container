@@ -477,45 +477,65 @@
   }
 
   // --- Render rules table ---
+  // Render a single rule row. Used by both renderRules and the grouped
+  // renderer in Task 6. Returns a <tr> element.
+  function makeRuleRow(rule) {
+    const tr = document.createElement("tr");
+    tr.setAttribute("data-rule-id", rule.id);
+    const expiresStr = rule.expires_at
+      ? new Date(rule.expires_at * 1000).toLocaleString()
+      : "Never";
+    const action = rule.action || "allow";
+    const proto = rule.proto || "any";
+    const summary = ruleSummary(rule);
+    tr.innerHTML =
+      '<td><span class="rule-type ' + htmlAttrEscape(action) + '">' +
+        htmlEscape(action) + '</span></td>' +
+      '<td><span class="rule-proto">' + htmlEscape(proto) + '</span></td>' +
+      '<td class="rule-pattern" title="' + htmlAttrEscape(summary) + '">' +
+        htmlEscape(summary) + '</td>' +
+      '<td class="rule-counter" data-rule-counter="' +
+        htmlAttrEscape(rule.id) + '">—</td>' +
+      '<td>' + htmlEscape(rule.label || "") + '</td>' +
+      '<td>' + htmlEscape(expiresStr) + '</td>' +
+      '<td>' + htmlEscape(rule.source || "interactive") + '</td>' +
+      '<td><button class="btn-delete" data-rule-id="' +
+        htmlAttrEscape(rule.id) + '">Delete</button></td>';
+    tr.querySelector(".btn-delete").addEventListener("click", async () => {
+      try {
+        const resp = await fetch("/api/rules/" + rule.id, { method: "DELETE" });
+        if (resp.ok) {
+          rules = rules.filter((r) => r.id !== rule.id);
+          renderRules();
+        }
+      } catch (err) {
+        console.error("Failed to delete rule:", err);
+      }
+    });
+    return tr;
+  }
+
+  // ruleSummary returns a human-readable one-liner describing what the
+  // rule matches. Inspects rule.match for the canonical fields the
+  // Python rule store emits.
+  function ruleSummary(rule) {
+    const m = rule.match || {};
+    if (m.nft_statement) return m.nft_statement;
+    if (m.host) return m.host;
+    if (m.host_regex) return m.host_regex;
+    if (m.port) return "port " + m.port;
+    if (m.dns_name) return "dns " + m.dns_name;
+    return "(any)";
+  }
+
   function renderRules() {
     if (rules.length === 0) {
       rulesBody.innerHTML =
-        '<tr class="empty-row"><td colspan="6">No rules configured.</td></tr>';
+        '<tr class="empty-row"><td colspan="8">No rules configured.</td></tr>';
       return;
     }
-
     rulesBody.innerHTML = "";
-    rules.forEach((rule) => {
-      const tr = document.createElement("tr");
-      const expiresStr = rule.expires_at
-        ? new Date(rule.expires_at * 1000).toLocaleString()
-        : "Never";
-
-      tr.innerHTML = `
-        <td><span class="rule-type ${rule.rule_type}">${htmlEscape(rule.rule_type)}</span></td>
-        <td class="rule-pattern" title="${htmlAttrEscape(rule.pattern)}">${htmlEscape(rule.pattern)}</td>
-        <td>${htmlEscape(rule.label || "")}</td>
-        <td>${expiresStr}</td>
-        <td>${htmlEscape(rule.source || "interactive")}</td>
-        <td><button class="btn-delete" data-rule-id="${rule.id}">Delete</button></td>
-      `;
-
-      tr.querySelector(".btn-delete").addEventListener("click", async () => {
-        try {
-          const resp = await fetch("/api/rules/" + rule.id, {
-            method: "DELETE",
-          });
-          if (resp.ok) {
-            rules = rules.filter((r) => r.id !== rule.id);
-            renderRules();
-          }
-        } catch (err) {
-          console.error("Failed to delete rule:", err);
-        }
-      });
-
-      rulesBody.appendChild(tr);
-    });
+    rules.forEach((rule) => rulesBody.appendChild(makeRuleRow(rule)));
   }
 
   // --- Countdown timer ---
