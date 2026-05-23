@@ -225,6 +225,7 @@
       tab.classList.add("active");
       const target = tab.getAttribute("data-tab");
       document.getElementById(target + "-view").classList.add("active");
+      if (target === "published") refreshPublished();
     });
   });
 
@@ -627,6 +628,70 @@
           renderRules();
           break;
       }
+    });
+  }
+
+  // --- Published Ports ---
+  async function refreshPublished() {
+    const r = await fetch("/api/published-ports");
+    const items = await r.json();
+    const tbody = document.querySelector("#published-table tbody");
+    tbody.innerHTML = "";
+    if (!items || items.length === 0) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No published ports.</td></tr>';
+      return;
+    }
+    for (const it of items) {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td>' + it.protocol + '</td>' +
+        '<td><a href="http://127.0.0.1:' + it.host_port + '" target="_blank">' + it.host_port + '</a></td>' +
+        '<td>' + it.container_port + '</td>' +
+        '<td>' + (it.label || '') + '</td>' +
+        '<td><button class="btn btn-secondary unpublish-btn" data-port="' + it.host_port + '" data-proto="' + it.protocol + '">Unpublish</button></td>';
+      tbody.appendChild(tr);
+    }
+  }
+
+  const publishForm = document.querySelector("#publish-form");
+  if (publishForm) {
+    publishForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      const body = {
+        protocol: f.get("protocol"),
+        container_port: parseInt(f.get("container_port"), 10),
+        label: f.get("label") || "",
+      };
+      const hp = f.get("host_port");
+      if (hp) body.host_port = parseInt(hp, 10);
+      const r = await fetch("/api/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ error: "unknown" }));
+        alert("Publish failed: " + (err.error || r.status));
+        return;
+      }
+      e.target.reset();
+      refreshPublished();
+    });
+  }
+
+  const publishedTableBody = document.querySelector("#published-table tbody");
+  if (publishedTableBody) {
+    publishedTableBody.addEventListener("click", async (e) => {
+      if (!e.target.classList.contains("unpublish-btn")) return;
+      const port = parseInt(e.target.dataset.port, 10);
+      const proto = e.target.dataset.proto;
+      await fetch("/api/unpublish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ protocol: proto, host_port: port }),
+      });
+      refreshPublished();
     });
   }
 

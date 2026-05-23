@@ -561,6 +561,17 @@ select:focus {
     background: var(--text-muted);
 }
 
+/* --- Published Ports tab --- */
+#publish-form .form-row { gap: 1em; align-items: end; }
+#published-table { width: 100%; border-collapse: collapse; margin-top: 1em; }
+#published-table th,
+#published-table td {
+  padding: 6px 12px;
+  border-bottom: 1px solid #eee;
+  text-align: left;
+}
+.unpublish-btn { padding: 2px 8px; font-size: 0.85em; }
+
 /* Responsive */
 @media (max-width: 768px) {
     header {

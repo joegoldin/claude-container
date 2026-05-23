@@ -12,6 +12,7 @@
         <nav>
             <button class="tab active" data-tab="pending">Pending</button>
             <button class="tab" data-tab="rules">Rules</button>
+            <button class="tab" data-tab="published">Published Ports</button>
         </nav>
     </header>
 
@@ -83,6 +84,57 @@
                     <tbody id="rules-body">
                         <tr class="empty-row">
                             <td colspan="6">No rules configured.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="published-view" class="view">
+            <div class="add-rule-form">
+                <h3>Publish Port</h3>
+                <form id="publish-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Protocol</label>
+                            <select name="protocol">
+                                <option value="tcp">TCP</option>
+                                <option value="udp">UDP</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Container port</label>
+                            <input name="container_port" type="number" min="1024" max="65535" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Host port (auto if blank)</label>
+                            <input name="host_port" type="number" min="1024" max="65535">
+                        </div>
+                        <div class="form-group-grow">
+                            <label>Label</label>
+                            <input name="label" type="text">
+                        </div>
+                        <div class="form-group">
+                            <label>&nbsp;</label>
+                            <button class="btn btn-add" type="submit">Publish</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div id="published-table-wrap">
+                <table id="published-table">
+                    <thead>
+                        <tr>
+                            <th>Proto</th>
+                            <th>Host port</th>
+                            <th>Container port</th>
+                            <th>Label</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="empty-row">
+                            <td colspan="5">No published ports.</td>
                         </tr>
                     </tbody>
                 </table>
