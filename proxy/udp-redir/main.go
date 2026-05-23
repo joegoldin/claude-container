@@ -104,6 +104,10 @@ func main() {
 	defer nf.Close()
 	st.nf = nf
 
+	if err := startAPI(st); err != nil {
+		log.Fatalf("udp-redir: start API: %v", err)
+	}
+
 	var pktCount, allowCount, denyCount atomic.Uint64
 
 	ctx, cancel := context.WithCancel(context.Background())
