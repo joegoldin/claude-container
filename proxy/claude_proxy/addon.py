@@ -42,7 +42,9 @@ class ProxyAddon:
         """
         try:
             url = flow.request.pretty_url
-            action = self.store.match(url)
+            action = self.store.match_request(
+                direction="out", proto="http", url=url,
+            )
 
             if action == "allow":
                 return
@@ -98,7 +100,9 @@ class ProxyAddon:
                 return
             host, port = addr[0], addr[1]
             synthetic = f"tcp://{host}:{port}"
-            action = self.store.match(synthetic)
+            action = self.store.match_request(
+                direction="out", proto="tcp", url=synthetic,
+            )
 
             if action == "allow":
                 return
