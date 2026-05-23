@@ -616,3 +616,45 @@ select:focus {
     border-left: 3px solid #4a90e2;
     border-radius: 2px;
 }
+
+/* --- Custom Firewall tab --- */
+#userallow-form .form-help {
+    color: #666;
+    font-size: 0.9em;
+    margin: 0 0 12px 0;
+}
+
+#userallow-form textarea {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.9em;
+    padding: 6px 8px;
+    width: 100%;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    resize: vertical;
+}
+
+#userallow-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1em;
+}
+
+#userallow-table th,
+#userallow-table td {
+    padding: 6px 12px;
+    border-bottom: 1px solid #eee;
+    text-align: left;
+    vertical-align: top;
+}
+
+#userallow-table code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85em;
+    color: #c41a16;
+}
+
+.userallow-del-btn {
+    padding: 2px 8px;
+    font-size: 0.85em;
+}
