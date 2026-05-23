@@ -252,3 +252,27 @@ def test_match_proto_any_matches_all():
                                url="tcp://github.com:22") == "allow"
     assert store.match_request(direction="out", proto="udp",
                                url="udp://github.com:53") == "allow"
+
+
+def test_match_deny_beats_allow():
+    from claude_proxy.rules import RuleStore, Rule
+    store = RuleStore()
+    store.add_rule(Rule(direction="out", proto="http",
+                        match={"host_regex": "github\\.com"}, action="allow"))
+    store.add_rule(Rule(direction="out", proto="http",
+                        match={"host": "github.com"}, action="deny"))
+    assert store.match_request(direction="out", proto="http",
+                               url="https://github.com/") == "deny"
+
+
+def test_match_filters_by_direction():
+    from claude_proxy.rules import RuleStore, Rule
+    store = RuleStore()
+    store.add_rule(Rule(direction="in", proto="tcp",
+                        match={"port": 3000}, action="allow"))
+    # outbound request to same port does not match the inbound rule
+    assert store.match_request(direction="out", proto="tcp",
+                               url="tcp://example.com:3000") is None
+    # inbound request to port 3000 matches
+    assert store.match_request(direction="in", proto="tcp",
+                               url="tcp://0.0.0.0:3000") == "allow"
