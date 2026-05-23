@@ -10,6 +10,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+import httpx
+
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
@@ -29,6 +31,10 @@ _profile_path: Optional[str] = None
 _ws_clients: set[WebSocket] = set()
 _dashboard_loop: Optional[asyncio.AbstractEventLoop] = None
 _auth_token: Optional[str] = None
+
+# Transport for the publish-mgr Unix socket. Module-level so tests
+# can monkeypatch it with a fake transport.
+_publish_mgr_transport = httpx.HTTPTransport(uds="/run/publish-mgr.sock")
 
 
 def set_auth_token(token: str) -> None:
@@ -342,6 +348,41 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         logger.info("WebSocket client disconnected (%d remaining)", len(_ws_clients))
 
 
+async def publish(request: Request) -> JSONResponse:
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    try:
+        # Use a fresh client per call — the socket may have been
+        # re-created if publish-mgr restarted.
+        with httpx.Client(transport=_publish_mgr_transport) as c:
+            r = c.post("http://publish-mgr/publish", json=body, timeout=5)
+        return JSONResponse(r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse({"error": f"publish-mgr: {e}"}, status_code=502)
+
+
+async def unpublish(request: Request) -> JSONResponse:
+    if not _check_auth(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    body = await request.json()
+    try:
+        with httpx.Client(transport=_publish_mgr_transport) as c:
+            r = c.post("http://publish-mgr/unpublish", json=body, timeout=5)
+        return JSONResponse(r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse({"error": f"publish-mgr: {e}"}, status_code=502)
+
+
+async def list_published(request: Request) -> JSONResponse:
+    try:
+        with httpx.Client(transport=_publish_mgr_transport) as c:
+            r = c.get("http://publish-mgr/list", timeout=5)
+        return JSONResponse(r.json(), status_code=r.status_code)
+    except Exception as e:
+        return JSONResponse({"error": f"publish-mgr: {e}"}, status_code=502)
+
+
 def _save_profile() -> None:
     """Persist rules to the profile JSON file."""
     if _store is not None and _profile_path is not None:
@@ -364,6 +405,9 @@ routes = [
     Route("/api/rules/import", import_rules, methods=["POST"]),
     Route("/api/rules/{rule_id}", delete_rule, methods=["DELETE"]),
     Route("/api/resolve", resolve_pending, methods=["POST"]),
+    Route("/api/publish", publish, methods=["POST"]),
+    Route("/api/unpublish", unpublish, methods=["POST"]),
+    Route("/api/published-ports", list_published, methods=["GET"]),
     WebSocketRoute("/ws", websocket_endpoint),
     Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
 ]

@@ -311,3 +311,28 @@ def test_post_rule_accepts_old_shape(client):
     found = next(r for r in rules if r["label"] == "gh")
     assert found["proto"] in ("http", "any")
     assert found["action"] == "allow"
+
+
+def test_publish_endpoint_calls_publish_mgr(client, monkeypatch):
+    """POST /api/publish forwards to /run/publish-mgr.sock."""
+    import httpx
+    calls = []
+    class FakeTransport(httpx.BaseTransport):
+        def handle_request(self, request):
+            calls.append((request.method, request.url.path,
+                          request.read().decode()))
+            return httpx.Response(200, json={
+                "host_port": 30005, "container_port": 3000,
+                "protocol": "tcp", "ok": True,
+            })
+
+    from claude_proxy import dashboard
+    monkeypatch.setattr(dashboard, "_publish_mgr_transport",
+                        FakeTransport())
+
+    resp = client.post("/api/publish",
+        json={"protocol": "tcp", "container_port": 3000, "label": "vite"})
+    assert resp.status_code == 200
+    assert resp.json()["host_port"] == 30005
+    assert len(calls) == 1
+    assert calls[0][1].endswith("/publish")
