@@ -71,6 +71,16 @@ func main() {
 		log.Fatalf("publish-mgr: listen %s: %v", socketPath, err)
 	}
 	defer l.Close()
+	if uid := os.Getenv("PROXY_UID"); uid != "" {
+		u, err1 := strconv.Atoi(uid)
+		gid := os.Getenv("PROXY_GID")
+		g, err2 := strconv.Atoi(gid)
+		if err1 == nil && err2 == nil {
+			if err := os.Chown(socketPath, u, g); err != nil {
+				log.Fatalf("publish-mgr: chown socket to %d:%d: %v", u, g, err)
+			}
+		}
+	}
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		log.Fatalf("publish-mgr: chmod socket: %v", err)
 	}
@@ -133,7 +143,7 @@ func (m *manager) nextFreePort() (int, bool) {
 
 func nftAddInputAccept(proto string, port int) error {
 	cmd := exec.Command("nft", "add", "rule", "inet", "claude_proxy_fw",
-		"input", proto, "dport", strconv.Itoa(port), "accept")
+		"publish_in", proto, "dport", strconv.Itoa(port), "accept")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("nft add rule failed: %v: %s", err, out)
@@ -209,7 +219,7 @@ func nftDelInputAccept(proto string, port int) error {
 	// nft delete by handle is the clean path; first list to find the
 	// handle for our rule, then delete by it.
 	out, err := exec.Command("nft", "-a", "list", "chain", "inet",
-		"claude_proxy_fw", "input").CombinedOutput()
+		"claude_proxy_fw", "publish_in").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("nft list: %v: %s", err, out)
 	}
@@ -228,7 +238,7 @@ func nftDelInputAccept(proto string, port int) error {
 		}
 		h := strings.TrimSpace(line[i+len("handle "):])
 		delCmd := exec.Command("nft", "delete", "rule", "inet",
-			"claude_proxy_fw", "input", "handle", h)
+			"claude_proxy_fw", "publish_in", "handle", h)
 		if err := delCmd.Run(); err != nil {
 			return fmt.Errorf("nft delete handle %s: %w", h, err)
 		}

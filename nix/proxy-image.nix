@@ -108,6 +108,14 @@ let
         # Transparent listener (only reached via the local REDIRECT, but
         # accept defensively in case Docker's portmap touches it).
         tcp dport 8080 accept
+        # publish-mgr appends accept rules to this regular chain at runtime
+        # for user-published ports.
+        jump publish_in
+        log prefix "claude_proxy_fw input drop: " level debug
+      }
+
+      chain publish_in {
+        # publish-mgr adds dport accept rules here for each /publish call.
       }
 
       chain prerouting_nat {
@@ -127,18 +135,12 @@ let
     }
     NFT
 
-    # Start publish-mgr in the background as the dedicated uid so the
-    # socket is owned by the same uid that the dashboard can reach.
-    # Daemon will set up its socket at /run/publish-mgr.sock and own the
-    # nft rules for inbound publish ports.
+    # publish-mgr needs CAP_NET_ADMIN to invoke nft, so we keep it as
+    # root (the proxy container itself runs as root). The daemon chowns
+    # its socket to the proxy uid so the dashboard process (running as
+    # uid ${proxyUid}) can connect.
     ${pkgs.coreutils}/bin/mkdir -p /run
-    ${pkgs.coreutils}/bin/chown ${proxyUid}:${proxyGid} /run
-    # NB: publish-mgr runs as the proxy uid (1500) so the socket is
-    # accessible to the dashboard process. This means `nft` invocations
-    # by publish-mgr will fail without additional cap handling — that
-    # gap is addressed in a follow-up (see plan Task 18 / privilege
-    # handling).
-    ${pkgs.su-exec}/bin/su-exec ${proxyUid}:${proxyGid} \
+    PROXY_UID=${proxyUid} PROXY_GID=${proxyGid} \
       ${publishMgr}/bin/publish-mgr &
 
     # ----- Run mitmproxy as the dedicated uid -----
