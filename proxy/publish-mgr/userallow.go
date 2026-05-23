@@ -17,14 +17,41 @@ var userAllowBlacklist = []string{
 	"table", "flush", "delete", "chain", "policy", "drop", "reject",
 }
 
-// validateUserAllowStmtKeywordsOnly performs the cheap pass: only the
-// keyword check. Tests can target this directly without needing the
-// nftables binary in the environment. The full validator
-// (validateUserAllowStmt) also pipes through `nft --check`.
+// validateUserAllowStmtKeywordsOnly performs the cheap pass: separator
+// rejection, accept-verdict requirement, and the keyword check. Tests
+// can target this directly without needing the nftables binary in the
+// environment. The full validator (validateUserAllowStmt) also pipes
+// through `nft --check`.
+//
+// The separator check is a defense-in-depth guard: nft's `-f -` parser
+// treats `;` and newlines as statement separators, which would let a
+// crafted statement chain commands past the keyword blacklist (e.g.
+// "... accept ; insert rule inet claude_proxy_fw input ip daddr 0/0
+// accept"). The argv apply path doesn't honor `;` as a separator
+// today, but we reject these upstream so the apply path's accidental
+// safety isn't load-bearing.
+//
+// Statements MUST end in " accept" — the user_allow chain is
+// accept-only by design, and any other verdict (jump/goto/return/log)
+// is either useless or a way to redirect evaluation in unintended
+// ways. The compile_template helper always emits "... accept"; raw
+// mode users must do the same.
 func validateUserAllowStmtKeywordsOnly(stmt string) error {
 	stmt = strings.TrimSpace(stmt)
 	if stmt == "" {
 		return fmt.Errorf("user-allow stmt is empty")
+	}
+	if strings.ContainsAny(stmt, ";\n\r") {
+		return fmt.Errorf("user-allow stmt contains illegal separator (; or newline)")
+	}
+	// Reject any non-printable ASCII; valid nft syntax is plain text.
+	for _, r := range stmt {
+		if r < 0x20 || r > 0x7e {
+			return fmt.Errorf("user-allow stmt contains non-printable byte %q", r)
+		}
+	}
+	if !strings.HasSuffix(stmt, " accept") {
+		return fmt.Errorf("user-allow stmt must end in 'accept' verdict")
 	}
 	for _, kw := range userAllowBlacklist {
 		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(kw) + `\b`)
