@@ -487,6 +487,21 @@ async def user_allow_list(request: Request) -> JSONResponse:
         return JSONResponse({"error": f"publish-mgr: {exc}"}, status_code=502)
 
 
+async def counters(request: Request) -> JSONResponse:
+    """Return per-rule counters from publish-mgr.
+
+    Failure soft: if publish-mgr is unreachable, return empty arrays
+    instead of a 5xx so the dashboard UI keeps rendering rules.
+    """
+    try:
+        with httpx.Client(transport=_publish_mgr_transport) as c:
+            r = c.get("http://publish-mgr/counters", timeout=2)
+        return JSONResponse(r.json(), status_code=r.status_code)
+    except Exception as exc:
+        logger.debug("publish-mgr /counters unreachable: %s", exc)
+        return JSONResponse({"publish_in": [], "user_allow": []})
+
+
 async def user_allow_del(request: Request) -> JSONResponse:
     """Delete a user_allow rule by id (forwards to publish-mgr and unpersists)."""
     if not _check_auth(request):
@@ -539,6 +554,7 @@ routes = [
     Route("/api/user-allow", user_allow_add, methods=["POST"]),
     Route("/api/user-allow", user_allow_list, methods=["GET"]),
     Route("/api/user-allow/{rule_id}", user_allow_del, methods=["DELETE"]),
+    Route("/api/counters", counters, methods=["GET"]),
     WebSocketRoute("/ws", websocket_endpoint),
     Mount("/static", StaticFiles(directory=str(static_dir)), name="static"),
 ]

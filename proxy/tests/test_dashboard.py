@@ -461,3 +461,45 @@ def test_user_allow_add_rejects_bad_template(client, monkeypatch):
     })
     assert resp.status_code == 400
     assert called == []  # never reached publish-mgr
+
+
+def test_counters_endpoint_proxies_to_publish_mgr(client, monkeypatch):
+    """GET /api/counters returns publish-mgr's counter snapshot verbatim."""
+    import httpx
+    class FakeTransport(httpx.BaseTransport):
+        def handle_request(self, request):
+            assert request.url.path == "/counters"
+            return httpx.Response(200, json={
+                "publish_in": [
+                    {"handle": "12", "stmt": "tcp dport 3000 accept",
+                     "packets": 5, "bytes": 1024},
+                ],
+                "user_allow": [
+                    {"handle": "20", "stmt": "ip daddr 8.8.8.8 udp dport 53 accept",
+                     "packets": 3, "bytes": 252},
+                ],
+            })
+
+    from claude_proxy import dashboard
+    monkeypatch.setattr(dashboard, "_publish_mgr_transport", FakeTransport())
+
+    resp = client.get("/api/counters")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["publish_in"][0]["packets"] == 5
+    assert data["user_allow"][0]["bytes"] == 252
+
+
+def test_counters_endpoint_returns_empty_when_publish_mgr_down(client, monkeypatch):
+    """If the socket is unreachable, the endpoint returns empty arrays (not a 5xx)."""
+    import httpx
+    class BrokenTransport(httpx.BaseTransport):
+        def handle_request(self, request):
+            raise httpx.ConnectError("socket missing")
+
+    from claude_proxy import dashboard
+    monkeypatch.setattr(dashboard, "_publish_mgr_transport", BrokenTransport())
+
+    resp = client.get("/api/counters")
+    assert resp.status_code == 200
+    assert resp.json() == {"publish_in": [], "user_allow": []}
