@@ -159,7 +159,7 @@ func Launch(ctx context.Context, store *config.Store, opts Opts) (handle *Handle
 	var allocErr error
 	alloc, allocErr = portalloc.New(
 		allocPath, opts.PublishBase,
-		opts.PublishBase+1000-1, // 100 sessions of size 10 by default
+		opts.PublishBase+opts.PublishPoolSize-1,
 		opts.PublishRange,
 	)
 	if allocErr != nil {

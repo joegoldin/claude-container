@@ -22,9 +22,10 @@ var (
 	workDenyPaths     []string
 	workProxyPreset   string
 	workProxyPort     int
-	workPublishRange  int
-	workPublishBase   int
-	workResume        string
+	workPublishRange    int
+	workPublishBase     int
+	workPublishPoolSize int
+	workResume          string
 	workAllowCommands []string
 	workDenyCommands  []string
 )
@@ -61,6 +62,7 @@ var workCmd = &cobra.Command{
 			ProxyPort:       workProxyPort,
 			PublishRange:    workPublishRange,
 			PublishBase:     workPublishBase,
+			PublishPoolSize: workPublishPoolSize,
 		}
 
 		h, err := session.Launch(ctx, store, opts)
@@ -104,5 +106,7 @@ func init() {
 		"ports per session reserved for inbound publish (default 10)")
 	workCmd.Flags().IntVar(&workPublishBase, "publish-base", 0,
 		"first host port the inbound publish pool may use (default 30000)")
+	workCmd.Flags().IntVar(&workPublishPoolSize, "publish-pool-size", 0,
+		"size of the inbound publish pool in ports (default 1000)")
 	rootCmd.AddCommand(workCmd)
 }

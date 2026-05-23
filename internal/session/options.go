@@ -69,8 +69,9 @@ type Opts struct {
 	ProxyPort       int
 
 	// Inbound port publishing — pool and size are configurable.
-	PublishBase  int // first host port the pool may use (default 30000)
-	PublishRange int // ports per session (default 10)
+	PublishBase     int // first host port the pool may use (default 30000)
+	PublishRange    int // ports per session (default 10)
+	PublishPoolSize int // total size of the publish pool in ports (default 1000)
 }
 
 // ApplyDefaults fills in per-mode defaults for fields the caller did not set.
@@ -84,6 +85,9 @@ func (o *Opts) ApplyDefaults() {
 	}
 	if o.PublishRange == 0 {
 		o.PublishRange = 10
+	}
+	if o.PublishPoolSize == 0 {
+		o.PublishPoolSize = 1000
 	}
 	switch o.Mode {
 	case ModeTask:

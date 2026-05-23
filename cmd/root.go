@@ -34,9 +34,10 @@ var (
 	rootPackages      []string
 	rootProxyPreset   string
 	rootProxyPort     int
-	rootPublishRange  int
-	rootPublishBase   int
-	rootFrom          string
+	rootPublishRange    int
+	rootPublishBase     int
+	rootPublishPoolSize int
+	rootFrom            string
 	rootNoWorktree    bool
 	rootResume        string
 )
@@ -77,6 +78,8 @@ func init() {
 		"ports per session reserved for inbound publish (default 10)")
 	f.IntVar(&rootPublishBase, "publish-base", 0,
 		"first host port the inbound publish pool may use (default 30000)")
+	f.IntVar(&rootPublishPoolSize, "publish-pool-size", 0,
+		"size of the inbound publish pool in ports (default 1000)")
 	f.StringVar(&rootFrom, "from", "", "base branch/ref for the new worktree")
 	f.BoolVar(&rootNoWorktree, "no-worktree", false, "pwd passthrough even in a git repo")
 	f.StringVar(&rootResume, "resume", "", "resume mode (picker, last, or session id)")
@@ -132,6 +135,7 @@ func runDefault(ctx context.Context) error {
 		ProxyPort:       rootProxyPort,
 		PublishRange:    rootPublishRange,
 		PublishBase:     rootPublishBase,
+		PublishPoolSize: rootPublishPoolSize,
 	}
 
 	h, err := session.Launch(ctx, store, opts)

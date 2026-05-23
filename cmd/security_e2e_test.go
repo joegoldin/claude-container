@@ -1805,3 +1805,34 @@ func TestSecurity_Publish_Unpublish_RemovesFirewallRule(t *testing.T) {
 		t.Errorf("unpublish did not close the port — fetch returned %d", resp.StatusCode)
 	}
 }
+
+// TestSecurity_Publish_PoolExhaustionFailsFast verifies that starting
+// more sessions than the pool can fit fails fast with a clear error.
+func TestSecurity_Publish_PoolExhaustionFailsFast(t *testing.T) {
+	requireDockerAndAuth(t)
+	setupIsolatedConfigDir(t)
+
+	// Pool of 20 ports, 10 per session -> exactly 2 sessions, then
+	// the third should fail.
+	startSecurityContainer(t, "sec-exh-a", "--yolo",
+		"--publish-range=10", "--publish-base=40000",
+		"--publish-pool-size=20")
+	startSecurityContainer(t, "sec-exh-b", "--yolo",
+		"--publish-range=10", "--publish-base=40000",
+		"--publish-pool-size=20")
+
+	// Manual start since startSecurityContainer t.Fatals on non-zero.
+	out, err := exec.Command(testBinary, "run", "-b",
+		"--name", "sec-exh-c", "--preset", "sec-exh-c", "--yolo",
+		"--publish-range=10", "--publish-base=40000",
+		"--publish-pool-size=20").CombinedOutput()
+	t.Cleanup(func() {
+		runCLI(t, "rm", "sec-exh-c")
+	})
+	if err == nil {
+		t.Errorf("third session should have failed; got success: %s", out)
+	}
+	if !strings.Contains(string(out), "pool") {
+		t.Errorf("error message should mention pool exhaustion; got: %s", out)
+	}
+}
