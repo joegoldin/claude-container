@@ -278,3 +278,36 @@ class TestOnPendingRequestCrossThread:
             _dashboard_mod.broadcast = _original_broadcast
             loop.close()
             set_dashboard_loop(None)
+
+
+def test_post_rule_accepts_new_shape(client):
+    resp = client.post("/api/rules", json={
+        "direction": "out",
+        "proto": "http",
+        "match": {"host": "example.com"},
+        "action": "allow",
+        "label": "ex",
+    })
+    assert resp.status_code == 201
+    rid = resp.json()["id"]
+
+    rules = client.get("/api/rules").json()
+    found = next(r for r in rules if r["id"] == rid)
+    assert found["direction"] == "out"
+    assert found["proto"] == "http"
+    assert found["match"]["host"] == "example.com"
+    assert found["action"] == "allow"
+
+
+def test_post_rule_accepts_old_shape(client):
+    """Back-compat: legacy POSTs with type/pattern still work."""
+    resp = client.post("/api/rules", json={
+        "type": "http_allow",
+        "pattern": "github.com",
+        "label": "gh",
+    })
+    assert resp.status_code == 201
+    rules = client.get("/api/rules").json()
+    found = next(r for r in rules if r["label"] == "gh")
+    assert found["proto"] in ("http", "any")
+    assert found["action"] == "allow"

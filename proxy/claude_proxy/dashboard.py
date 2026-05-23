@@ -135,22 +135,53 @@ async def get_rules(request: Request) -> JSONResponse:
 
 
 async def add_rule(request: Request) -> JSONResponse:
-    """Add a new rule. Body: {type, pattern, label?, expires_at?, source?}."""
+    """Add a new rule. Accepts both new shape and legacy old shape."""
     if not _check_auth(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     if _store is None:
         return JSONResponse({"error": "not configured"}, status_code=503)
     body = await request.json()
-    rule_type = body.get("type")
-    pattern = body.get("pattern")
-    if not rule_type or not pattern:
-        return JSONResponse(
-            {"error": "type and pattern are required"}, status_code=400
+
+    # New shape: has "action" key
+    if "action" in body:
+        direction = body.get("direction", "out")
+        proto = body.get("proto", "any")
+        match = body.get("match") or {}
+        action = body["action"]
+        label = body.get("label", "")
+        expires_at = body.get("expires_at")
+        source = body.get("source", "interactive")
+        rule_id = _store.add_structured(
+            direction=direction, proto=proto, match=match,
+            action=action, label=label,
+            expires_at=expires_at, source=source,
         )
-    label = body.get("label", "")
-    expires_at = body.get("expires_at")
-    source = body.get("source", "interactive")
-    rule_id = _store.add(rule_type, pattern, label, expires_at=expires_at, source=source)
+    else:
+        # Legacy old shape with type + pattern
+        rule_type = body.get("type")
+        pattern = body.get("pattern")
+        if not rule_type or not pattern:
+            return JSONResponse(
+                {"error": "type+pattern (old) or action+match (new) are required"},
+                status_code=400,
+            )
+        # Map old "<proto>_<action>" type to new fields
+        # e.g. "http_allow" -> proto=http, action=allow
+        parts = rule_type.split("_", 1)
+        if len(parts) == 2 and parts[1] in ("allow", "deny"):
+            proto_part, action_part = parts
+        else:
+            proto_part, action_part = "any", rule_type
+        rule_id = _store.add_structured(
+            direction="out",
+            proto=proto_part if proto_part in ("http", "tcp", "udp", "any") else "any",
+            match={"host_regex": pattern},
+            action=action_part,
+            label=body.get("label", ""),
+            expires_at=body.get("expires_at"),
+            source=body.get("source", "interactive"),
+        )
+
     _save_profile()
     await broadcast({"type": "rules_changed", "data": _store.list_rules()})
     return JSONResponse({"id": rule_id}, status_code=201)

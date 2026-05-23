@@ -141,6 +141,31 @@ class RuleStore:
             self._rules.append(rule)
         return rule.id
 
+    def add_structured(
+        self,
+        *,
+        direction: str,
+        proto: str,
+        match: dict,
+        action: str,
+        label: str = "",
+        expires_at: Optional[float] = None,
+        source: str = "interactive",
+    ) -> str:
+        """Add a rule using the new canonical schema. Returns the rule id."""
+        with self._lock:
+            rule = Rule(
+                direction=direction,
+                proto=proto,
+                match=match,
+                action=action,
+                label=label,
+                expires_at=expires_at,
+                source=source,
+            )
+            self._rules.append(rule)
+            return rule.id
+
     def remove(self, rule_id: str) -> bool:
         """Remove a rule by id. Returns True if the rule was found and removed."""
         with self._lock:
