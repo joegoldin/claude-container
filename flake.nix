@@ -137,6 +137,15 @@
           inherit vendorHash;
           doCheck = false;
 
+          # ./proxy/{publish-mgr,udp-redir} have their own go.mod files
+          # and are built independently by proxy-image.nix. Without an
+          # explicit subPackages list, buildGoModule walks `go list ./...`
+          # and tries to compile them as if they were part of the main
+          # module, which fails with "main module does not contain
+          # package". Scope to the root main + transitive deps under
+          # ./cmd and ./internal.
+          subPackages = [ "." ];
+
           nativeBuildInputs = with pkgs; [ installShellFiles ];
 
           postInstall = ''
