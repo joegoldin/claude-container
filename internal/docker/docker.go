@@ -35,13 +35,15 @@ func ImageTag() string {
 	return ImageName
 }
 
-// LoadImage loads the Docker image from the Nix-built tarball.
+// LoadImage loads the Docker image from the Nix-built tarball. Silent on
+// success (callers are expected to provide their own progress indicator —
+// cmd/auth.go shows a spinner during EnsureImage, for example). Docker's
+// own "Loaded image: ..." line still goes to stdout.
 func LoadImage() error {
 	tarball := os.Getenv("CLAUDE_CONTAINER_IMAGE_TARBALL")
 	if tarball == "" {
 		return fmt.Errorf("CLAUDE_CONTAINER_IMAGE_TARBALL is not set")
 	}
-	fmt.Println("Loading Docker image...")
 	cmd := exec.Command("docker", "load", "-i", tarball)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
