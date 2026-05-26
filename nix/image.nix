@@ -266,12 +266,21 @@ let
 
     # --- Nix store setup ---
     # Make nix store writable so devenv, nix profile install, etc. work.
-    if [ "$USER_UID" -ne 0 ]; then
+    # This `chown -R` traverses the entire baked-in /nix tree (1.4G, ~50k
+    # files), and on macOS Docker the overlay-fs copy-up of each inode
+    # crosses the hypervisor boundary — adds ~60s to every cold start.
+    # Ephemeral flows that just run claude (auth, status, etc.) don't need
+    # /nix to be user-writable, so the launcher can set SKIP_NIX_WRITABLE=1
+    # to short-circuit both this chown and the nix-store --init below.
+    if [ "$USER_UID" -ne 0 ] && [ "''${SKIP_NIX_WRITABLE:-}" != "1" ]; then
+      log "chowning /nix to $USER_UID:$USER_GID (may take ~60s on macOS Docker)"
       ${chown} -R "$USER_UID:$USER_GID" /nix 2>/dev/null || true
     fi
 
-    # Initialize nix database if needed (empty volume on first run).
-    if [ ! -f /nix/var/nix/db/db.sqlite ]; then
+    # Initialize nix database if needed (empty volume on first run). Only
+    # relevant when the caller intends to run nix commands inside the
+    # container; ephemeral auth/status flows can skip this too.
+    if [ "''${SKIP_NIX_WRITABLE:-}" != "1" ] && [ ! -f /nix/var/nix/db/db.sqlite ]; then
       log "initializing nix database"
       if [ "$USER_NAME" = "root" ]; then
         ${pkgs.nix}/bin/nix-store --init 2>>"$ENTRYPOINT_LOG" || log "WARNING: nix-store --init failed"

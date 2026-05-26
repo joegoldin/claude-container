@@ -10,6 +10,7 @@ import (
 	"github.com/joegoldin/claude-container/internal/config"
 	"github.com/joegoldin/claude-container/internal/docker"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var authCmd = &cobra.Command{
@@ -99,18 +100,28 @@ func authLoginRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create claude config dir: %w", err)
 	}
 
-	// Ensure docker image is loaded.
-	if err := docker.EnsureImage(config.DefaultDir()); err != nil {
-		return err
+	// Ensure docker image is loaded (slow on first run while docker imports
+	// the multi-GB tarball). Show a spinner so the user knows we're alive.
+	stopImageSpinner := startAuthSpinner("Loading Docker image")
+	imageErr := docker.EnsureImage(config.DefaultDir())
+	stopImageSpinner()
+	if imageErr != nil {
+		return imageErr
 	}
 
-	// Run an interactive container so the user can authenticate.
+	// Run an interactive container so the user can authenticate. We pass
+	// SKIP_NIX_WRITABLE=1 because auth just runs the claude TUI — it does
+	// not need /nix to be user-writable. Skipping the entrypoint's
+	// `chown -R /nix` (which copies up ~50k inodes through Docker
+	// Desktop's overlay-fs) cuts cold start from ~70s to ~5s.
+	fmt.Fprintln(os.Stderr, "Starting authentication container...")
 	dockerArgs := []string{
 		"run",
 		"--rm",
 		"-it",
 		"-v", store.ClaudeConfigDir() + ":/claude",
 		"-e", "CLAUDE_CONFIG_DIR=/claude",
+		"-e", "SKIP_NIX_WRITABLE=1",
 		"-e", fmt.Sprintf("USER_UID=%d", docker.ContainerUID()),
 		"-e", fmt.Sprintf("USER_GID=%d", docker.ContainerGID()),
 		docker.ImageTag(),
@@ -158,6 +169,37 @@ func authLoginRun(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// startAuthSpinner shows an animated spinner on stderr with the given message,
+// returning a stop function that clears the spinner line. No-op when stderr
+// isn't a TTY (CI / piped output). Modeled on cmd/task.go's startSpinner but
+// labelled with a message rather than elapsed time.
+func startAuthSpinner(msg string) func() {
+	if !term.IsTerminal(int(os.Stderr.Fd())) {
+		fmt.Fprintf(os.Stderr, "%s...\n", msg)
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		i := 0
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				fmt.Fprintf(os.Stderr, "\r%s %s...", frames[i%len(frames)], msg)
+				i++
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		fmt.Fprint(os.Stderr, "\r\033[K") // clear spinner line
+	}
 }
 
 func init() {
