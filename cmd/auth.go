@@ -151,14 +151,78 @@ func authLoginRun(cmd *cobra.Command, args []string) error {
 }
 
 // ansiCSI matches ANSI CSI escape sequences (color codes, cursor moves,
-// erase line, etc.) so the URL regex can match against a clean stream.
+// erase line, etc.) so the URL extractor can scan against a clean stream.
 // Claude's TUI inserts these constantly between characters.
 var ansiCSI = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)
 
-// authURLRegex captures the OAuth URL claude prints. Stop at any whitespace
-// or escape byte — terminal width-wrapping inserts neither into the actual
-// stream, so this gets the full URL even when it spans multiple visual rows.
-var authURLRegex = regexp.MustCompile(`https://claude\.com/[^\s\x00-\x1f]+`)
+// authURLStart locates the OAuth URL prefix claude prints. Claude has
+// historically used both `claude.com/cai/oauth/...` and `claude.ai/oauth/...`;
+// match either by allowing any single-word TLD after `claude.`.
+var authURLStart = regexp.MustCompile(`https://claude\.[a-z]+/`)
+
+// extractAuthURL finds the OAuth URL in cleaned (ANSI-stripped) output and
+// returns it stripped of the line breaks claude inserts when wrapping a
+// long URL at PTY column width. A single regex with a non-whitespace class
+// stops at the first wrap, which is why the previous implementation handed
+// the user a truncated client_id. Walks forward instead: collect URL
+// characters, and skip a run of \r/\n only if the next byte is still a
+// URL character (i.e. it's a wrap, not the end of the URL). Stop at any
+// other byte (space, tab, prose, control char).
+func extractAuthURL(s string) string {
+	loc := authURLStart.FindStringIndex(s)
+	if loc == nil {
+		return ""
+	}
+	var sb strings.Builder
+	i := loc[0]
+	for i < len(s) {
+		c := s[i]
+		switch {
+		case isURLChar(c):
+			sb.WriteByte(c)
+			i++
+		case c == '\r' || c == '\n':
+			// Claude wraps long URLs at PTY column width by inserting a
+			// single line ending mid-URL. Skip exactly one (\n or \r\n)
+			// if the next byte is still a URL character. A BLANK line
+			// (two or more \n bytes) means the URL paragraph has ended
+			// — every claude OAuth print we've observed paragraph-
+			// separates the URL from the surrounding prose.
+			j := i
+			nlCount := 0
+			for j < len(s) && (s[j] == '\r' || s[j] == '\n') {
+				if s[j] == '\n' {
+					nlCount++
+				}
+				j++
+			}
+			if nlCount > 1 {
+				return sb.String()
+			}
+			if j < len(s) && isURLChar(s[j]) {
+				i = j
+				continue
+			}
+			return sb.String()
+		default:
+			return sb.String()
+		}
+	}
+	return sb.String()
+}
+
+// isURLChar reports whether c is a byte we accept as part of a captured
+// OAuth URL. Includes RFC 3986 unreserved + the path/query sub-delims we
+// see in claude URLs (=, &, ?, etc.) and `%` for percent-encoding.
+// Intentionally excludes ( ) [ ] which are technically allowed but often
+// appear in prose right after the URL ("(c to copy)"), which would cause
+// false trailing content if we accepted them.
+func isURLChar(c byte) bool {
+	if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+		return true
+	}
+	return strings.IndexByte("-._~:/?#@!$&'*+,;=%", c) != -1
+}
 
 // runAuthPTY runs the docker auth subprocess under a PTY we own, so we can
 // (1) scan output for the OAuth URL and open it in the host browser
@@ -249,7 +313,7 @@ func runAuthPTY(store *config.Store, dockerArgs []string) error {
 				}
 
 				clean := ansiCSI.ReplaceAllString(ringBuf.String(), "")
-				if m := authURLRegex.FindString(clean); m != "" {
+				if m := extractAuthURL(clean); m != "" {
 					urlMu.Lock()
 					if m != latestURL {
 						latestURL = m
