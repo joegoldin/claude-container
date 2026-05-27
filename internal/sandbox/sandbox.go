@@ -89,6 +89,8 @@ var allToolsAllow = []string{
 
 // devToolsAllow permits common development commands and file operations.
 // More restrictive than allToolsAllow — only specific Bash commands are allowed.
+// Each Bash(<cmd> *) is mirrored by Bash(rtk <cmd> *) so commands rewritten by
+// the rtk PreToolUse hook (or invoked directly as `rtk <cmd>`) are pre-approved.
 var devToolsAllow = []string{
 	"Bash(git *)", "Bash(gh *)", "Bash(npm *)",
 	"Bash(pip *)", "Bash(cargo *)", "Bash(make *)",
@@ -96,6 +98,12 @@ var devToolsAllow = []string{
 	"Bash(cd *)", "Bash(echo *)", "Bash(ls *)", "Bash(cat *)", "Bash(grep *)",
 	"Bash(find *)", "Bash(touch *)", "Bash(curl *)", "Bash(wget *)",
 	"Bash(mkdir *)", "Bash(rm *)", "Bash(cp *)", "Bash(mv *)", "Bash(sleep *)",
+	"Bash(rtk git *)", "Bash(rtk gh *)", "Bash(rtk npm *)",
+	"Bash(rtk pip *)", "Bash(rtk cargo *)", "Bash(rtk make *)",
+	"Bash(rtk nix *)", "Bash(rtk devenv *)", "Bash(rtk direnv *)", "Bash(rtk cachix *)",
+	"Bash(rtk cd *)", "Bash(rtk echo *)", "Bash(rtk ls *)", "Bash(rtk cat *)", "Bash(rtk grep *)",
+	"Bash(rtk find *)", "Bash(rtk touch *)", "Bash(rtk curl *)", "Bash(rtk wget *)",
+	"Bash(rtk mkdir *)", "Bash(rtk rm *)", "Bash(rtk cp *)", "Bash(rtk mv *)", "Bash(rtk sleep *)",
 	"Read",
 	"Edit",
 	"Write",
@@ -169,6 +177,9 @@ var profiles = map[string]Profile{
 		AllowPerms: []string{
 			"Bash(git status *)", "Bash(git diff *)", "Bash(git log *)",
 			"Bash(cd *)", "Bash(echo *)", "Bash(ls *)", "Bash(cat *)",
+			// rtk-wrapped variants (see devToolsAllow comment).
+			"Bash(rtk git status *)", "Bash(rtk git diff *)", "Bash(rtk git log *)",
+			"Bash(rtk cd *)", "Bash(rtk echo *)", "Bash(rtk ls *)", "Bash(rtk cat *)",
 			"Read(/tmp/**)", "Write(/workspace/**)", "Edit(/workspace/**)",
 		},
 		DenyPerms: []string{
